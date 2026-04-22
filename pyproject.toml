@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "energy-scheduling-benchmark"
+version = "0.1.0"
+description = "Multi-agent energy scheduling benchmark scenarios for mango-agents"
+authors = [{name = "Rico Schrage"}]
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+keywords = ["energy", "multi-agent", "power-systems", "scheduling", "benchmark", "pypsa"]
+dependencies = [
+    "mango-agents>=2.1",
+    "mango-energy-environments>=0.1",
+    "distributed-resource-optimization>=0.1",
+    "pypsa>=0.29",
+    "pyomo>=6.7",
+    "highspy>=1.5",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "matplotlib>=3.8",
+    "networkx>=3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+esb-consensus = "energy_scheduling_benchmark.scenarios.consensus:main"
+esb-central-dispatch = "energy_scheduling_benchmark.scenarios.central_dispatch:main"
+
+[tool.uv.sources]
+mango-agents = { path = "../mango", editable = true }
+mango-energy-environments = { path = "../mango-energy-environments", editable = true }
+distributed-resource-optimization = { path = "../mango-optimization", editable = true }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "PIE"]
+ignore = ["E501"]
