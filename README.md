@@ -59,16 +59,3 @@ src/energy_scheduling_benchmark/
     ├── consensus.py            # distributed consensus
     └── central_dispatch.py     # central LP
 ```
-
-## Mapping vs the Julia version
-
-| Julia / JuMP / CairoMakie                         | Python replacement                                    |
-|---------------------------------------------------|-------------------------------------------------------|
-| `PowerSystems.jl` + PSITestSystems                | `pypsa.Network` + `build_test_network()`              |
-| `PowerSystemsBehavior` (MangoEnergyEnvironments)  | `PyPSABehavior`                                       |
-| `JuMP` + `HiGHS` dispatch LP                      | `pyomo` + `appsi_highs` (`solve_central_dispatch`)    |
-| `DistributedResourceOptimization.jl`              | `distributed-resource-optimization` (Python)          |
-| `CairoMakie` plotting                             | `matplotlib`                                          |
-
-The legacy Julia package is preserved unchanged under `EnergySchedulingBenchmark.jl/`
-for reference.

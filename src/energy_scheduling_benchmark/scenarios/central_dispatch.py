@@ -48,12 +48,17 @@ from energy_scheduling_benchmark.environment import (
     PowerUpdateInfo,
     PyPSABehavior,
 )
+from energy_scheduling_benchmark.networks import (
+    ScenarioData,
+    available_examples,
+    build_toy_network,
+    load_scenario,
+)
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
     stacked_area,
     visualize_results,
 )
-from energy_scheduling_benchmark.scenarios._common import build_test_network
 
 logger = logging.getLogger(__name__)
 
@@ -259,18 +264,16 @@ class Aggregator(Role):
 
 async def execute_test_case(
     *,
+    scenario: ScenarioData | None = None,
     delay_s: float = 0.02,
     loss_percent: float = 0.00005,
     name_base: str = "central_dispatch",
     simulate_days: int = 3,
 ) -> None:
-    test_net = build_test_network(periods=simulate_days * 24)
+    if scenario is None:
+        scenario = build_toy_network(periods=simulate_days * 24)
 
-    behavior = PyPSABehavior(
-        net=test_net.net,
-        timeseries=test_net.timeseries,
-        start_datetime=test_net.start,
-    )
+    behavior = PyPSABehavior.from_scenario(scenario)
     environment = DefaultEnvironment(behavior=behavior)
     com_sim = SimpleCommunicationSimulation(
         default_delay_s=delay_s, loss_percent=loss_percent
@@ -376,6 +379,17 @@ def _scalar(v: Any) -> float:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--network",
+        type=str,
+        default="toy",
+        help=(
+            "Network source. Either 'toy' (the built-in 5-bus fixture), "
+            "a PyPSA example name "
+            f"({', '.join(available_examples())}), or a path to a "
+            ".nc/.h5/.xlsx file or CSV folder."
+        ),
+    )
     parser.add_argument("--delay-s", type=float, default=0.02)
     parser.add_argument("--loss-percent", type=float, default=0.00005)
     parser.add_argument("--name-base", type=str, default="central_agent_withlosses")
@@ -385,8 +399,14 @@ def main(argv: list[str] | None = None) -> None:
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
+    if args.network == "toy":
+        scenario = build_toy_network(periods=args.simulate_days * 24)
+    else:
+        scenario = load_scenario(args.network)
+
     asyncio.run(
         execute_test_case(
+            scenario=scenario,
             delay_s=args.delay_s,
             loss_percent=args.loss_percent,
             name_base=args.name_base,

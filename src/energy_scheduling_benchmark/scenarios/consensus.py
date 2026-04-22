@@ -383,6 +383,17 @@ def _scalar(v: Any) -> float:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--network",
+        type=str,
+        default="toy",
+        help=(
+            "Network source. Either 'toy' (the built-in 5-bus fixture), "
+            "a PyPSA example name "
+            f"({', '.join(available_examples())}), or a path to a "
+            ".nc/.h5/.xlsx file or CSV folder."
+        ),
+    )
     parser.add_argument("--delay-s", type=float, default=0.02)
     parser.add_argument("--loss-percent", type=float, default=0.00005)
     parser.add_argument("--name-base", type=str, default="consensus_withlosses")
@@ -392,8 +403,14 @@ def main(argv: list[str] | None = None) -> None:
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
+    if args.network == "toy":
+        scenario = build_toy_network(periods=args.simulate_days * 24)
+    else:
+        scenario = load_scenario(args.network)
+
     asyncio.run(
         execute_test_case(
+            scenario=scenario,
             delay_s=args.delay_s,
             loss_percent=args.loss_percent,
             name_base=args.name_base,
