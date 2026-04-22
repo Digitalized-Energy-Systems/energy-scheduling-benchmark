@@ -84,7 +84,12 @@ def solve_central_dispatch(
 
     n = len(costs)
     if n == 0:
-        return DispatchResult(success=False, dispatch=[], objective=float("nan"), solver_status="no_generators")
+        return DispatchResult(
+            success=False,
+            dispatch=[],
+            objective=float("nan"),
+            solver_status="no_generators",
+        )
 
     p_min_list = list(p_min) if p_min is not None else [0.0] * n
 

@@ -21,11 +21,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
-
 from mango.simulation.environment import Behavior, Environment
 from mango.util.clock import Clock
 
@@ -134,7 +133,9 @@ class PyPSABehavior(Behavior):
             STORAGE,
         ]
         self._renewable_carriers: frozenset[str] = frozenset(
-            renewable_carriers if renewable_carriers is not None else _DEFAULT_RENEWABLE_CARRIERS
+            renewable_carriers
+            if renewable_carriers is not None
+            else _DEFAULT_RENEWABLE_CARRIERS
         )
 
         if start_datetime is not None:
@@ -142,7 +143,7 @@ class PyPSABehavior(Behavior):
         elif self._timeseries:
             self._start_dt = self._earliest_timestamp()
         else:
-            self._start_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+            self._start_dt = datetime.now(UTC).replace(tzinfo=None)
 
         # aid -> {name: callable}
         self._observers: dict[str, dict[str, Callable[[], Any]]] = {}
@@ -164,7 +165,7 @@ class PyPSABehavior(Behavior):
         relevant_types: list[str] | None = None,
         renewable_carriers: Iterable[str] | None = None,
         start_datetime: datetime | None = None,
-    ) -> "PyPSABehavior":
+    ) -> PyPSABehavior:
         """Build a behavior directly from a :class:`pypsa.Network`.
 
         When *auto_timeseries* is ``True`` (default) and no explicit
@@ -193,7 +194,7 @@ class PyPSABehavior(Behavior):
         )
 
     @classmethod
-    def from_scenario(cls, scenario, **kwargs) -> "PyPSABehavior":
+    def from_scenario(cls, scenario, **kwargs) -> PyPSABehavior:
         """Build a behavior from a :class:`~energy_scheduling_benchmark.networks.ScenarioData` bundle."""
         return cls(
             net=scenario.net,
@@ -310,7 +311,11 @@ class PyPSABehavior(Behavior):
         df, predicate = self._dataframe_and_predicate(element_type)
         if df is None or df.empty:
             return []
-        mask = df.index.to_series().apply(predicate) if predicate else pd.Series(True, index=df.index)
+        mask = (
+            df.index.to_series().apply(predicate)
+            if predicate
+            else pd.Series(True, index=df.index)
+        )
         return [ComponentRef(element_type, str(idx)) for idx in df.index[mask]]
 
     def _dataframe_and_predicate(self, element_type: str):
@@ -326,7 +331,9 @@ class PyPSABehavior(Behavior):
             renewables = self._renewable_carriers
 
             def predicate(idx):
-                carrier = str(df.at[idx, _COL_CARRIER]) if _COL_CARRIER in df.columns else ""
+                carrier = (
+                    str(df.at[idx, _COL_CARRIER]) if _COL_CARRIER in df.columns else ""
+                )
                 return carrier.lower() not in renewables
 
             return df, predicate
@@ -338,7 +345,9 @@ class PyPSABehavior(Behavior):
             renewables = self._renewable_carriers
 
             def predicate(idx):
-                carrier = str(df.at[idx, _COL_CARRIER]) if _COL_CARRIER in df.columns else ""
+                carrier = (
+                    str(df.at[idx, _COL_CARRIER]) if _COL_CARRIER in df.columns else ""
+                )
                 return carrier.lower() in renewables
 
             return df, predicate
@@ -374,7 +383,11 @@ class PyPSABehavior(Behavior):
             return float(df.at[cid, _COL_P_SET]) if _COL_P_SET in df.columns else 0.0
 
         def cost() -> float:
-            return float(df.at[cid, _COL_MARGINAL_COST]) if _COL_MARGINAL_COST in df.columns else 0.0
+            return (
+                float(df.at[cid, _COL_MARGINAL_COST])
+                if _COL_MARGINAL_COST in df.columns
+                else 0.0
+            )
 
         return {
             "statics": statics,
@@ -442,7 +455,7 @@ class PyPSABehavior(Behavior):
             dt = first.to_pydatetime() if hasattr(first, "to_pydatetime") else first
             if earliest is None or dt < earliest:
                 earliest = dt
-        return earliest or datetime.now(timezone.utc).replace(tzinfo=None)
+        return earliest or datetime.now(UTC).replace(tzinfo=None)
 
 
 # ---------------------------------------------------------------------------

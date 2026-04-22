@@ -28,10 +28,11 @@ Typical use::
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
@@ -74,19 +75,21 @@ _EXAMPLE_MAP: dict[str, str] = {
 
 #: Carriers that should be classified as renewables across loaded networks.
 #: Superset of the PyPSA-Eur carrier vocabulary.
-DEFAULT_RENEWABLE_CARRIERS: frozenset[str] = frozenset({
-    "wind",
-    "onwind",
-    "offwind",
-    "offwind-ac",
-    "offwind-dc",
-    "solar",
-    "pv",
-    "hydro",
-    "ror",
-    "biomass",
-    "geothermal",
-})
+DEFAULT_RENEWABLE_CARRIERS: frozenset[str] = frozenset(
+    {
+        "wind",
+        "onwind",
+        "offwind",
+        "offwind-ac",
+        "offwind-dc",
+        "solar",
+        "pv",
+        "hydro",
+        "ror",
+        "biomass",
+        "geothermal",
+    }
+)
 
 
 def available_examples() -> list[str]:
@@ -130,7 +133,7 @@ def load_example(name: str, **kwargs: Any):
 # ---------------------------------------------------------------------------
 
 
-def load_network(source: "str | Path | pypsa.Network | Callable[[], Any]"):
+def load_network(source: str | Path | pypsa.Network | Callable[[], Any]):
     """Return a :class:`pypsa.Network` for any supported *source*.
 
     * ``pypsa.Network`` instance → returned as-is.
@@ -227,7 +230,7 @@ def load_pypower_case(case: str | int):
 def extract_timeseries(
     net,
     *,
-    renewable_carriers: "frozenset[str] | set[str] | None" = None,
+    renewable_carriers: frozenset[str] | set[str] | None = None,
 ) -> dict[ComponentRef, pd.Series]:
     """Extract per-component timeseries from ``net.<component>_t`` DataFrames.
 
@@ -329,10 +332,10 @@ class ScenarioData:
 
 
 def load_scenario(
-    source: "str | Path | pypsa.Network | Callable[[], Any]",
+    source: str | Path | pypsa.Network | Callable[[], Any],
     *,
     timeseries: dict[ComponentRef, pd.Series] | None = None,
-    renewable_carriers: "frozenset[str] | set[str] | None" = None,
+    renewable_carriers: frozenset[str] | set[str] | None = None,
     label: str | None = None,
 ) -> ScenarioData:
     """One-stop loader: returns :class:`ScenarioData` for any supported source.
@@ -415,27 +418,50 @@ def build_toy_network(
         net.add("Bus", f"bus{i}", v_nom=20.0)
 
     net.add(
-        "Generator", "thermal0", bus="bus0", carrier="gas",
-        p_nom=100.0, p_min_pu=0.1, p_max_pu=1.0,
-        marginal_cost=30.0, p_set=50.0,
+        "Generator",
+        "thermal0",
+        bus="bus0",
+        carrier="gas",
+        p_nom=100.0,
+        p_min_pu=0.1,
+        p_max_pu=1.0,
+        marginal_cost=30.0,
+        p_set=50.0,
     )
     net.add(
-        "Generator", "thermal1", bus="bus1", carrier="coal",
-        p_nom=60.0, p_min_pu=0.0833, p_max_pu=1.0,
-        marginal_cost=50.0, p_set=30.0,
+        "Generator",
+        "thermal1",
+        bus="bus1",
+        carrier="coal",
+        p_nom=60.0,
+        p_min_pu=0.0833,
+        p_max_pu=1.0,
+        marginal_cost=50.0,
+        p_set=30.0,
     )
     net.add(
-        "Generator", "wind0", bus="bus2", carrier="wind",
-        p_nom=40.0, p_min_pu=0.0, p_max_pu=1.0,
-        marginal_cost=0.0, p_set=20.0,
+        "Generator",
+        "wind0",
+        bus="bus2",
+        carrier="wind",
+        p_nom=40.0,
+        p_min_pu=0.0,
+        p_max_pu=1.0,
+        marginal_cost=0.0,
+        p_set=20.0,
     )
 
     net.add("Load", "load0", bus="bus3", p_set=45.0)
     net.add("Load", "load1", bus="bus4", p_set=30.0)
 
     net.add(
-        "StorageUnit", "batt0", bus="bus0",
-        p_nom=20.0, max_hours=4.0, marginal_cost=0.0, p_set=0.0,
+        "StorageUnit",
+        "batt0",
+        bus="bus0",
+        p_nom=20.0,
+        max_hours=4.0,
+        marginal_cost=0.0,
+        p_set=0.0,
     )
 
     wind_values = [0.3 + 0.4 * abs((i % 24 - 12) / 12) for i in range(periods)]

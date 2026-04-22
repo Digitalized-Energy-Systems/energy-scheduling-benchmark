@@ -26,7 +26,14 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-
+from distributed_resource_optimization import (
+    AveragingConsensusMessage,
+    LinearCostEconomicDispatchConsensusActor,
+    create_averaging_consensus_participant,
+)
+from distributed_resource_optimization.carrier.mango import (
+    DistributedOptimizationRole,
+)
 from mango import (
     Role,
     RoleAgent,
@@ -42,20 +49,10 @@ from mango.simulation.world import (
     record_agent_having,
 )
 
-from distributed_resource_optimization import (
-    AveragingConsensusMessage,
-    LinearCostEconomicDispatchConsensusActor,
-    create_averaging_consensus_participant,
-)
-from distributed_resource_optimization.carrier.mango import (
-    DistributedOptimizationRole,
-)
-
 from energy_scheduling_benchmark.environment import (
     LOAD,
     RENEWABLE,
     THERMAL,
-    ComponentRef,
     PowerUpdateInfo,
     PyPSABehavior,
 )
@@ -355,9 +352,7 @@ def _write_agent_recordings_csv(world, path: str) -> None:
             continue
         length = min([len(rec.time)] + [len(v) for v in rec.timeseries.values()])
         data = {
-            f"{key}:{aid}": [
-                _scalar(v) for v in values[:length]
-            ]
+            f"{key}:{aid}": [_scalar(v) for v in values[:length]]
             for aid, values in rec.timeseries.items()
         }
         data["time"] = rec.time[:length]

@@ -6,7 +6,6 @@ from datetime import datetime
 
 import pandas as pd
 import pytest
-
 from mango import RoleAgent
 from mango.simulation.environment import DefaultEnvironment
 from mango.simulation.world import create_world, discrete_step_until
@@ -41,7 +40,9 @@ class TestComponentRef:
 
 
 class TestPyPSABehaviorUnit:
-    def test_get_components_by_type_splits_thermal_and_renewable(self, five_bus_pypsa_net):
+    def test_get_components_by_type_splits_thermal_and_renewable(
+        self, five_bus_pypsa_net
+    ):
         net, ts, start = five_bus_pypsa_net
         behavior = PyPSABehavior(net=net, timeseries=ts, start_datetime=start)
 
@@ -56,7 +57,9 @@ class TestPyPSABehaviorUnit:
     def test_get_possible_components_returns_all_relevant(self, five_bus_pypsa_net):
         net, ts, start = five_bus_pypsa_net
         behavior = PyPSABehavior(
-            net=net, timeseries=ts, start_datetime=start,
+            net=net,
+            timeseries=ts,
+            start_datetime=start,
             relevant_types=[THERMAL, LOAD],
         )
         comps = behavior.get_possible_components()
@@ -89,8 +92,12 @@ class TestPyPSABehaviorUnit:
         index = pd.date_range("2024-01-01", periods=1, freq="h")
         ts_ref = {ComponentRef(THERMAL, g0): pd.Series([1.0], index=index)}
         ts_tup = {(THERMAL, g0): pd.Series([1.0], index=index)}
-        b_ref = PyPSABehavior(net=net, timeseries=ts_ref, start_datetime=datetime(2024, 1, 1))
-        b_tup = PyPSABehavior(net=net, timeseries=ts_tup, start_datetime=datetime(2024, 1, 1))
+        b_ref = PyPSABehavior(
+            net=net, timeseries=ts_ref, start_datetime=datetime(2024, 1, 1)
+        )
+        b_tup = PyPSABehavior(
+            net=net, timeseries=ts_tup, start_datetime=datetime(2024, 1, 1)
+        )
         assert b_ref._timeseries.keys() == b_tup._timeseries.keys()
 
 
@@ -159,7 +166,9 @@ class TestTimeseriesScheduling:
     async def test_renewable_timeseries_fires_events(self, five_bus_pypsa_net):
         net, timeseries, start = five_bus_pypsa_net
         behavior = PyPSABehavior(
-            net=net, timeseries=timeseries, start_datetime=start,
+            net=net,
+            timeseries=timeseries,
+            start_datetime=start,
             relevant_types=[THERMAL, RENEWABLE, LOAD, STORAGE],
         )
         environment = DefaultEnvironment(behavior=behavior)

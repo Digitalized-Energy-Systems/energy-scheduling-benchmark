@@ -8,8 +8,6 @@ import pandas as pd
 import pytest
 
 from energy_scheduling_benchmark.environment import (
-    LOAD,
-    RENEWABLE,
     ComponentRef,
 )
 

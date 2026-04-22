@@ -18,7 +18,7 @@ __all__ = ["visualize_results", "stacked_area", "agent_recording_as_plottable"]
 
 
 def visualize_results(
-    world: "SimulationWorld",
+    world: SimulationWorld,
     *,
     write_to: str = "observation.pdf",
     colormap: str = "Paired",
@@ -96,7 +96,7 @@ def stacked_area(
 
 
 def agent_recording_as_plottable(
-    world: "SimulationWorld", key: str
+    world: SimulationWorld, key: str
 ) -> tuple[list[float], np.ndarray, list[str]]:
     """Convert an :class:`~mango.simulation.world.AgentsRecording` into arrays.
 

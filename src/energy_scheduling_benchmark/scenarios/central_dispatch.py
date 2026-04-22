@@ -25,11 +25,10 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-
 from mango import (
     AgentAddress,
-    RoleAgent,
     Role,
+    RoleAgent,
     agent_composed_of,
 )
 from mango.simulation.communication import SimpleCommunicationSimulation
@@ -243,17 +242,22 @@ class Aggregator(Role):
         if not result.success:
             logger.warning(
                 "Central dispatch failed at %s: status=%s",
-                time, result.solver_status,
+                time,
+                result.solver_status,
             )
             return
 
         logger.info(
             "Central dispatch @ %s: demand=%.2f MW, cost=%.2f",
-            time, self.target, result.objective,
+            time,
+            self.target,
+            result.objective,
         )
         for gen, p in zip(all_gen, result.dispatch):
             asyncio.create_task(
-                self.context.send_message(PowerInfo(power_load=float(p), time=time), gen.addr)
+                self.context.send_message(
+                    PowerInfo(power_load=float(p), time=time), gen.addr
+                )
             )
 
 
@@ -306,12 +310,18 @@ async def execute_test_case(
         _install_component_role(ref, behavior, leader_addr, agent)
 
     record_agent_having(
-        world, "target", Aggregator,
+        world,
+        "target",
+        Aggregator,
         lambda a: next((r.target for r in a.roles if isinstance(r, Aggregator)), 0.0),
     )
     record_agent_having(
-        world, "P", GeneratorMonitoring,
-        lambda a: next((r.P for r in a.roles if isinstance(r, GeneratorMonitoring)), 0.0),
+        world,
+        "P",
+        GeneratorMonitoring,
+        lambda a: next(
+            (r.P for r in a.roles if isinstance(r, GeneratorMonitoring)), 0.0
+        ),
     )
 
     async with world:

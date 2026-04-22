@@ -25,9 +25,7 @@ class TestSolveCentralDispatch:
         assert result.dispatch[1] == pytest.approx(2.0)
 
     def test_infeasible_reports_failure(self):
-        result = solve_central_dispatch(
-            costs=[10.0], p_max=[1.0], demand=5.0
-        )
+        result = solve_central_dispatch(costs=[10.0], p_max=[1.0], demand=5.0)
         assert not result.success
 
     def test_empty_reports_failure(self):

@@ -2,6 +2,8 @@
 
 from energy_scheduling_benchmark.networks import (
     ScenarioData as TestNetwork,  # alias retained for older call-sites
+)
+from energy_scheduling_benchmark.networks import (
     build_toy_network,
     load_scenario,
 )
