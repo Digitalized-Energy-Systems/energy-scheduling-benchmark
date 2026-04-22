@@ -54,7 +54,7 @@ def pypsa_net_with_timeseries(simple_pypsa_net):
 
 @pytest.fixture
 def five_bus_pypsa_net():
-    from energy_scheduling_benchmark.scenarios._common import build_test_network
+    from energy_scheduling_benchmark.networks import build_toy_network
 
-    result = build_test_network(periods=72)
+    result = build_toy_network(periods=72)
     return result.net, result.timeseries, result.start
