@@ -150,6 +150,8 @@ class PyPSABehavior(Behavior):
         self._actions: dict[str, dict[str, Callable]] = {}
         self._ref_to_aid: dict[ComponentRef, str] = {}
         self._ref_to_agent: dict[ComponentRef, Any] = {}
+        self._original_nom_capacities: dict[ComponentRef, float] = {}
+        self._store_original_nominal_capacities()
 
     # ------------------------------------------------------------------
     # Factories
@@ -360,6 +362,15 @@ class PyPSABehavior(Behavior):
 
         return None, None
 
+    def _store_original_nominal_capacities(self) -> None:
+        ren_df, predicate = self._dataframe_and_predicate(RENEWABLE)
+        if ren_df is not None:
+            for idx in ren_df.index:
+                if predicate is None or predicate(idx):
+                    ref = ComponentRef(RENEWABLE, str(idx))
+                    if _COL_P_NOM in ren_df.columns:
+                        self._original_nom_capacities[ref] = float(ren_df.at[idx, _COL_P_NOM])
+
     def _dataframe_for(self, element_type: str):
         df, _ = self._dataframe_and_predicate(element_type)
         return df
@@ -419,8 +430,10 @@ class PyPSABehavior(Behavior):
             return
 
         if et == RENEWABLE:
-            # Treat value as per-unit availability of installed capacity
-            nominal = float(df.at[cid, _COL_P_NOM]) if _COL_P_NOM in df.columns else 1.0
+            nominal = self._original_nom_capacities.get(ref)
+            if nominal is None:
+                nominal = float(df.at[cid, _COL_P_NOM]) if _COL_P_NOM in df.columns else 1.0
+                self._original_nom_capacities[ref] = nominal
             df.at[cid, _COL_P_NOM] = value * nominal
         elif et == LOAD:
             df.at[cid, _COL_P_SET] = float(value)

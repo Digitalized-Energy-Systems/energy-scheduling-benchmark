@@ -58,7 +58,9 @@ from energy_scheduling_benchmark.networks import (
     load_scenario,
 )
 from energy_scheduling_benchmark.plotting import (
+    agent_recording_as_plottable,
     stacked_area,
+    visualize_results,
 )
 
 logger = logging.getLogger(__name__)
@@ -284,6 +286,7 @@ async def execute_test_case(
         return None
 
     load_series_0 = _lookup_ts(load_refs[0])
+    #print(load_series_0)
     if load_series_0 is None:
         raise RuntimeError("Load timeseries not found in scenario.timeseries.")
 
@@ -320,6 +323,7 @@ async def execute_test_case(
         statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
         cost = float(statics.get("marginal_cost", 0.0))
         p_nom = float(statics.get("p_nom", 0.0))
+        #print("count: ", len(gen_refs))
 
         # Build a p_max vector aligned with the load horizon.
         ts = _lookup_ts(ref)
@@ -335,15 +339,20 @@ async def execute_test_case(
                 p_max_vec = values
 
         if ref.element_type == STORAGE:
+            # sort out hydro as they are not charable
+            if "hydro" in ref.component_id:
+                continue
             # get data for storage from model and if not provided use substitutes
             p_min_pu = float(statics.get("p_min_pu", -1.0))
             p_max_pu = float(statics.get("p_max_pu", 1.0))
 
             p_charge_max = max(0.0, (-p_min_pu * p_nom) if p_min_pu < 0.0 else p_nom)
             p_discharge_max = max(0.0, p_max_pu * p_nom)
+            #print("charge ",p_charge_max, " discharge ", p_discharge_max)
 
-            max_hours = float(statics.get("max_hours", 1.0))
+            max_hours = float(statics.get("max_hours", 100.0))
             e_max = max(1e-6, p_nom * max_hours)
+            #print("e_max: ", e_max)
 
             eta_charge = float(statics.get("efficiency_store", statics.get("efficiency_charge", 0.95)))
             eta_discharge = float(statics.get("efficiency_dispatch", statics.get("efficiency_discharge", 0.95)))
@@ -367,8 +376,8 @@ async def execute_test_case(
                 e_final=e_initial,
                 soc_min=0.0,
                 soc_max=1.0,
-                charge_cost=0.0,#max(0.0, cost), # TODO remove after testing
-                discharge_cost=0.0,#max(0.0, cost),
+                charge_cost=max(0.0, cost),
+                discharge_cost=max(0.0, cost),
                 epsilon=0.1,
                 n_guess=n_gens,
             )
@@ -442,182 +451,32 @@ async def execute_test_case(
         DistributedOptimizationRole,
         lambda a: float(behavior.observe(a.aid, "active_power") or 0.0),
     )
-    record_agent_having(
-        world,
-        "lam",
-        DistributedOptimizationRole,
-        lambda a: _first_actor_lam(a),
-    )
+
 
     # -- Simulate --
     async with world:
         await discrete_step_until(world, simulate_days * 24 * 3600.0)
 
-    t_P, Y_P, labels_P, lam_P = _diffusion_outputs_for_schedule(
-        generator_aids=generator_aids,
-        schedule_by_aid=schedule_by_aid,
-        world=world,
-        horizon=horizon,
-        time_index=time_index,
-        start_dt=start_dt,
-    )
-
-    _write_agent_recordings_csv(
-        path=f"{name_base}-df.csv",
-        time_s=np.asarray(t_P, dtype=float),
-        generator_aids=labels_P,
-        P=Y_P,
-        target=np.asarray(target_series, dtype=float),
-        lam=lam_P,
-        target_aid=load_refs[0].component_id,
-    )
 
     # -- Output --
-    _plot_schedule_observation(
-        time_h=np.asarray(t_P, dtype=float) / 3600.0,
-        P=Y_P,
-        labels=labels_P,
-        target=np.asarray(target_series, dtype=float),
-        lam=lam_P,
-        write_to=f"{name_base}-observation.pdf",
-    )
+
+    t_P, Y_P, labels_P = agent_recording_as_plottable(world, "P")
+    t_t, Y_t, _ = agent_recording_as_plottable(world, "target")
+    target_series = Y_t[:, 0] if Y_t.size else np.zeros(len(t_P))
+
+    visualize_results(world, write_to=f"{name_base}-observation.pdf")
 
     stacked_area(
         np.asarray(t_P) / 3600.0,
         Y_P,
         labels_P,
-        np.asarray(target_series, dtype=float),
+        target_series,
         xlabel="Hour",
         ylabel="P in MW",
         title="Stacked power",
         write_to=f"{name_base}-stacked.pdf",
     )
 
-
-def _first_actor_P(agent: RoleAgent) -> float: # TODO really not needed
-    for role in agent.roles:
-        if isinstance(role, DistributedOptimizationRole):
-            p = np.asarray(role.algorithm.actor.P).ravel()
-            return float(p[0]) if p.size else 0.0
-    return 0.0
-
-
-def _first_actor_lam(agent: RoleAgent) -> float:
-    for role in agent.roles:
-        if isinstance(role, DistributedOptimizationRole):
-            lam = np.asarray(role.algorithm._lam).ravel()
-            return float(lam[0]) if lam.size else 0.0
-    return 0.0
-
-
-def _diffusion_outputs_for_schedule(
-    *,
-    generator_aids: list[str],
-    schedule_by_aid: dict[str, np.ndarray],
-    world,
-    horizon: int,
-    time_index,
-    start_dt,
-) -> tuple[list[float], np.ndarray, list[str], np.ndarray]:
-    """Build plottable arrays directly from the final diffusion schedules.
-
-    This intentionally avoids intermediate message-processing samples so the
-    CSV and stacked plot show exactly one row per scheduling timestep.
-    """
-    labels = list(generator_aids)
-    Y = np.zeros((horizon, len(labels)))
-    lam = np.zeros((horizon, len(labels)))
-
-    aid_to_agent = getattr(world, "_agents", {})
-    for j, aid in enumerate(labels):
-        schedule = np.asarray(schedule_by_aid.get(aid, np.zeros(horizon)), dtype=float).ravel()
-        if schedule.size < horizon:
-            padded = np.zeros(horizon, dtype=float)
-            padded[: schedule.size] = schedule
-            schedule = padded
-        Y[:, j] = schedule[:horizon]
-
-        agent = aid_to_agent.get(aid)
-        if agent is None:
-            continue
-        for role in agent.roles:
-            if isinstance(role, DistributedOptimizationRole):
-                lam_vec = np.asarray(role.algorithm._lam, dtype=float).ravel()
-                if lam_vec.size < horizon:
-                    padded = np.zeros(horizon, dtype=float)
-                    padded[: lam_vec.size] = lam_vec
-                    lam_vec = padded
-                lam[:, j] = lam_vec[:horizon]
-                break
-
-    time_s = []
-    for ts in time_index[:horizon]:
-        dt = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
-        time_s.append((dt - start_dt).total_seconds())
-
-    return time_s, Y, labels, lam
-
-
-def _write_agent_recordings_csv(
-    *,
-    path: str,
-    time_s: np.ndarray,
-    generator_aids: list[str],
-    P: np.ndarray,
-    target: np.ndarray,
-    lam: np.ndarray,
-    target_aid: str,
-) -> None:
-    """Write diffusion outputs with one row per scheduling timestep."""
-    data: dict[str, Any] = {"time": np.asarray(time_s, dtype=float)}
-    for j, aid in enumerate(generator_aids):
-        data[f"P:{aid}"] = np.asarray(P[:, j], dtype=float)
-    data[f"target:{target_aid}"] = np.asarray(target, dtype=float)
-    for j, aid in enumerate(generator_aids):
-        data[f"lam:{aid}"] = np.asarray(lam[:, j], dtype=float)
-
-    df = pd.DataFrame(data).set_index("time")
-    df.to_csv(path)
-
-
-def _plot_schedule_observation(
-    *,
-    time_h: np.ndarray,
-    P: np.ndarray,
-    labels: list[str],
-    target: np.ndarray,
-    lam: np.ndarray,
-    write_to: str,
-) -> None:
-    """Render a schedule-only observation figure (no diffusion-iteration noise)."""
-    import matplotlib.pyplot as plt
-
-    total_p = np.sum(P, axis=1) if P.size else np.zeros_like(target)
-    mean_lam = np.mean(lam, axis=1) if lam.size else np.zeros_like(target)
-
-    fig, axes = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
-    ax0, ax1 = axes
-
-    cmap = plt.get_cmap("Paired", max(len(labels), 1))
-    for j, aid in enumerate(labels):
-        ax0.plot(time_h, P[:, j], label=aid, linewidth=1.5, color=cmap(j))
-    ax0.plot(time_h, total_p, color="black", linewidth=2.0, label="sum(P)")
-    ax0.plot(time_h, target, color="red", linewidth=1.5, linestyle="--", label="target")
-    ax0.set_ylabel("P [MW]")
-    ax0.set_title("Diffusion schedule by timestep")
-    ax0.legend(loc="upper center", bbox_to_anchor=(0.5, 1.25), ncol=4, frameon=False)
-
-    for j, aid in enumerate(labels):
-        ax1.plot(time_h, lam[:, j], label=aid, linewidth=1.2, color=cmap(j), alpha=0.8)
-    ax1.plot(time_h, mean_lam, color="black", linewidth=2.0, label="mean(lam)")
-    ax1.set_xlabel("Hour")
-    ax1.set_ylabel("lambda")
-    ax1.set_title("Final diffusion price trajectory")
-    ax1.legend(loc="upper center", bbox_to_anchor=(0.5, 1.22), ncol=4, frameon=False)
-
-    fig.tight_layout()
-    fig.savefig(write_to)
-    plt.close(fig)
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -672,7 +531,8 @@ if __name__ == "__main__":
     simulate_days = 3
 
     #scenario = build_toy_network(periods=simulate_days * 24) # toy
-    scenario = load_scenario("storage-hvdc")
+    #scenario = load_scenario("storage-hvdc")
+    scenario = load_scenario("../networks/base_s_1_elec_.nc")
 
     logging.basicConfig(level=getattr(logging, "INFO", logging.INFO))
 
