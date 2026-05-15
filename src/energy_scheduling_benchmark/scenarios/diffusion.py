@@ -467,6 +467,8 @@ async def execute_test_case(
     t_t, Y_t, _ = agent_recording_as_plottable(world, "target")
     target_series = Y_t[:, 0] if Y_t.size else np.zeros(len(t_P))
 
+    _write_agent_recordings_csv(world, f"{name_base}-df.csv")
+
     visualize_results(world, write_to=f"{name_base}-observation.pdf")
 
     stacked_area(
@@ -479,6 +481,30 @@ async def execute_test_case(
         title="Stacked power",
         write_to=f"{name_base}-stacked.pdf",
     )
+
+    def _write_agent_recordings_csv(world, path: str) -> None:
+        """Serialise every per-agent recording as one wide CSV.
+
+        Columns are named ``{key}:{aid}``; values are scalarised to floats.
+        """
+        frames: list[pd.DataFrame] = []
+        for key, rec in world.data_agent_collections.items():
+            if not rec.timeseries:
+                continue
+            length = min([len(rec.time)] + [len(v) for v in rec.timeseries.values()])
+            data = {
+                f"{key}:{aid}": [_scalar(v) for v in values[:length]]
+                for aid, values in rec.timeseries.items()
+            }
+            data["time"] = rec.time[:length]
+            frames.append(pd.DataFrame(data).set_index("time"))
+
+        if not frames:
+            pd.DataFrame().to_csv(path)
+            return
+
+        df = pd.concat(frames, axis=1)
+        df.to_csv(path)
 
 
 # ---------------------------------------------------------------------------
@@ -535,7 +561,7 @@ if __name__ == "__main__":
 
     #scenario = build_toy_network(periods=simulate_days * 24) # toy
     #scenario = load_scenario("storage-hvdc")
-    scenario = load_scenario("../networks/base_s_5_elec_.nc")
+    scenario = load_scenario("../networks/base_s_1_elec_.nc")
 
     logging.basicConfig(level=getattr(logging, "INFO", logging.INFO))
 
