@@ -315,6 +315,8 @@ async def execute_test_case(
 
     # -- Generator agents --
     gen_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, STORAGE])
+    # sort out hydro as they are not charable
+    gen_refs = [gen for gen in gen_refs if "hydro" not in gen.component_id]
     n_gens = len(gen_refs)
     generator_aids = [ref.component_id for ref in gen_refs]
 
@@ -339,9 +341,6 @@ async def execute_test_case(
                 p_max_vec = values
 
         if ref.element_type == STORAGE:
-            # sort out hydro as they are not charable
-            if "hydro" in ref.component_id:
-                continue
             # get data for storage from model and if not provided use substitutes
             p_min_pu = float(statics.get("p_min_pu", -1.0))
             p_max_pu = float(statics.get("p_max_pu", 1.0))
