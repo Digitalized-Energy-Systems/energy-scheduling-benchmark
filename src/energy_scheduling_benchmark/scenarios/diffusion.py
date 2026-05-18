@@ -318,8 +318,7 @@ async def execute_test_case(
     # sort out hydro as they are not charable
     gen_refs = [gen for gen in gen_refs if "hydro" not in gen.component_id]
     # sort out devices with zero max power/nominal power
-    statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
-    gen_refs = [gen for gen in gen_refs if 0.0 == statics.get("p_nom", 00)]
+    gen_refs = [gen for gen in gen_refs if behavior._dataframe_for(gen.element_type).loc[gen.component_id].get("p_nom", 0.0) != 0.0]
 
     n_gens = len(gen_refs)
     generator_aids = [ref.component_id for ref in gen_refs]
@@ -565,7 +564,7 @@ if __name__ == "__main__":
 
     #scenario = build_toy_network(periods=simulate_days * 24) # toy
     #scenario = load_scenario("storage-hvdc")
-    scenario = load_scenario("../networks/base_s_1_elec_.nc")
+    scenario = load_scenario("../networks/base_s_1_elec_2020.nc")
 
     logging.basicConfig(level=getattr(logging, "INFO", logging.INFO))
 
