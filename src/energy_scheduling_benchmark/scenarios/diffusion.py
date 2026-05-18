@@ -482,29 +482,33 @@ async def execute_test_case(
         write_to=f"{name_base}-stacked.pdf",
     )
 
-    def _write_agent_recordings_csv(world, path: str) -> None:
-        """Serialise every per-agent recording as one wide CSV.
+def _write_agent_recordings_csv(world, path: str) -> None:
+    """Serialise every per-agent recording as one wide CSV.
 
-        Columns are named ``{key}:{aid}``; values are scalarised to floats.
-        """
-        frames: list[pd.DataFrame] = []
-        for key, rec in world.data_agent_collections.items():
-            if not rec.timeseries:
-                continue
-            length = min([len(rec.time)] + [len(v) for v in rec.timeseries.values()])
-            data = {
-                f"{key}:{aid}": [_scalar(v) for v in values[:length]]
-                for aid, values in rec.timeseries.items()
-            }
-            data["time"] = rec.time[:length]
-            frames.append(pd.DataFrame(data).set_index("time"))
+    Columns are named ``{key}:{aid}``; values are scalarised to floats.
+    """
+    frames: list[pd.DataFrame] = []
+    for key, rec in world.data_agent_collections.items():
+        if not rec.timeseries:
+            continue
+        length = min([len(rec.time)] + [len(v) for v in rec.timeseries.values()])
+        data = {
+            f"{key}:{aid}": [_scalar(v) for v in values[:length]]
+            for aid, values in rec.timeseries.items()
+        }
+        data["time"] = rec.time[:length]
+        frames.append(pd.DataFrame(data).set_index("time"))
 
-        if not frames:
-            pd.DataFrame().to_csv(path)
-            return
+    if not frames:
+        pd.DataFrame().to_csv(path)
+        return
 
-        df = pd.concat(frames, axis=1)
-        df.to_csv(path)
+    df = pd.concat(frames, axis=1)
+    df.to_csv(path)
+
+def _scalar(v: Any) -> float:
+    arr = np.asarray(v).ravel()
+    return float(arr[0]) if arr.size else 0.0
 
 
 # ---------------------------------------------------------------------------
