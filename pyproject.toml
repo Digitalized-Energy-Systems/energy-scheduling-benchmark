@@ -34,6 +34,8 @@ dev = [
 [project.scripts]
 esb-consensus = "energy_scheduling_benchmark.scenarios.consensus:main"
 esb-central-dispatch = "energy_scheduling_benchmark.scenarios.central_dispatch:main"
+esb-admm = "energy_scheduling_benchmark.scenarios.admm:main"
+esb-diffusion = "energy_scheduling_benchmark.scenarios.diffusion:main"
 
 [tool.uv.sources]
 mango-agents = { path = "../mango", editable = true }
