@@ -82,9 +82,10 @@ def stacked_area(
             alpha=0.85,
             color=cmap(j),
             edgecolor="none",
+            step="post",
         )
 
-    ax.plot(time, target, color="black", linewidth=2.0, label="Target")
+    ax.plot(time, target, color="black", linewidth=2.0, label="Target", drawstyle="steps-post")
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
