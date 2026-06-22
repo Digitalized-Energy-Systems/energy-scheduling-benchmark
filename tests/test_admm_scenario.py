@@ -1,8 +1,7 @@
-"""Tests for the ADMM scenario. Generated with AI.
+"""Tests for the ADMM scenario.
 
-Covers unit-level helpers (FixedScheduleActor, _lookup_ts, _scalar,
-_make_finish_callback) and an end-to-end integration smoke test of
-execute_test_case on the built-in toy network.
+Covers unit-level helpers (_lookup_ts, _scalar, _make_finish_callback) and an
+end-to-end integration smoke test of execute_test_case on the built-in toy network.
 """
 
 from __future__ import annotations
@@ -15,9 +14,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from distributed_resource_optimization import solve_battery_price_schedule
+
 from energy_scheduling_benchmark.environment import ComponentRef
 from energy_scheduling_benchmark.networks import ScenarioData, build_toy_network
-from distributed_resource_optimization.algorithm.admm.core import ADMMMessage
 from energy_scheduling_benchmark.scenarios.admm import (
     FixedScheduleActor,
     _lookup_ts,
@@ -25,55 +25,6 @@ from energy_scheduling_benchmark.scenarios.admm import (
     _scalar,
     execute_test_case,
 )
-
-
-class TestFixedScheduleActor:
-    """FixedScheduleActor should always reply with its pre-set schedule."""
-
-    async def test_replies_with_schedule_on_admm_message(self):
-        schedule = np.array([1.0, 2.0, 3.0])
-        actor = FixedScheduleActor(schedule)
-        replies = []
-
-        class FakeCarrier:
-            def reply_to_other(self, answer, meta):
-                replies.append(answer)
-
-        await actor.on_exchange_message(
-            FakeCarrier(), ADMMMessage(v=np.zeros(3), rho=1.0, z=np.zeros(3)), {}
-        )
-        assert len(replies) == 1
-        assert np.allclose(replies[0].x, schedule)
-
-    async def test_ignores_non_admm_messages(self):
-        actor = FixedScheduleActor(np.array([1.0]))
-        carrier = MagicMock()
-        await actor.on_exchange_message(carrier, "not an admm message", {})
-        carrier.reply_to_other.assert_not_called()
-
-    def test_internal_copy_is_independent_of_input_array(self):
-        original = np.array([1.0, 2.0])
-        actor = FixedScheduleActor(original)
-        original[0] = 99.0
-        assert actor.x[0] == pytest.approx(1.0)
-
-    async def test_returns_same_schedule_regardless_of_price_signal(self):
-        schedule = np.array([5.0, -3.0])
-        actor = FixedScheduleActor(schedule)
-        replies = []
-
-        class FakeCarrier:
-            def reply_to_other(self, answer, meta):
-                replies.append(answer.x.copy())
-
-        rng = np.random.default_rng(0)
-        for _ in range(4):
-            msg = ADMMMessage(v=rng.random(2), rho=0.5, z=rng.random(2))
-            await actor.on_exchange_message(FakeCarrier(), msg, {})
-
-        assert len(replies) == 4
-        for r in replies:
-            assert np.allclose(r, schedule)
 
 
 class TestLookupTs:
@@ -224,72 +175,6 @@ class TestMakeFinishCallback:
         cb(algorithm, FakeRole(), "gen0")
 
 
-class TestStorageTwoPassPreScheduling:
-    """The 2-pass storage logic is exercised end-to-end via execute_test_case,
-    but the key invariant—terminal SOC close to initial SOC—can be checked
-    by inspecting the _storage_schedule_from_price helper directly."""
-
-    def test_schedule_respects_soc_bounds(self):
-        from distributed_resource_optimization import create_admm_storage_actor
-        from distributed_resource_optimization.algorithm.admm.economic_dispatch import (
-            _storage_schedule_from_price,
-        )
-
-        horizon = 6
-        actor = create_admm_storage_actor(
-            horizon=horizon,
-            e_max=20.0,
-            p_charge_max=5.0,
-            p_discharge_max=5.0,
-            eta_charge=0.95,
-            eta_discharge=0.95,
-            e_initial=0.5,
-            e_final=0.5,
-            n_participants=1,
-        )
-        pi = np.array([0.0, 0.5, 1.0, 0.8, 0.3, 0.1])
-        sched = _storage_schedule_from_price(actor, pi)
-
-        assert len(sched) == horizon
-        assert np.all(sched >= -actor.p_charge_max - 1e-6)
-        assert np.all(sched <= actor.p_discharge_max + 1e-6)
-
-    def test_terminal_soc_close_to_initial(self):
-        from distributed_resource_optimization import create_admm_storage_actor
-        from distributed_resource_optimization.algorithm.admm.economic_dispatch import (
-            _storage_schedule_from_price,
-        )
-
-        horizon = 24
-        e_max = 50.0
-        e_initial = 0.5
-        actor = create_admm_storage_actor(
-            horizon=horizon,
-            e_max=e_max,
-            p_charge_max=10.0,
-            p_discharge_max=10.0,
-            eta_charge=0.95,
-            eta_discharge=0.95,
-            e_initial=e_initial,
-            e_final=e_initial,
-            n_participants=1,
-        )
-        rng = np.random.default_rng(42)
-        pi = rng.uniform(0.0, 2.0, horizon)
-        sched = _storage_schedule_from_price(actor, pi)
-
-        # Simulate SOC trajectory
-        e = e_initial * e_max
-        for p in sched:
-            if p >= 0:
-                e -= p / actor.eta_discharge
-            else:
-                e -= p * actor.eta_charge
-            e = float(np.clip(e, 0.0, e_max))
-
-        assert abs(e - e_initial * e_max) < 1.0
-
-
 class TestADMMScenarioIntegration:
     """End-to-end integration tests using the toy network."""
 
@@ -364,3 +249,136 @@ class TestADMMScenarioIntegration:
         assert len(power_cols) >= 1
         # At least one generator must have dispatched some power
         assert any(df[col].abs().max() > 1e-3 for col in power_cols)
+
+    async def test_thermal_generators_dispatch_non_trivially(self, tmp_path):
+        """Thermals must produce positive power — verifies the merit-order fix
+        that ensures thermals are not stuck at zero due to a wrong actor type."""
+        scenario = build_toy_network(periods=24)
+        name_base = str(tmp_path / "admm")
+        await execute_test_case(
+            scenario=scenario,
+            delay_s=0.0,
+            loss_percent=0.0,
+            name_base=name_base,
+            simulate_days=1,
+        )
+        df = pd.read_csv(f"{name_base}-df.csv", index_col=0)
+        thermal_cols = [c for c in df.columns if "thermal" in c.lower()]
+        assert thermal_cols, "No thermal columns in CSV"
+        # At least the cheapest thermal must dispatch substantially
+        assert any(df[col].max() > 10.0 for col in thermal_cols)
+
+    async def test_total_generation_tracks_demand(self, tmp_path):
+        """Sum of all generator power should approximate recorded demand
+        (after the first timestep where initial state is recorded)."""
+        scenario = build_toy_network(periods=24)
+        name_base = str(tmp_path / "admm")
+        await execute_test_case(
+            scenario=scenario,
+            delay_s=0.0,
+            loss_percent=0.0,
+            name_base=name_base,
+            simulate_days=1,
+        )
+        df = pd.read_csv(f"{name_base}-df.csv", index_col=0)
+        power_cols = [c for c in df.columns if c.startswith("P:")]
+        target_cols = [c for c in df.columns if "target" in c.lower()]
+        assert power_cols and target_cols
+
+        total_gen = df[power_cols].sum(axis=1)
+        target = df[target_cols[0]]
+
+        # Skip the first row which captures the pre-schedule initial state.
+        tail_gen = total_gen.iloc[1:]
+        tail_tgt = target.iloc[1:]
+
+        # After the schedule is applied, generation must be within 20 MW of demand.
+        gap = (tail_tgt - tail_gen).abs()
+        assert float(gap.mean()) < 20.0, f"Mean generation-demand gap {gap.mean():.1f} MW is too large"
+
+
+class TestFixedScheduleActor:
+    """FixedScheduleActor always replies with its pre-computed schedule."""
+
+    async def test_replies_with_fixed_schedule(self):
+        from unittest.mock import MagicMock, AsyncMock
+        from distributed_resource_optimization import ADMMMessage
+
+        sched = np.array([1.0, 2.0, 3.0])
+        actor = FixedScheduleActor(sched)
+
+        replies = []
+
+        class FakeCarrier:
+            def reply_to_other(self, msg, meta):
+                replies.append(msg)
+
+        msg = MagicMock(spec=ADMMMessage)
+        await actor.on_exchange_message(FakeCarrier(), msg, {})
+
+        assert len(replies) == 1
+        assert np.allclose(replies[0].x, sched)
+
+    def test_x_is_a_copy(self):
+        original = np.array([1.0, 2.0])
+        actor = FixedScheduleActor(original)
+        original[0] = 99.0
+        assert actor.x[0] == pytest.approx(1.0)
+
+    async def test_ignores_non_admm_messages(self):
+        actor = FixedScheduleActor(np.array([1.0]))
+        calls = []
+
+        class FakeCarrier:
+            def reply_to_other(self, msg, meta):
+                calls.append(msg)
+
+        await actor.on_exchange_message(FakeCarrier(), "not-an-admm-message", {})
+        assert calls == []
+
+
+class TestSolveBatteryPriceSchedule:
+    """solve_battery_price_schedule solves an SOC-constrained LP."""
+
+    def test_discharges_when_price_exceeds_cost(self):
+        # High uniform price, zero discharge cost → should discharge
+        pi = np.full(6, 10.0)
+        sched = solve_battery_price_schedule(
+            horizon=6, pi=pi,
+            e_max=20.0, p_charge_max=5.0, p_discharge_max=5.0,
+            eta_charge=1.0, eta_discharge=1.0,
+            e_initial=0.5, e_final=0.5,
+        )
+        assert sched is not None
+        assert float(np.max(sched)) > 0.1
+
+    def test_soc_never_goes_negative(self):
+        pi = np.array([1.0, 5.0, 1.0, 5.0, 1.0, 5.0])
+        sched = solve_battery_price_schedule(
+            horizon=6, pi=pi,
+            e_max=10.0, p_charge_max=3.0, p_discharge_max=3.0,
+            eta_charge=0.95, eta_discharge=0.95,
+            e_initial=0.5, e_final=0.5,
+        )
+        e = 0.5 * 10.0
+        for p in sched:
+            if p >= 0:
+                e -= p / 0.95
+            else:
+                e += (-p) * 0.95
+            assert e >= -1e-4
+
+    def test_terminal_soc_is_respected(self):
+        pi = np.full(4, 1.0)
+        sched = solve_battery_price_schedule(
+            horizon=4, pi=pi,
+            e_max=10.0, p_charge_max=5.0, p_discharge_max=5.0,
+            e_initial=0.3, e_final=0.3,
+        )
+        e = 0.3 * 10.0
+        for p in sched:
+            if p >= 0:
+                e -= p
+            else:
+                e += (-p)
+        assert abs(e - 0.3 * 10.0) < 0.5

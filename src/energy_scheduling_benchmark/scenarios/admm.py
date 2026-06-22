@@ -1,42 +1,14 @@
 """Distributed economic-dispatch scenario using sharing ADMM.
 
-Scenario flow
--------------
-1. All generator agents (thermal, renewable, storage) and a single leader
-   agent are registered in a mango discrete-event simulation world.
-2. At simulation start the leader fires one sharing-ADMM optimisation run:
-   - Thermal and renewable units are given box-constrained economic-dispatch
-     actors and participate directly in merit-order clearing.
-   - Storage units are pre-scheduled separately (see below) and participate
-     as fixed-schedule actors so their SOC dynamics do not distort the
-     clearing prices seen by thermals.
-3. Once every generator reports back, the leader holds a full per-timestep
-   schedule for every unit.  As simulation time advances and each load
-   timestep fires, the leader applies the corresponding set-points.
-
-Storage pre-scheduling (2-pass)
---------------------------------
-``LinearCostEconomicDispatchADMMFlexActor`` responds only to the global
-consensus vector *z*, not to the per-participant correction *v*.  The
-sharing-ADMM coordinator therefore uses a single-iteration shortcut when
-generator specs are provided: it analytically computes the merit-order
-clearing price via bisection and pre-sets *z = clearing_price / (ρ·N)*, so
-every actor receives exactly the right price signal in one shot.
-
-Storage cannot be part of those specs because its effective per-timestep
-bounds depend on SOC from previous timesteps — the bisection would assume
-static bounds, thermals would under-dispatch by the amount attributed to
-storage, and the schedule would have a systematic gap.
-
-Instead, storage is scheduled in two passes:
-  Pass 1 – compute clearing prices from thermals/wind only on the original
-            demand target.  Derive each storage unit's SOC-aware schedule
-            from those prices via the bias-bisection algorithm.
-  Pass 2 – adjust the thermal target: ``adjusted = demand − storage_net``.
-            Run ADMM with this adjusted target so thermals cover exactly what
-            storage does not.  Storage agents carry a ``FixedScheduleActor``
-            that replays the pass-1 schedule regardless of the (adjusted)
-            price signal, breaking the circular dependency.
+Two-pass approach
+-----------------
+1. Merit-order clearing prices are computed from thermal/renewable specs.
+2. Each storage unit is pre-scheduled by a CVXPY LP (:func:`solve_battery_price_schedule`)
+   that enforces SOC constraints exactly; its output is subtracted from the
+   demand target and replayed via a :class:`FixedScheduleActor` during ADMM.
+3. Thermals and renewables respond to the clearing price in one ADMM round via
+   :class:`LinearCostEconomicDispatchADMMFlexActor`.
+4. As simulation time advances the leader applies per-timestep set-points.
 """
 
 from __future__ import annotations
@@ -50,17 +22,15 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from distributed_resource_optimization import (
+    ADMMAnswer,
+    ADMMGeneratorSpec,
+    ADMMMessage,
     create_admm_economic_dispatch_actor,
     create_admm_sharing_data,
-    create_admm_storage_actor,
     create_sharing_target_distance_admm_coordinator,
-)
-from distributed_resource_optimization.algorithm.admm.core import ADMMAnswer, ADMMMessage
-from distributed_resource_optimization.algorithm.admm.economic_dispatch import (
-    _storage_schedule_from_price,
+    solve_battery_price_schedule,
 )
 from distributed_resource_optimization.algorithm.admm.sharing_admm import (
-    ADMMGeneratorSpec,
     _z_from_clearing_prices,
     create_admm_start,
 )
@@ -119,26 +89,27 @@ class ADMMFinishedInfo:
 
 
 # ---------------------------------------------------------------------------
-# Fixed-schedule actor
+# Actors
 # ---------------------------------------------------------------------------
 
 
 class FixedScheduleActor:
-    """ADMM participant that always returns a pre-computed schedule.
+    """ADMM participant that always replies with a pre-computed schedule.
 
-    Storage units are pre-scheduled from initial (undistorted) clearing
-    prices.  This actor lets storage participate in the ADMM round –
-    so the coordinator receives the expected number of replies – while
-    guaranteeing that the schedule applied in simulation is the one
-    derived from pass-1 clearing prices, not the (distorted) pass-2 signal.
+    Used for storage units whose schedule was computed by the CVXPY LP before
+    the ADMM run.  Participating in the ADMM protocol allows the coordinator
+    to wait for all generators (including storage) to reply.
     """
 
     def __init__(self, schedule: np.ndarray) -> None:
         self.x = np.asarray(schedule, dtype=float).copy()
 
-    async def on_exchange_message(self, carrier: Any, message_data: Any, meta: Any) -> None:
-        if isinstance(message_data, ADMMMessage):
-            carrier.reply_to_other(ADMMAnswer(x=self.x), meta)
+    async def on_exchange_message(
+        self, carrier: Any, message_data: Any, meta: dict
+    ) -> None:
+        if not isinstance(message_data, ADMMMessage):
+            return
+        carrier.reply_to_other(ADMMAnswer(x=self.x), meta)
 
 
 # ---------------------------------------------------------------------------
@@ -204,10 +175,9 @@ class PowerLoadAggregator(Role):
         generator_aids: list[str],
         admm_trigger: Any,
         time_to_index: dict[float, int],
-        target_series: np.ndarray,
+        adjusted_target_series: np.ndarray,
+        gen_specs: list[ADMMGeneratorSpec],
         schedule_by_aid: dict[str, np.ndarray],
-        generator_specs: list[ADMMGeneratorSpec],
-        dispatch_epsilon: float = 0.1,
     ) -> None:
         super().__init__()
         self._behavior = behavior
@@ -215,10 +185,9 @@ class PowerLoadAggregator(Role):
         self._generator_aids = generator_aids
         self._trigger = admm_trigger
         self._time_to_index = time_to_index
-        self._target_series = target_series
+        self._adjusted_target_series = adjusted_target_series
+        self._gen_specs = gen_specs
         self._schedule_by_aid = schedule_by_aid
-        self._generator_specs = generator_specs
-        self._dispatch_epsilon = dispatch_epsilon
 
         self._admm_ready: bool = False
         self._admm_finished_aids: set[str] = set()
@@ -237,10 +206,8 @@ class PowerLoadAggregator(Role):
 
     def on_ready(self) -> None:
         data = create_admm_sharing_data(
-            target=np.asarray(self._target_series, dtype=float),
-            priorities=np.ones(len(self._target_series)),
-            generators=self._generator_specs,
-            epsilon=self._dispatch_epsilon,
+            target=np.asarray(self._adjusted_target_series, dtype=float),
+            generators=self._gen_specs if self._gen_specs else None,
         )
         asyncio.create_task(
             self.context.send_message(
@@ -389,7 +356,6 @@ async def execute_test_case(
     time_index = load_series_0.index
     horizon = len(time_index)
 
-    # Sum all load timeseries into a single demand target vector.
     target_series = np.zeros(horizon, dtype=float)
     for ref in load_refs:
         s = _lookup_ts(scenario, ref)
@@ -397,7 +363,6 @@ async def execute_test_case(
             raise RuntimeError(f"Load timeseries missing for {ref}.")
         target_series += np.asarray(s.reindex(time_index), dtype=float)
 
-    # Map simulation-seconds → horizon index so set-points can be applied on time.
     start_dt = behavior.start_datetime
     time_to_index: dict[float, int] = {}
     for i, ts in enumerate(time_index):
@@ -412,10 +377,10 @@ async def execute_test_case(
         if behavior._dataframe_for(g.element_type).loc[g.component_id].get("p_nom", 0.0) != 0.0
     ]
 
-    n_gens = len(gen_refs)
     generator_aids = [ref.component_id for ref in gen_refs]
-    dispatch_epsilon = 0.1
+    n_gens = len(gen_refs)
     rho = 0.2
+    dispatch_epsilon = 0.1
 
     schedule_by_aid: dict[str, np.ndarray] = {}
     leader_addr_ref: dict[str, Any | None] = {"addr": None}
@@ -423,12 +388,11 @@ async def execute_test_case(
         leader_addr_ref=leader_addr_ref, schedule_by_aid=schedule_by_aid
     )
 
-    gen_specs: list[ADMMGeneratorSpec] = []
     gen_agents: list[RoleAgent] = []
-    # Storage actors are built first but registered after pass-1 prices are known.
-    storage_refs: list[Any] = []
-    storage_precompute_actors: list[Any] = []
+    gen_specs: list[ADMMGeneratorSpec] = []  # merit-order specs (thermals + renewables)
 
+    # --- Pass 1: thermals and renewables ---
+    storage_refs_and_params: list[tuple[Any, dict]] = []
     for ref in gen_refs:
         statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
         cost = float(statics.get("marginal_cost", 0.0))
@@ -442,7 +406,6 @@ async def execute_test_case(
             p_max_vec = values * p_nom if ref.element_type == RENEWABLE else values
 
         if ref.element_type == STORAGE:
-            # Extract PyPSA storage parameters.
             p_min_pu = float(statics.get("p_min_pu", -1.0))
             p_max_pu = float(statics.get("p_max_pu", 1.0))
             p_charge_max = max(0.0, -p_min_pu * p_nom if p_min_pu < 0.0 else p_nom)
@@ -451,79 +414,60 @@ async def execute_test_case(
             eta_charge = float(statics.get("efficiency_store", statics.get("efficiency_charge", 0.95)))
             eta_discharge = float(statics.get("efficiency_dispatch", statics.get("efficiency_discharge", 0.95)))
             soc_initial_raw = statics.get("state_of_charge_initial", np.nan)
-            # Fall back to 50 % SOC when the network does not specify an initial SOC.
             soc_initial_abs = (
                 float(soc_initial_raw)
                 if np.isfinite(soc_initial_raw) and float(soc_initial_raw) > 1e-9
                 else 0.5 * e_max
             )
             e_initial = float(np.clip(soc_initial_abs / e_max, 0.0, 1.0))
+            storage_refs_and_params.append((ref, {
+                "p_charge_max": p_charge_max,
+                "p_discharge_max": p_discharge_max,
+                "e_max": e_max,
+                "eta_charge": max(1e-6, eta_charge),
+                "eta_discharge": max(1e-6, eta_discharge),
+                "e_initial": e_initial,
+                "e_final": e_initial,
+                "charge_cost": max(0.0, cost),
+                "discharge_cost": max(0.0, cost),
+            }))
+            continue  # processed in pass 2
 
-            storage_refs.append(ref)
-            storage_precompute_actors.append(
-                create_admm_storage_actor(
-                    horizon=horizon,
-                    e_max=e_max,
-                    p_charge_max=p_charge_max,
-                    p_discharge_max=p_discharge_max,
-                    eta_charge=max(1e-6, eta_charge),
-                    eta_discharge=max(1e-6, eta_discharge),
-                    e_initial=e_initial,
-                    e_final=e_initial,
-                    charge_cost=max(0.0, cost),
-                    discharge_cost=max(0.0, cost),
-                    epsilon=dispatch_epsilon,
-                    n_participants=n_gens,
-                )
-            )
-            # Storage agent registration is deferred to the 2-pass block below.
+        lb_vec = np.zeros(horizon, dtype=float)
+        gen_specs.append(ADMMGeneratorSpec(
+            cost=np.full(horizon, cost, dtype=float),
+            lb=lb_vec,
+            ub=np.asarray(p_max_vec, dtype=float),
+        ))
+        actor = create_admm_economic_dispatch_actor(
+            lb_vec, np.asarray(p_max_vec, dtype=float),
+            cost=cost, n_participants=n_gens, epsilon=dispatch_epsilon,
+        )
+        agent = agent_composed_of(ADMMGeneratorRole(actor, finish_callback))
+        world.register(agent, suggested_aid=ref.component_id)
+        world.environment.install(agent, id=ref)
+        gen_agents.append(agent)
 
-        else:
-            lb_vec = np.zeros(horizon, dtype=float)
-            ub_vec = np.asarray(p_max_vec, dtype=float)
-            actor = create_admm_economic_dispatch_actor(
-                lb=lb_vec, u=ub_vec, cost=cost,
-                n_participants=n_gens, epsilon=dispatch_epsilon,
-            )
-            gen_specs.append(ADMMGeneratorSpec(
-                cost=np.full(horizon, cost, dtype=float), lb=lb_vec, ub=ub_vec,
-            ))
-            agent = agent_composed_of(ADMMGeneratorRole(actor, finish_callback))
-            world.register(agent, suggested_aid=ref.component_id)
-            world.environment.install(agent, id=ref)
-            gen_agents.append(agent)
-
-    # --- Storage 2-pass pre-scheduling ---
-    # Pass 1: derive clearing prices from thermals/wind on the original demand.
-    # Pass 2: register each storage unit as a FixedScheduleActor and adjust the
-    #         thermal target so thermals exactly cover demand minus storage.
-    if storage_precompute_actors and gen_specs:
+    # --- Compute clearing prices for battery pre-scheduling ---
+    adjusted_target = target_series.copy()
+    if gen_specs:
         precompute_data = create_admm_sharing_data(
-            target=target_series, generators=gen_specs, epsilon=dispatch_epsilon,
+            target=target_series, generators=gen_specs, epsilon=dispatch_epsilon
         )
         pi0 = rho * n_gens * _z_from_clearing_prices(precompute_data, rho, n_gens)
-
-        storage_net = np.zeros(horizon, dtype=float)
-        for ref, precompute_actor in zip(storage_refs, storage_precompute_actors):
-            sched = _storage_schedule_from_price(precompute_actor, pi0)
-            storage_net += sched
-            agent = agent_composed_of(ADMMGeneratorRole(FixedScheduleActor(sched), finish_callback))
-            world.register(agent, suggested_aid=ref.component_id)
-            world.environment.install(agent, id=ref)
-            gen_agents.append(agent)
-
-        # Thermals must cover demand minus what storage contributes (can be negative
-        # when storage charges, which increases the effective thermal requirement).
-        adjusted_target = np.clip(target_series - storage_net, 0.0, None)
     else:
-        # No thermal specs to compute clearing prices from; register storage actors
-        # directly and let them respond to whatever price signal they receive.
-        for ref, actor in zip(storage_refs, storage_precompute_actors):
-            agent = agent_composed_of(ADMMGeneratorRole(actor, finish_callback))
-            world.register(agent, suggested_aid=ref.component_id)
-            world.environment.install(agent, id=ref)
-            gen_agents.append(agent)
-        adjusted_target = target_series
+        pi0 = np.zeros(horizon, dtype=float)
+
+    # --- Pass 2: storage — pre-schedule via LP, then register FixedScheduleActor ---
+    for ref, params in storage_refs_and_params:
+        battery_sched = solve_battery_price_schedule(horizon=horizon, pi=pi0, **params)
+        adjusted_target -= battery_sched
+        schedule_by_aid[ref.component_id] = battery_sched  # pre-stored; callback overwrites identically
+        actor = FixedScheduleActor(battery_sched)
+        agent = agent_composed_of(ADMMGeneratorRole(actor, finish_callback))
+        world.register(agent, suggested_aid=ref.component_id)
+        world.environment.install(agent, id=ref)
+        gen_agents.append(agent)
 
     if not gen_agents:
         raise RuntimeError("No generator agents found for ADMM scenario.")
@@ -545,21 +489,18 @@ async def execute_test_case(
             generator_aids=generator_aids,
             admm_trigger=leader_addr,
             time_to_index=time_to_index,
-            target_series=adjusted_target,
+            adjusted_target_series=adjusted_target,
+            gen_specs=gen_specs,
             schedule_by_aid=schedule_by_aid,
-            generator_specs=gen_specs,
-            dispatch_epsilon=dispatch_epsilon,
         )
     )
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
 
-    # Additional load agents (load_refs[0] is hosted on the leader agent).
     for ref in load_refs[1:]:
         agent = agent_composed_of(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
         world.register(agent, suggested_aid=ref.component_id)
         world.environment.install(agent, id=ref)
 
-    # All optimisation agents form a complete communication graph.
     all_opt_agents = gen_agents + [leader_agent]
     auto_assign(complete_topology(len(all_opt_agents)), all_opt_agents)
 
@@ -637,9 +578,8 @@ def main(argv: list[str] | None = None) -> None:
         )
     )
 
-
 if __name__ == "__main__":
-    # main() # commeted out for testing
+    #main() # commented out for testing
 
     ###############
     ### Testing ###
@@ -647,11 +587,12 @@ if __name__ == "__main__":
 
     simulate_days = 3
 
-    # scenario = build_toy_network(periods=simulate_days * 24) # toy
-    # scenario = load_scenario("storage-hvdc")
-    scenario = load_scenario("../networks/base_s_1_elec_.nc")
+    #scenario = build_toy_network(periods=simulate_days * 24) # toy
+    #scenario = load_scenario("storage-hvdc")
+    scenario = load_scenario("../networks/base_s_1_elec_2020.nc")
 
     logging.basicConfig(level=getattr(logging, "INFO", logging.INFO))
+
 
     asyncio.run(
         execute_test_case(
