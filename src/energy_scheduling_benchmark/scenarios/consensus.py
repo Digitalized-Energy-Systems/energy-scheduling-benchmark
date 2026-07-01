@@ -56,6 +56,7 @@ from energy_scheduling_benchmark.networks import (
     build_toy_network,
     load_scenario,
 )
+from energy_scheduling_benchmark.scenarios._common import _clip_scenario
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
     stacked_area,
@@ -259,6 +260,7 @@ async def execute_test_case(
     if scenario is None:
         scenario = build_toy_network(periods=simulate_days * 24)
 
+    scenario = _clip_scenario(scenario, simulate_days)
     behavior = PyPSABehavior.from_scenario(scenario)
     environment = DefaultEnvironment(behavior=behavior)
     com_sim = SimpleCommunicationSimulation(default_delay_s=delay_s, loss_percent=loss_percent)
@@ -288,7 +290,7 @@ async def execute_test_case(
     if load_series_0 is None:
         raise RuntimeError("Load timeseries not found in scenario.timeseries.")
 
-    time_index = load_series_0.index
+    time_index = load_series_0.index[: simulate_days * 24]
     horizon = len(time_index)  # get horizon for simulation
     # Total (aggregated) demand per timestep fitted to new time index.
     target_series = np.zeros(horizon, dtype=float)
@@ -558,7 +560,7 @@ if __name__ == "__main__":
 
     #scenario = build_toy_network(periods=simulate_days * 24) # toy
     #scenario = load_scenario("storage-hvdc")
-    scenario = load_scenario("../networks/base_s_1_elec_.nc")
+    scenario = load_scenario("../networks/base_s_1_elec_2020.nc")
 
     logging.basicConfig(level=getattr(logging, "INFO", logging.INFO))
 

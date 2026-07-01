@@ -57,6 +57,7 @@ from energy_scheduling_benchmark.networks import (
     build_toy_network,
     load_scenario,
 )
+from energy_scheduling_benchmark.scenarios._common import _clip_scenario
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
     stacked_area,
@@ -260,6 +261,7 @@ async def execute_test_case(
     if scenario is None:
         scenario = build_toy_network(periods=simulate_days * 24)
 
+    scenario = _clip_scenario(scenario, simulate_days)
     behavior = PyPSABehavior.from_scenario(scenario)
     environment = DefaultEnvironment(behavior=behavior)
     com_sim = SimpleCommunicationSimulation(default_delay_s=delay_s, loss_percent=loss_percent)
@@ -286,11 +288,10 @@ async def execute_test_case(
         return None
 
     load_series_0 = _lookup_ts(load_refs[0])
-    #print(load_series_0)
     if load_series_0 is None:
         raise RuntimeError("Load timeseries not found in scenario.timeseries.")
 
-    time_index = load_series_0.index
+    time_index = load_series_0.index[: simulate_days * 24]
     horizon = len(time_index) # get horizon for simulation
     # Total (aggregated) demand per timestep fitted to new time index.
     target_series = np.zeros(horizon, dtype=float)
@@ -328,7 +329,6 @@ async def execute_test_case(
         statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
         cost = float(statics.get("marginal_cost", 0.0))
         p_nom = float(statics.get("p_nom", 0.0))
-        #print("count: ", len(gen_refs))
 
         # Build a p_max vector aligned with the load horizon.
         ts = _lookup_ts(ref)
@@ -350,11 +350,9 @@ async def execute_test_case(
 
             p_charge_max = max(0.0, (-p_min_pu * p_nom) if p_min_pu < 0.0 else p_nom)
             p_discharge_max = max(0.0, p_max_pu * p_nom)
-            #print("charge ",p_charge_max, " discharge ", p_discharge_max)
 
             max_hours = float(statics.get("max_hours", 100.0))
             e_max = max(1e-6, p_nom * max_hours)
-            #print("e_max: ", e_max)
 
             eta_charge = float(statics.get("efficiency_store", statics.get("efficiency_charge", 0.95)))
             eta_discharge = float(statics.get("efficiency_dispatch", statics.get("efficiency_discharge", 0.95)))
@@ -431,12 +429,12 @@ async def execute_test_case(
         world.register(agent, suggested_aid=ref.component_id)
         world.environment.install(agent, id=ref)
 
+    if not gen_agents:
+        raise RuntimeError("No generator agents found for diffusion scenario.")
+
     # Fully-connected diffusion topology across all generator agents.
     topology = complete_topology(len(gen_agents))
     auto_assign(topology, gen_agents)
-
-    if not gen_agents:
-        raise RuntimeError("No generator agents found for diffusion scenario.")
 
 
     # -- Recordings --
@@ -554,7 +552,7 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    #main() # commented out for testing
+    # main() # commented out for testing
 
     ###############
     ### Testing ###
@@ -562,12 +560,11 @@ if __name__ == "__main__":
 
     simulate_days = 3
 
-    #scenario = build_toy_network(periods=simulate_days * 24) # toy
-    #scenario = load_scenario("storage-hvdc")
+    # scenario = build_toy_network(periods=simulate_days * 24) # toy
+    # scenario = load_scenario("storage-hvdc")
     scenario = load_scenario("../networks/base_s_1_elec_2020.nc")
 
     logging.basicConfig(level=getattr(logging, "INFO", logging.INFO))
-
 
     asyncio.run(
         execute_test_case(
@@ -578,3 +575,4 @@ if __name__ == "__main__":
             simulate_days=simulate_days,
         )
     )
+
