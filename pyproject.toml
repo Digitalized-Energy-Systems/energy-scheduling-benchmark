@@ -42,7 +42,7 @@ esb-deed-admm = "energy_scheduling_benchmark.scenarios.deed_admm:main"
 [tool.uv.sources]
 mango-agents = { path = "../mango", editable = true }
 mango-energy-environments = { path = "../mango-energy-environments", editable = true }
-distributed-resource-optimization = { path = "../mango-optimization", editable = true }
+distributed-resource-optimization = { path = "../distributed-resource-optimization", editable = true }
 
 [tool.setuptools.packages.find]
 where = ["src"]
