@@ -39,14 +39,14 @@ from mango.simulation.world import (
     record_agent_having,
 )
 
-from energy_scheduling_benchmark.dispatch import solve_central_dispatch
-from energy_scheduling_benchmark.environment import (
+from energy_scheduling_benchmark import (
     LOAD,
     RENEWABLE,
     THERMAL,
     PowerUpdateInfo,
     PyPSABehavior,
 )
+from energy_scheduling_benchmark.dispatch import solve_central_dispatch
 from energy_scheduling_benchmark.networks import (
     ScenarioData,
     available_examples,

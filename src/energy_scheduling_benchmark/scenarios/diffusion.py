@@ -18,7 +18,6 @@ import argparse
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 import numpy as np
@@ -41,13 +40,17 @@ from mango import (
 )
 from mango.simulation.communication import SimpleCommunicationSimulation
 from mango.simulation.environment import DefaultEnvironment
-from mango.simulation.world import (create_world, discrete_step_until, record_agent_having)
+from mango.simulation.world import (
+    create_world,
+    discrete_step_until,
+    record_agent_having,
+)
 
-from energy_scheduling_benchmark.environment import (
+from energy_scheduling_benchmark import (
     LOAD,
     RENEWABLE,
-    THERMAL,
     STORAGE,
+    THERMAL,
     PowerUpdateInfo,
     PyPSABehavior,
 )
@@ -57,12 +60,12 @@ from energy_scheduling_benchmark.networks import (
     build_toy_network,
     load_scenario,
 )
-from energy_scheduling_benchmark.scenarios._common import _clip_scenario
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
     stacked_area,
     visualize_results,
 )
+from energy_scheduling_benchmark.scenarios._common import _clip_scenario
 
 logger = logging.getLogger(__name__)
 

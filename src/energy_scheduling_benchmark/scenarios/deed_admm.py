@@ -49,7 +49,7 @@ from mango.simulation.world import (
     record_agent_having,
 )
 
-from energy_scheduling_benchmark.environment import (
+from energy_scheduling_benchmark import (
     LOAD,
     RENEWABLE,
     STORAGE,
@@ -63,12 +63,12 @@ from energy_scheduling_benchmark.networks import (
     build_toy_network,
     load_scenario,
 )
-from energy_scheduling_benchmark.scenarios._common import _clip_scenario
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
     stacked_area,
     visualize_results,
 )
+from energy_scheduling_benchmark.scenarios._common import _clip_scenario
 
 logger = logging.getLogger(__name__)
 

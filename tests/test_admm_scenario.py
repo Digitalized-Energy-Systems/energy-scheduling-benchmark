@@ -13,10 +13,9 @@ from unittest.mock import MagicMock
 import numpy as np
 import pandas as pd
 import pytest
-
 from distributed_resource_optimization import solve_battery_price_schedule
+from mango_energy_environments import ComponentRef
 
-from energy_scheduling_benchmark.environment import ComponentRef
 from energy_scheduling_benchmark.networks import ScenarioData, build_toy_network
 from energy_scheduling_benchmark.scenarios.admm import (
     FixedScheduleActor,
@@ -216,8 +215,9 @@ class TestADMMScenarioIntegration:
         assert any("P:" in col for col in df.columns)
 
     async def test_raises_when_network_has_no_loads(self, tmp_path):
-        import pypsa
         from datetime import datetime
+
+        import pypsa
 
         net = pypsa.Network()
         net.set_snapshots(pd.date_range("2024-01-01", periods=24, freq="h"))
@@ -301,7 +301,8 @@ class TestFixedScheduleActor:
     """FixedScheduleActor always replies with its pre-computed schedule."""
 
     async def test_replies_with_fixed_schedule(self):
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import MagicMock
+
         from distributed_resource_optimization import ADMMMessage
 
         sched = np.array([1.0, 2.0, 3.0])

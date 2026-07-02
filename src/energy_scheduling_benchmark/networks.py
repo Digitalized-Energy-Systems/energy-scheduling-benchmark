@@ -35,13 +35,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
-
-from energy_scheduling_benchmark.environment import (
+from mango_energy_environments import (
     LOAD,
     RENEWABLE,
-    STORAGE,
-    THERMAL,
     ComponentRef,
+    extract_timeseries,
 )
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -71,25 +69,6 @@ _EXAMPLE_MAP: dict[str, str] = {
     "scigrid-de": "scigrid_de",
     "model-energy": "model_energy",
 }
-
-
-#: Carriers that should be classified as renewables across loaded networks.
-#: Superset of the PyPSA-Eur carrier vocabulary.
-DEFAULT_RENEWABLE_CARRIERS: frozenset[str] = frozenset(
-    {
-        "wind",
-        "onwind",
-        "offwind",
-        "offwind-ac",
-        "offwind-dc",
-        "solar",
-        "pv",
-        "hydro",
-        "ror",
-        "biomass",
-        "geothermal",
-    }
-)
 
 
 def available_examples() -> list[str]:
@@ -220,88 +199,6 @@ def load_pypower_case(case: str | int):
     net = pypsa.Network()
     net.import_from_pypower_ppc(ppc)
     return net
-
-
-# ---------------------------------------------------------------------------
-# Timeseries extraction from a PyPSA network
-# ---------------------------------------------------------------------------
-
-
-def extract_timeseries(
-    net,
-    *,
-    renewable_carriers: frozenset[str] | set[str] | None = None,
-) -> dict[ComponentRef, pd.Series]:
-    """Extract per-component timeseries from ``net.<component>_t`` DataFrames.
-
-    Returns a mapping that can be passed as the ``timeseries`` argument of
-    :class:`PyPSABehavior`.  The rules applied per component type are:
-
-    * **Generators** — ``generators_t.p_max_pu`` is preferred (renewable
-      availability per unit of ``p_nom``); when absent, ``generators_t.p_set``
-      is used.  Classification as :data:`THERMAL`/:data:`RENEWABLE` follows
-      the generator's ``carrier`` attribute.
-    * **Loads** — ``loads_t.p_set`` (MW).
-    * **Storage units** — ``storage_units_t.p_set`` (MW).
-    """
-    renewables = {c.lower() for c in (renewable_carriers or DEFAULT_RENEWABLE_CARRIERS)}
-    ts: dict[ComponentRef, pd.Series] = {}
-
-    # --- Generators ---
-    gens = getattr(net, "generators", None)
-    gens_t = getattr(net, "generators_t", None)
-    if gens is not None and gens_t is not None:
-        p_max_pu = _get_t_frame(gens_t, "p_max_pu")
-        p_set_t = _get_t_frame(gens_t, "p_set")
-        consumed: set[str] = set()
-        if p_max_pu is not None:
-            for col in p_max_pu.columns:
-                et = RENEWABLE if _is_renewable(gens, col, renewables) else THERMAL
-                ts[ComponentRef(et, str(col))] = p_max_pu[col].copy()
-                consumed.add(col)
-        if p_set_t is not None:
-            for col in p_set_t.columns:
-                if col in consumed:
-                    continue
-                et = RENEWABLE if _is_renewable(gens, col, renewables) else THERMAL
-                ts[ComponentRef(et, str(col))] = p_set_t[col].copy()
-
-    # --- Loads ---
-    loads_t = getattr(net, "loads_t", None)
-    p_set = _get_t_frame(loads_t, "p_set") if loads_t is not None else None
-    if p_set is not None:
-        for col in p_set.columns:
-            ts[ComponentRef(LOAD, str(col))] = p_set[col].copy()
-
-    # --- Storage units ---
-    su_t = getattr(net, "storage_units_t", None)
-    p_set = _get_t_frame(su_t, "p_set") if su_t is not None else None
-    if p_set is not None:
-        for col in p_set.columns:
-            ts[ComponentRef(STORAGE, str(col))] = p_set[col].copy()
-
-    return ts
-
-
-def _is_renewable(gens_df: pd.DataFrame, name: str, renewables: set[str]) -> bool:
-    if "carrier" not in gens_df.columns or name not in gens_df.index:
-        return False
-    return str(gens_df.at[name, "carrier"]).lower() in renewables
-
-
-def _get_t_frame(t_attr, key: str) -> pd.DataFrame | None:
-    """Safely fetch ``t_attr[key]`` (or ``t_attr.key``) and return non-empty frame."""
-    frame = None
-    if hasattr(t_attr, "get"):
-        try:
-            frame = t_attr.get(key)
-        except TypeError:
-            frame = None
-    if frame is None and hasattr(t_attr, key):
-        frame = getattr(t_attr, key)
-    if frame is None or getattr(frame, "empty", True):
-        return None
-    return frame
 
 
 # ---------------------------------------------------------------------------

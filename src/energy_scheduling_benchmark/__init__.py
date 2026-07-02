@@ -19,8 +19,7 @@ This package is the Python re-implementation of
 * Runnable scenarios in :mod:`energy_scheduling_benchmark.scenarios`.
 """
 
-from .dispatch import solve_central_dispatch
-from .environment import (
+from mango_energy_environments import (
     LOAD,
     RENEWABLE,
     STORAGE,
@@ -32,6 +31,8 @@ from .environment import (
     get_components_by_type,
     get_possible_components,
 )
+
+from .dispatch import solve_central_dispatch
 from .networks import (
     ScenarioData,
     available_examples,
