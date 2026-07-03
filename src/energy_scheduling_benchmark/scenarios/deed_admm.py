@@ -592,7 +592,7 @@ if __name__ == "__main__":
 
     # scenario = build_toy_network(periods=simulate_days * 24) # toy
     # scenario = load_scenario("storage-hvdc")
-    scenario = load_scenario("../networks/base_s_1_elec_2020.nc")
+    scenario = load_scenario("../../../resources/networks/base_s_1_elec_2020.nc")
 
     logging.basicConfig(level=getattr(logging, "INFO", logging.INFO))
 
