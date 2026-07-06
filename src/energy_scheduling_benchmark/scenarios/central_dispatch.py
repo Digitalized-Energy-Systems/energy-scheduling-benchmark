@@ -16,7 +16,6 @@ Flow
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import logging
 from dataclasses import dataclass
@@ -24,7 +23,6 @@ from datetime import datetime
 from typing import Any
 
 import numpy as np
-import pandas as pd
 from mango import (
     AgentAddress,
     Role,
@@ -47,16 +45,20 @@ from energy_scheduling_benchmark import (
     PyPSABehavior,
 )
 from energy_scheduling_benchmark.dispatch import solve_central_dispatch
-from energy_scheduling_benchmark.networks import (
-    ScenarioData,
-    available_examples,
-    build_toy_network,
-    load_scenario,
-)
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
     stacked_area,
     visualize_results,
+)
+from energy_scheduling_benchmark.scenarios._common import (
+    PowerLoadInfo,
+    PowerLoadMonitoring,
+    ScenarioData,
+    _clip_scenario,
+    _write_agent_recordings_csv,
+    build_scenario_argparser,
+    build_toy_network,
+    load_scenario,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,26 +95,6 @@ class GeneratorInfo:
 
 def _role_addr(role: Role) -> AgentAddress:
     return AgentAddress(role.context.addr, role.context.aid)
-
-
-class PowerLoadMonitoring(Role):
-    """Forwards load updates to the aggregator."""
-
-    def __init__(self, behavior: PyPSABehavior, target: AgentAddress) -> None:
-        super().__init__()
-        self._behavior = behavior
-        self._target = target
-
-    def on_agent_event(self, event: Any) -> None:
-        if not isinstance(event, PowerUpdateInfo):
-            return
-        power = self._behavior.observe(self.context.aid, "max_active_power")
-        t = self.context.current_timestamp
-        asyncio.create_task(
-            self.context.send_message(
-                PowerInfo(power_load=float(power), time=t), self._target
-            )
-        )
 
 
 class StaticHandler(Role):
@@ -208,8 +190,8 @@ class Aggregator(Role):
         )
         self.context.subscribe_message(
             self,
-            self._handle_power_info,
-            lambda c, m: isinstance(c, PowerInfo),
+            self._handle_load_info,
+            lambda c, m: isinstance(c, PowerLoadInfo),
         )
 
     def _handle_generator_info(self, message: GeneratorInfo, meta: dict) -> None:
@@ -219,7 +201,7 @@ class Aggregator(Role):
             self.generator_map.setdefault(message.time, []).append(message)
         self._check_start(message.time)
 
-    def _handle_power_info(self, message: PowerInfo, meta: dict) -> None:
+    def _handle_load_info(self, message: PowerLoadInfo, meta: dict) -> None:
         self.demand_map.setdefault(message.time, []).append(float(message.power_load))
         self._check_start(message.time)
 
@@ -277,6 +259,7 @@ async def execute_test_case(
     if scenario is None:
         scenario = build_toy_network(periods=simulate_days * 24)
 
+    scenario = _clip_scenario(scenario, simulate_days)
     behavior = PyPSABehavior.from_scenario(scenario)
     environment = DefaultEnvironment(behavior=behavior)
     com_sim = SimpleCommunicationSimulation(
@@ -359,52 +342,15 @@ def _install_component_role(ref, behavior, leader_addr, agent) -> None:
         agent.add_role(GeneratorMonitoring(behavior, leader_addr))
 
 
-def _write_agent_recordings_csv(world, path: str) -> None:
-    frames: list[pd.DataFrame] = []
-    for key, rec in world.data_agent_collections.items():
-        if not rec.timeseries:
-            continue
-        length = min([len(rec.time)] + [len(v) for v in rec.timeseries.values()])
-        data = {
-            f"{key}:{aid}": [_scalar(v) for v in values[:length]]
-            for aid, values in rec.timeseries.items()
-        }
-        data["time"] = rec.time[:length]
-        frames.append(pd.DataFrame(data).set_index("time"))
-    if not frames:
-        pd.DataFrame().to_csv(path)
-        return
-    pd.concat(frames, axis=1).to_csv(path)
-
-
-def _scalar(v: Any) -> float:
-    arr = np.asarray(v).ravel()
-    return float(arr[0]) if arr.size else 0.0
-
-
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--network",
-        type=str,
-        default="toy",
-        help=(
-            "Network source. Either 'toy' (the built-in 5-bus fixture), "
-            "a PyPSA example name "
-            f"({', '.join(available_examples())}), or a path to a "
-            ".nc/.h5/.xlsx file or CSV folder."
-        ),
+    parser = build_scenario_argparser(
+        __doc__, default_name_base="central_dispatch_withlosses"
     )
-    parser.add_argument("--delay-s", type=float, default=0.02)
-    parser.add_argument("--loss-percent", type=float, default=0.00005)
-    parser.add_argument("--name-base", type=str, default="central_agent_withlosses")
-    parser.add_argument("--simulate-days", type=int, default=3)
-    parser.add_argument("--log-level", type=str, default="INFO")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))

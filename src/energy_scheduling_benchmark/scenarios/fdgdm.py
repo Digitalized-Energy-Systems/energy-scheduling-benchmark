@@ -21,14 +21,11 @@ Flow
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import logging
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-import pandas as pd
 from distributed_resource_optimization import (
     LinearCostEconomicDispatchFDGDMActor,
     NoFDGDMActor,
@@ -39,7 +36,6 @@ from distributed_resource_optimization.carrier.mango import (
     DistributedOptimizationRole,
 )
 from mango import (
-    Role,
     RoleAgent,
     agent_composed_of,
     auto_assign,
@@ -58,165 +54,30 @@ from energy_scheduling_benchmark import (
     RENEWABLE,
     STORAGE,
     THERMAL,
-    PowerUpdateInfo,
     PyPSABehavior,
-)
-from energy_scheduling_benchmark.networks import (
-    ScenarioData,
-    available_examples,
-    build_toy_network,
-    load_scenario,
 )
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
     stacked_area,
     visualize_results,
 )
-from energy_scheduling_benchmark.scenarios._common import _clip_scenario
+from energy_scheduling_benchmark.scenarios._common import (
+    OptimizationFinishedInfo as FDGDMFinishedInfo,
+)
+from energy_scheduling_benchmark.scenarios._common import (
+    PowerLoadAggregator,
+    PowerLoadMonitoring,
+    ScenarioData,
+    _clip_scenario,
+    _lookup_ts,
+    _write_agent_recordings_csv,
+    build_scenario_argparser,
+    build_toy_network,
+    load_scenario,
+    make_finish_callback,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Messages
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class PowerLoadInfo:
-    """Load-side update pushed to the aggregator."""
-
-    power_load: float
-    time: float
-
-
-@dataclass
-class FDGDMFinishedInfo:
-    """Notifies the leader that a generator FDGDM run is done."""
-
-    aid: str
-
-
-# ---------------------------------------------------------------------------
-# Roles
-# ---------------------------------------------------------------------------
-
-
-class PowerLoadMonitoring(Role):
-    """Observes ``max_active_power`` and forwards it to *target*."""
-
-    def __init__(self, behavior: PyPSABehavior, target) -> None:
-        super().__init__()
-        self._behavior = behavior
-        self._target = target
-
-    def on_agent_event(self, event: Any) -> None:
-        if not isinstance(event, PowerUpdateInfo):
-            return
-        power = self._behavior.observe(self.context.aid, "max_active_power")
-        sim_time = self.context.current_timestamp
-        asyncio.create_task(
-            self.context.send_message(
-                PowerLoadInfo(power_load=float(power), time=sim_time),
-                self._target,
-            )
-        )
-
-
-class PowerLoadAggregator(Role):
-    """Coordinates FDGDM once, then applies the resulting schedule."""
-
-    def __init__(
-        self,
-        *,
-        behavior: PyPSABehavior,
-        number_loads: int,
-        generator_aids: list[str],
-        n_fdgdm_participants: int,
-        fdgdm_trigger,
-        time_to_index: dict[float, int],
-        target_series: np.ndarray,
-        schedule_by_aid: dict[str, np.ndarray],
-        fdgdm_initial_p: np.ndarray,
-    ) -> None:
-        super().__init__()
-        self._behavior = behavior
-        self.number_loads = number_loads
-        self._generator_aids = generator_aids
-        self._n_fdgdm_participants = n_fdgdm_participants
-        self._trigger = fdgdm_trigger
-        self._time_to_index = time_to_index
-        self._target_series = target_series
-        self._schedule_by_aid = schedule_by_aid
-        self._fdgdm_initial_p = fdgdm_initial_p
-
-        self._fdgdm_ready: bool = False
-        self._fdgdm_finished_aids: set[str] = set()
-        self._pending: dict[int, float] = {}
-
-        self.demand_map: dict[Any, list[float]] = {}
-        self.target: float = 0.0
-
-    def setup(self) -> None:
-        self.context.subscribe_message(
-            self,
-            self._handle_load_info,
-            lambda c, m: isinstance(c, PowerLoadInfo),
-        )
-        self.context.subscribe_message(
-            self,
-            self._handle_fdgdm_finished,
-            lambda c, m: isinstance(c, FDGDMFinishedInfo),
-        )
-
-    def on_ready(self) -> None:
-        if self._trigger is None or self._n_fdgdm_participants == 0:
-            # All schedules are pre-filled; nothing to run.
-            self._fdgdm_ready = True
-            return
-        # Kick off FDGDM on the thermal sub-problem using the pre-computed
-        # demand-feasible initial allocation (capped at min p_max per step).
-        start_msg = create_fdgdm_start(data=self._fdgdm_initial_p)
-        asyncio.create_task(self.context.send_message(start_msg, self._trigger))
-
-    def _apply_schedule_index(self, idx: int, target_total: float) -> None:
-        self.target = float(target_total)
-        for aid in self._generator_aids:
-            schedule = self._schedule_by_aid.get(aid)
-            if schedule is None:
-                continue
-            p_schedule = np.asarray(schedule).ravel()
-            if idx >= p_schedule.size:
-                continue
-            self._behavior.act(aid, "regulate", float(p_schedule[idx]))
-
-    def _handle_fdgdm_finished(self, message: FDGDMFinishedInfo, meta: dict) -> None:
-        self._fdgdm_finished_aids.add(message.aid)
-        if len(self._fdgdm_finished_aids) == self._n_fdgdm_participants:
-            self._fdgdm_ready = True
-            if self._pending:
-                for idx in sorted(self._pending):
-                    total = self._pending[idx]
-                    self._apply_schedule_index(idx, total)
-                self._pending.clear()
-
-    def _handle_load_info(self, message: PowerLoadInfo, meta: dict) -> None:
-        bucket = self.demand_map.setdefault(message.time, [])
-        bucket.append(float(message.power_load))
-
-        if len(bucket) != self.number_loads:
-            return
-
-        total = float(sum(bucket))
-        idx = self._time_to_index.get(round(float(message.time), 6))
-        if idx is None:
-            return
-
-        if self._fdgdm_ready:
-            self._apply_schedule_index(idx, total)
-        else:
-            # FDGDM still running; buffer until schedule is available.
-            self._pending[idx] = total
 
 
 # ---------------------------------------------------------------------------
@@ -230,21 +91,13 @@ def _make_finish_callback(
     schedule_by_aid: dict[str, np.ndarray],
 ):
     """Build the ``(algorithm, carrier) -> None`` hook that stores the schedule."""
-
-    def handle_fdgdm_finished(algorithm, carrier) -> None:
-        role = carrier._parent
-        aid = role.context.aid
-
-        schedule_by_aid[aid] = np.asarray(algorithm.actor.P, dtype=float).copy()
-
-        leader_addr = leader_addr_ref.get("addr")
-        if leader_addr is not None:
-            asyncio.create_task(
-                role.context.send_message(FDGDMFinishedInfo(aid=aid), leader_addr)
-            )
-        logger.info("FDGDM finished for %s (schedule len=%s)", aid, schedule_by_aid[aid].size)
-
-    return handle_fdgdm_finished
+    return make_finish_callback(
+        leader_addr_ref=leader_addr_ref,
+        schedule_by_aid=schedule_by_aid,
+        finished_message_type=FDGDMFinishedInfo,
+        algorithm_label="FDGDM",
+        schedule_attr="actor.P",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +191,9 @@ def _schedule_storage_soc(
                 net[t] = dispatch
         else:
             surplus = -net_load_ts[t]
-            storable = (max_energy - soc) / efficiency_store if efficiency_store > 0 else 0.0
+            storable = (
+                (max_energy - soc) / efficiency_store if efficiency_store > 0 else 0.0
+            )
             charge = min(p_charge_max, surplus, storable)
             if charge > 0.0:
                 soc += charge * efficiency_store
@@ -370,8 +225,12 @@ async def execute_test_case(
     scenario = _clip_scenario(scenario, simulate_days)
     behavior = PyPSABehavior.from_scenario(scenario)
     environment = DefaultEnvironment(behavior=behavior)
-    com_sim = SimpleCommunicationSimulation(default_delay_s=delay_s, loss_percent=loss_percent)
-    world = create_world(start_time=0.0, communication_sim=com_sim, environment=environment)
+    com_sim = SimpleCommunicationSimulation(
+        default_delay_s=delay_s, loss_percent=loss_percent
+    )
+    world = create_world(
+        start_time=0.0, communication_sim=com_sim, environment=environment
+    )
 
     # ------------------------------------------------------------------
     # Vectorise across the full load horizon
@@ -380,19 +239,7 @@ async def execute_test_case(
     if not load_refs:
         raise RuntimeError("No loads found for FDGDM scenario.")
 
-    def _lookup_ts(ref) -> Any | None:
-        ts = scenario.timeseries.get(ref)
-        if ts is not None:
-            return ts
-        for k, v in scenario.timeseries.items():
-            if (
-                getattr(k, "element_type", None) == getattr(ref, "element_type", None)
-                and getattr(k, "component_id", None) == getattr(ref, "component_id", None)
-            ):
-                return v
-        return None
-
-    load_series_0 = _lookup_ts(load_refs[0])
+    load_series_0 = _lookup_ts(scenario, load_refs[0])
     if load_series_0 is None:
         raise RuntimeError("Load timeseries not found in scenario.timeseries.")
 
@@ -401,7 +248,7 @@ async def execute_test_case(
 
     target_series = np.zeros(horizon, dtype=float)
     for ref in load_refs:
-        s = _lookup_ts(ref)
+        s = _lookup_ts(scenario, ref)
         if s is None:
             raise RuntimeError(f"Load timeseries missing for {ref}.")
         target_series += np.asarray(s.reindex(time_index), dtype=float)
@@ -425,7 +272,10 @@ async def execute_test_case(
     gen_refs = [
         gen
         for gen in gen_refs
-        if behavior._dataframe_for(gen.element_type).loc[gen.component_id].get("p_nom", 0.0) != 0.0
+        if behavior._dataframe_for(gen.element_type)
+        .loc[gen.component_id]
+        .get("p_nom", 0.0)
+        != 0.0
     ]
 
     thermal_refs = [r for r in gen_refs if r.element_type == THERMAL]
@@ -452,7 +302,7 @@ async def execute_test_case(
     for ref in renewable_refs:
         statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
         p_nom = float(statics.get("p_nom", 0.0))
-        ts = _lookup_ts(ref)
+        ts = _lookup_ts(scenario, ref)
         sched = (
             np.full(horizon, p_nom, dtype=float)
             if ts is None
@@ -477,7 +327,9 @@ async def execute_test_case(
                 inflow_df[ref.component_id].reindex(time_index).fillna(0.0), dtype=float
             )
         else:
-            inflow_mwh = np.full(horizon, float(statics.get("inflow", 0.0)), dtype=float)
+            inflow_mwh = np.full(
+                horizon, float(statics.get("inflow", 0.0)), dtype=float
+            )
 
         net = _schedule_storage_soc(
             net_load_ts=net_load_ts,
@@ -503,9 +355,11 @@ async def execute_test_case(
     # ------------------------------------------------------------------
     thermal_p_max_vecs: list[np.ndarray] = []
     for _ref_th in thermal_refs:
-        _statics_th = behavior._dataframe_for(_ref_th.element_type).loc[_ref_th.component_id]
+        _statics_th = behavior._dataframe_for(_ref_th.element_type).loc[
+            _ref_th.component_id
+        ]
         _p_nom_th = float(_statics_th.get("p_nom", 0.0))
-        _ts_th = _lookup_ts(_ref_th)
+        _ts_th = _lookup_ts(scenario, _ref_th)
         thermal_p_max_vecs.append(
             np.full(horizon, _p_nom_th, dtype=float)
             if _ts_th is None
@@ -561,12 +415,20 @@ async def execute_test_case(
     # ------------------------------------------------------------------
     if n_thermals >= 2:
         thermal_costs = [
-            float(behavior._dataframe_for(r.element_type).loc[r.component_id].get("marginal_cost", 0.0))
+            float(
+                behavior._dataframe_for(r.element_type)
+                .loc[r.component_id]
+                .get("marginal_cost", 0.0)
+            )
             for r in thermal_refs
         ]
         cost_diff = max(thermal_costs) - min(thermal_costs)
         thermal_p_nom_list = [
-            float(behavior._dataframe_for(r.element_type).loc[r.component_id].get("p_nom", 0.0))
+            float(
+                behavior._dataframe_for(r.element_type)
+                .loc[r.component_id]
+                .get("p_nom", 0.0)
+            )
             for r in thermal_refs
         ]
         total_p_nom = sum(thermal_p_nom_list)
@@ -574,8 +436,7 @@ async def execute_test_case(
         min_active = float(active_steps.min()) if len(active_steps) > 0 else 1.0
         base_epsilon = max(0.1, cost_diff / min_active)
         epsilon_by_agent = [
-            base_epsilon * total_p_nom / max(p_nom, 1.0)
-            for p_nom in thermal_p_nom_list
+            base_epsilon * total_p_nom / max(p_nom, 1.0) for p_nom in thermal_p_nom_list
         ]
     else:
         epsilon_by_agent = [0.1]
@@ -633,23 +494,30 @@ async def execute_test_case(
     leader_addr = leader_agent.addr
     leader_addr_ref["addr"] = leader_addr
 
+    def build_start_message() -> Any:
+        # Kick off FDGDM on the thermal sub-problem using the pre-computed
+        # demand-feasible initial allocation (capped at min p_max per step).
+        return create_fdgdm_start(data=fdgdm_initial_p)
+
     leader_agent.add_role(
         PowerLoadAggregator(
             behavior=behavior,
             number_loads=len(load_refs),
             generator_aids=generator_aids,
-            n_fdgdm_participants=len(thermal_refs),
-            fdgdm_trigger=gen_agents[0].addr if gen_agents else None,
+            trigger=gen_agents[0].addr if gen_agents else None,
             time_to_index=time_to_index,
-            target_series=adjusted_target,
             schedule_by_aid=schedule_by_aid,
-            fdgdm_initial_p=fdgdm_initial_p,
+            finished_message_type=FDGDMFinishedInfo,
+            build_start_message=build_start_message,
+            n_finished_required=len(thermal_refs),
         )
     )
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
 
     for ref in load_refs[1:]:
-        agent = agent_composed_of(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
+        agent = agent_composed_of(
+            PowerLoadMonitoring(behavior=behavior, target=leader_addr)
+        )
         world.register(agent, suggested_aid=ref.component_id)
         world.environment.install(agent, id=ref)
 
@@ -696,7 +564,7 @@ async def execute_test_case(
 
     target_series_plot = Y_t[:, 0] if Y_t.size else np.zeros(len(t_P))
 
-    _write_agent_recordings_csv(world, f"{name_base}-df.csv")
+    _write_agent_recordings_csv(world, f"{name_base}-df.csv", snapshot_step_s=3600.0)
 
     visualize_results(world, write_to=f"{name_base}-observation.pdf")
 
@@ -728,67 +596,13 @@ def _keep_hourly(
     return t[last_idx], Y_arr[last_idx]
 
 
-def _write_agent_recordings_csv(world, path: str, snapshot_step_s: float = 3600.0) -> None:
-    """Serialise every per-agent recording as one wide CSV.
-
-    When *snapshot_step_s* > 0, only the last recorded state per time bucket
-    is kept (default: one row per hour), removing sub-second FDGDM convergence
-    noise from the output.
-    """
-    frames: list[pd.DataFrame] = []
-    for key, rec in world.data_agent_collections.items():
-        if not rec.timeseries:
-            continue
-        length = min([len(rec.time)] + [len(v) for v in rec.timeseries.values()])
-        data = {
-            f"{key}:{aid}": [_scalar(v) for v in values[:length]]
-            for aid, values in rec.timeseries.items()
-        }
-        data["time"] = rec.time[:length]
-        frames.append(pd.DataFrame(data).set_index("time"))
-
-    if not frames:
-        pd.DataFrame().to_csv(path)
-        return
-
-    df = pd.concat(frames, axis=1)
-
-    if snapshot_step_s > 0 and not df.empty:
-        bucket = (df.index.to_series() // snapshot_step_s).astype(int)
-        df = df.groupby(bucket.values).last()
-        df.index.name = "time"
-
-    df.to_csv(path)
-
-
-def _scalar(v: Any) -> float:
-    arr = np.asarray(v).ravel()
-    return float(arr[0]) if arr.size else 0.0
-
-
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--network",
-        type=str,
-        default="toy",
-        help=(
-            "Network source. Either 'toy' (the built-in 5-bus fixture), "
-            "a PyPSA example name "
-            f"({', '.join(available_examples())}), or a path to a "
-            ".nc/.h5/.xlsx file or CSV folder."
-        ),
-    )
-    parser.add_argument("--delay-s", type=float, default=0.02)
-    parser.add_argument("--loss-percent", type=float, default=0.00005)
-    parser.add_argument("--name-base", type=str, default="fdgdm_withlosses")
-    parser.add_argument("--simulate-days", type=int, default=3)
-    parser.add_argument("--log-level", type=str, default="INFO")
+    parser = build_scenario_argparser(__doc__, default_name_base="fdgdm_withlosses")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
@@ -810,26 +624,4 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    # main() # commeted out for testing
-
-    ###############
-    ### Testing ###
-    ###############
-
-    simulate_days = 3
-
-    # scenario = build_toy_network(periods=simulate_days * 24) # toy
-    # scenario = load_scenario("storage-hvdc")
-    scenario = load_scenario("../../../resources/networks/base_s_1_elec_2020.nc")
-
-    logging.basicConfig(level=getattr(logging, "INFO", logging.INFO))
-
-    asyncio.run(
-        execute_test_case(
-            scenario=scenario,
-            delay_s=0.02,
-            loss_percent=0.0,
-            name_base="fdgdm_without_losses",
-            simulate_days=simulate_days,
-        )
-    )
+    main()

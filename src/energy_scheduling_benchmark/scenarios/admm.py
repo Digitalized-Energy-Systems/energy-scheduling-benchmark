@@ -13,14 +13,11 @@ Two-pass approach
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import logging
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-import pandas as pd
 from distributed_resource_optimization import (
     ADMMAnswer,
     ADMMGeneratorSpec,
@@ -32,7 +29,7 @@ from distributed_resource_optimization import (
 )
 from distributed_resource_optimization.algorithm.admm.sharing_admm import (
     _z_from_clearing_prices,
-    create_admm_start,
+    create_sharing_admm_start,
 )
 from distributed_resource_optimization.carrier.mango import (
     CoordinatorRole,
@@ -40,7 +37,7 @@ from distributed_resource_optimization.carrier.mango import (
     OptimizationFinishedMessage,
     StartCoordinatedDistributedOptimization,
 )
-from mango import Role, RoleAgent, agent_composed_of, auto_assign, complete_topology
+from mango import RoleAgent, agent_composed_of, auto_assign, complete_topology
 from mango.simulation.communication import SimpleCommunicationSimulation
 from mango.simulation.environment import DefaultEnvironment
 from mango.simulation.world import (
@@ -54,43 +51,31 @@ from energy_scheduling_benchmark import (
     RENEWABLE,
     STORAGE,
     THERMAL,
-    PowerUpdateInfo,
     PyPSABehavior,
-)
-from energy_scheduling_benchmark.networks import (
-    ScenarioData,
-    available_examples,
-    build_toy_network,
-    load_scenario,
 )
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
     stacked_area,
     visualize_results,
 )
-from energy_scheduling_benchmark.scenarios._common import _clip_scenario
+from energy_scheduling_benchmark.scenarios._common import (
+    OptimizationFinishedInfo as ADMMFinishedInfo,
+)
+from energy_scheduling_benchmark.scenarios._common import (
+    PowerLoadAggregator as _BasePowerLoadAggregator,
+)
+from energy_scheduling_benchmark.scenarios._common import (
+    PowerLoadMonitoring,
+    ScenarioData,
+    _clip_scenario,
+    _lookup_ts,
+    _write_agent_recordings_csv,
+    build_scenario_argparser,
+    build_toy_network,
+    load_scenario,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Messages
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class PowerLoadInfo:
-    """Current load power forwarded from a load agent to the aggregator."""
-
-    power_load: float
-    time: float
-
-
-@dataclass
-class ADMMFinishedInfo:
-    """Sent by a generator agent once its ADMM actor has produced a schedule."""
-
-    aid: str
 
 
 # ---------------------------------------------------------------------------
@@ -143,34 +128,8 @@ class ADMMGeneratorRole(DistributedOptimizationRole):
         self._finish_callback(self.algorithm, self, self.context.aid)
 
 
-class PowerLoadMonitoring(Role):
-    """Reads the current load power and pushes it to the aggregator each timestep."""
-
-    def __init__(self, behavior: PyPSABehavior, target: Any) -> None:
-        super().__init__()
-        self._behavior = behavior
-        self._target = target
-
-    def on_agent_event(self, event: Any) -> None:
-        if not isinstance(event, PowerUpdateInfo):
-            return
-        power = self._behavior.observe(self.context.aid, "max_active_power")
-        asyncio.create_task(
-            self.context.send_message(
-                PowerLoadInfo(power_load=float(power), time=self.context.current_timestamp),
-                self._target,
-            )
-        )
-
-
-class PowerLoadAggregator(Role):
-    """Leader role: fires ADMM once at startup, then dispatches the schedule.
-
-    Load agents stream ``PowerLoadInfo`` messages each hour.  Once all loads
-    report for a given timestep, the aggregator applies the pre-computed
-    set-points for that hour.  Timesteps that arrive before ADMM is done are
-    held in ``_pending`` and flushed immediately afterwards.
-    """
+class PowerLoadAggregator(_BasePowerLoadAggregator):
+    """Leader role: fires ADMM once at startup, then dispatches the schedule."""
 
     def __init__(
         self,
@@ -184,76 +143,25 @@ class PowerLoadAggregator(Role):
         gen_specs: list[ADMMGeneratorSpec],
         schedule_by_aid: dict[str, np.ndarray],
     ) -> None:
-        super().__init__()
-        self._behavior = behavior
-        self.number_loads = number_loads
-        self._generator_aids = generator_aids
-        self._trigger = admm_trigger
-        self._time_to_index = time_to_index
-        self._adjusted_target_series = adjusted_target_series
-        self._gen_specs = gen_specs
-        self._schedule_by_aid = schedule_by_aid
-
-        self._admm_ready: bool = False
-        self._admm_finished_aids: set[str] = set()
-        self._pending: dict[int, float] = {}
-
-        self.demand_map: dict[Any, list[float]] = {}
-        self.target: float = 0.0  # recorded by the world for plotting
-
-    def setup(self) -> None:
-        self.context.subscribe_message(
-            self, self._handle_load_info, lambda c, m: isinstance(c, PowerLoadInfo)
-        )
-        self.context.subscribe_message(
-            self, self._handle_admm_finished, lambda c, m: isinstance(c, ADMMFinishedInfo)
-        )
-
-    def on_ready(self) -> None:
-        data = create_admm_sharing_data(
-            target=np.asarray(self._adjusted_target_series, dtype=float),
-            generators=self._gen_specs if self._gen_specs else None,
-        )
-        asyncio.create_task(
-            self.context.send_message(
-                StartCoordinatedDistributedOptimization(input=create_admm_start(data)),
-                self._trigger,
+        def build_start_message() -> Any:
+            data = create_admm_sharing_data(
+                target=np.asarray(adjusted_target_series, dtype=float),
+                generators=gen_specs if gen_specs else None,
             )
+            return StartCoordinatedDistributedOptimization(
+                input=create_sharing_admm_start(data)
+            )
+
+        super().__init__(
+            behavior=behavior,
+            number_loads=number_loads,
+            generator_aids=generator_aids,
+            trigger=admm_trigger,
+            time_to_index=time_to_index,
+            schedule_by_aid=schedule_by_aid,
+            finished_message_type=ADMMFinishedInfo,
+            build_start_message=build_start_message,
         )
-
-    def _apply_schedule_index(self, idx: int, target_total: float) -> None:
-        self.target = float(target_total)
-        for aid in self._generator_aids:
-            schedule = self._schedule_by_aid.get(aid)
-            if schedule is None:
-                continue
-            p_schedule = np.asarray(schedule).ravel()
-            if idx < p_schedule.size:
-                self._behavior.act(aid, "regulate", float(p_schedule[idx]))
-
-    def _handle_admm_finished(self, message: ADMMFinishedInfo, meta: dict) -> None:
-        self._admm_finished_aids.add(message.aid)
-        if len(self._admm_finished_aids) == len(self._generator_aids):
-            self._admm_ready = True
-            for idx in sorted(self._pending):
-                self._apply_schedule_index(idx, self._pending[idx])
-            self._pending.clear()
-
-    def _handle_load_info(self, message: PowerLoadInfo, meta: dict) -> None:
-        bucket = self.demand_map.setdefault(message.time, [])
-        bucket.append(float(message.power_load))
-        if len(bucket) != self.number_loads:
-            return  # wait until all loads report for this timestep
-
-        total = float(sum(bucket))
-        idx = self._time_to_index.get(round(float(message.time), 6))
-        if idx is None:
-            return
-
-        if self._admm_ready:
-            self._apply_schedule_index(idx, total)
-        else:
-            self._pending[idx] = total
 
 
 # ---------------------------------------------------------------------------
@@ -261,30 +169,19 @@ class PowerLoadAggregator(Role):
 # ---------------------------------------------------------------------------
 
 
-def _lookup_ts(scenario: ScenarioData, ref: Any) -> Any | None:
-    """Return the timeseries for *ref*, falling back to attribute-based lookup.
-
-    ComponentRef equality may fail across subclasses, so we also try matching
-    on ``element_type`` and ``component_id`` directly.
-    """
-    ts = scenario.timeseries.get(ref)
-    if ts is not None:
-        return ts
-    for k, v in scenario.timeseries.items():
-        if (
-            getattr(k, "element_type", None) == getattr(ref, "element_type", None)
-            and getattr(k, "component_id", None) == getattr(ref, "component_id", None)
-        ):
-            return v
-    return None
-
-
 def _make_finish_callback(
     *,
     leader_addr_ref: dict[str, Any | None],
     schedule_by_aid: dict[str, np.ndarray],
 ) -> Any:
-    """Return a callback that stores a generator's schedule and notifies the leader."""
+    """Return a callback that stores a generator's schedule and notifies the leader.
+
+    ADMM's finish notification is fired directly by :class:`ADMMGeneratorRole`
+    with signature ``(algorithm, role, aid)`` — unlike the carrier-based
+    algorithms (consensus/diffusion/FDGDM/DEED-ADMM) which read the schedule
+    off ``carrier._parent``, so this stays a scenario-specific helper rather
+    than the shared ``_common.make_finish_callback``.
+    """
 
     def handle_admm_finished(algorithm: Any, role: Any, aid: str) -> None:
         schedule_by_aid[aid] = np.asarray(algorithm.x, dtype=float).copy()
@@ -293,33 +190,11 @@ def _make_finish_callback(
             asyncio.create_task(
                 role.context.send_message(ADMMFinishedInfo(aid=aid), leader_addr)
             )
-        logger.info("ADMM finished for %s (schedule len=%s)", aid, schedule_by_aid[aid].size)
+        logger.info(
+            "ADMM finished for %s (schedule len=%s)", aid, schedule_by_aid[aid].size
+        )
 
     return handle_admm_finished
-
-
-def _scalar(v: Any) -> float:
-    arr = np.asarray(v).ravel()
-    return float(arr[0]) if arr.size else 0.0
-
-
-def _write_agent_recordings_csv(world: Any, path: str) -> None:
-    """Write all per-agent recordings to a single wide CSV."""
-    frames: list[pd.DataFrame] = []
-    for key, rec in world.data_agent_collections.items():
-        if not rec.timeseries:
-            continue
-        length = min([len(rec.time)] + [len(v) for v in rec.timeseries.values()])
-        data = {
-            f"{key}:{aid}": [_scalar(v) for v in values[:length]]
-            for aid, values in rec.timeseries.items()
-        }
-        data["time"] = rec.time[:length]
-        frames.append(pd.DataFrame(data).set_index("time"))
-    if frames:
-        pd.concat(frames, axis=1).to_csv(path)
-    else:
-        pd.DataFrame().to_csv(path)
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +218,9 @@ async def execute_test_case(
 
     scenario = _clip_scenario(scenario, simulate_days)
     behavior = PyPSABehavior.from_scenario(scenario)
-    com_sim = SimpleCommunicationSimulation(default_delay_s=delay_s, loss_percent=loss_percent)
+    com_sim = SimpleCommunicationSimulation(
+        default_delay_s=delay_s, loss_percent=loss_percent
+    )
     world = create_world(
         start_time=0.0,
         communication_sim=com_sim,
@@ -379,8 +256,10 @@ async def execute_test_case(
     gen_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, STORAGE])
     gen_refs = [g for g in gen_refs if "hydro" not in g.component_id]
     gen_refs = [
-        g for g in gen_refs
-        if behavior._dataframe_for(g.element_type).loc[g.component_id].get("p_nom", 0.0) != 0.0
+        g
+        for g in gen_refs
+        if behavior._dataframe_for(g.element_type).loc[g.component_id].get("p_nom", 0.0)
+        != 0.0
     ]
 
     generator_aids = [ref.component_id for ref in gen_refs]
@@ -417,8 +296,14 @@ async def execute_test_case(
             p_charge_max = max(0.0, -p_min_pu * p_nom if p_min_pu < 0.0 else p_nom)
             p_discharge_max = max(0.0, p_max_pu * p_nom)
             e_max = max(1e-6, p_nom * float(statics.get("max_hours", 100.0)))
-            eta_charge = float(statics.get("efficiency_store", statics.get("efficiency_charge", 0.95)))
-            eta_discharge = float(statics.get("efficiency_dispatch", statics.get("efficiency_discharge", 0.95)))
+            eta_charge = float(
+                statics.get("efficiency_store", statics.get("efficiency_charge", 0.95))
+            )
+            eta_discharge = float(
+                statics.get(
+                    "efficiency_dispatch", statics.get("efficiency_discharge", 0.95)
+                )
+            )
             soc_initial_raw = statics.get("state_of_charge_initial", np.nan)
             soc_initial_abs = (
                 float(soc_initial_raw)
@@ -426,28 +311,38 @@ async def execute_test_case(
                 else 0.5 * e_max
             )
             e_initial = float(np.clip(soc_initial_abs / e_max, 0.0, 1.0))
-            storage_refs_and_params.append((ref, {
-                "p_charge_max": p_charge_max,
-                "p_discharge_max": p_discharge_max,
-                "e_max": e_max,
-                "eta_charge": max(1e-6, eta_charge),
-                "eta_discharge": max(1e-6, eta_discharge),
-                "e_initial": e_initial,
-                "e_final": e_initial,
-                "charge_cost": max(0.0, cost),
-                "discharge_cost": max(0.0, cost),
-            }))
+            storage_refs_and_params.append(
+                (
+                    ref,
+                    {
+                        "p_charge_max": p_charge_max,
+                        "p_discharge_max": p_discharge_max,
+                        "e_max": e_max,
+                        "eta_charge": max(1e-6, eta_charge),
+                        "eta_discharge": max(1e-6, eta_discharge),
+                        "e_initial": e_initial,
+                        "e_final": e_initial,
+                        "charge_cost": max(0.0, cost),
+                        "discharge_cost": max(0.0, cost),
+                    },
+                )
+            )
             continue  # processed in pass 2
 
         lb_vec = np.zeros(horizon, dtype=float)
-        gen_specs.append(ADMMGeneratorSpec(
-            cost=np.full(horizon, cost, dtype=float),
-            lb=lb_vec,
-            ub=np.asarray(p_max_vec, dtype=float),
-        ))
+        gen_specs.append(
+            ADMMGeneratorSpec(
+                cost=np.full(horizon, cost, dtype=float),
+                lb=lb_vec,
+                ub=np.asarray(p_max_vec, dtype=float),
+            )
+        )
         actor = create_admm_economic_dispatch_actor(
-            lb_vec, np.asarray(p_max_vec, dtype=float),
-            cost=cost, n_participants=n_gens, epsilon=dispatch_epsilon,
+            lb_vec,
+            np.asarray(p_max_vec, dtype=float),
+            cost=cost,
+            n_participants=n_gens,
+            epsilon=dispatch_epsilon,
         )
         agent = agent_composed_of(ADMMGeneratorRole(actor, finish_callback))
         world.register(agent, suggested_aid=ref.component_id)
@@ -468,7 +363,9 @@ async def execute_test_case(
     for ref, params in storage_refs_and_params:
         battery_sched = solve_battery_price_schedule(horizon=horizon, pi=pi0, **params)
         adjusted_target -= battery_sched
-        schedule_by_aid[ref.component_id] = battery_sched  # pre-stored; callback overwrites identically
+        schedule_by_aid[ref.component_id] = (
+            battery_sched  # pre-stored; callback overwrites identically
+        )
         actor = FixedScheduleActor(battery_sched)
         agent = agent_composed_of(ADMMGeneratorRole(actor, finish_callback))
         world.register(agent, suggested_aid=ref.component_id)
@@ -503,7 +400,9 @@ async def execute_test_case(
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
 
     for ref in load_refs[1:]:
-        agent = agent_composed_of(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
+        agent = agent_composed_of(
+            PowerLoadMonitoring(behavior=behavior, target=leader_addr)
+        )
         world.register(agent, suggested_aid=ref.component_id)
         world.environment.install(agent, id=ref)
 
@@ -512,11 +411,17 @@ async def execute_test_case(
 
     # --- Recordings ---
     record_agent_having(
-        world, "target", PowerLoadAggregator,
-        lambda a: next((r.target for r in a.roles if isinstance(r, PowerLoadAggregator)), 0.0),
+        world,
+        "target",
+        PowerLoadAggregator,
+        lambda a: next(
+            (r.target for r in a.roles if isinstance(r, PowerLoadAggregator)), 0.0
+        ),
     )
     record_agent_having(
-        world, "P", ADMMGeneratorRole,
+        world,
+        "P",
+        ADMMGeneratorRole,
         lambda a: float(behavior.observe(a.aid, "active_power") or 0.0),
     )
 
@@ -549,22 +454,7 @@ async def execute_test_case(
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--network",
-        type=str,
-        default="toy",
-        help=(
-            "Network source: 'toy' (built-in 5-bus fixture), "
-            f"a PyPSA example name ({', '.join(available_examples())}), "
-            "or a path to a .nc/.h5/.xlsx file or CSV folder."
-        ),
-    )
-    parser.add_argument("--delay-s", type=float, default=0.02)
-    parser.add_argument("--loss-percent", type=float, default=0.00005)
-    parser.add_argument("--name-base", type=str, default="admm_withlosses")
-    parser.add_argument("--simulate-days", type=int, default=3)
-    parser.add_argument("--log-level", type=str, default="INFO")
+    parser = build_scenario_argparser(__doc__, default_name_base="admm_withlosses")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
@@ -584,28 +474,6 @@ def main(argv: list[str] | None = None) -> None:
         )
     )
 
+
 if __name__ == "__main__":
-    #main() # commented out for testing
-
-    ###############
-    ### Testing ###
-    ###############
-
-    simulate_days = 3
-
-    #scenario = build_toy_network(periods=simulate_days * 24) # toy
-    #scenario = load_scenario("storage-hvdc")
-    scenario = load_scenario("../../../resources/networks/base_s_1_elec_2020.nc")
-
-    logging.basicConfig(level=getattr(logging, "INFO", logging.INFO))
-
-
-    asyncio.run(
-        execute_test_case(
-            scenario=scenario,
-            delay_s=0.02,
-            loss_percent=0.0,
-            name_base="admm_without_losses",
-            simulate_days=simulate_days,
-        )
-    )
+    main()

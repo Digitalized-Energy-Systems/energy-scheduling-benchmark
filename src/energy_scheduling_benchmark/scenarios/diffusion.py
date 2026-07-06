@@ -14,14 +14,11 @@ Flow
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import logging
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-import pandas as pd
 from distributed_resource_optimization import (
     DiffusionMessage,
     LinearCostEconomicDispatchDiffusionActor,
@@ -32,7 +29,6 @@ from distributed_resource_optimization.carrier.mango import (
     DistributedOptimizationRole,
 )
 from mango import (
-    Role,
     RoleAgent,
     agent_composed_of,
     auto_assign,
@@ -51,194 +47,30 @@ from energy_scheduling_benchmark import (
     RENEWABLE,
     STORAGE,
     THERMAL,
-    PowerUpdateInfo,
     PyPSABehavior,
-)
-from energy_scheduling_benchmark.networks import (
-    ScenarioData,
-    available_examples,
-    build_toy_network,
-    load_scenario,
 )
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
     stacked_area,
     visualize_results,
 )
-from energy_scheduling_benchmark.scenarios._common import _clip_scenario
+from energy_scheduling_benchmark.scenarios._common import (
+    OptimizationFinishedInfo as DiffusionFinishedInfo,
+)
+from energy_scheduling_benchmark.scenarios._common import (
+    PowerLoadAggregator,
+    PowerLoadMonitoring,
+    ScenarioData,
+    _clip_scenario,
+    _lookup_ts,
+    _write_agent_recordings_csv,
+    build_scenario_argparser,
+    build_toy_network,
+    load_scenario,
+    make_finish_callback,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Messages
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class PowerLoadInfo:
-    """Load-side update pushed to the aggregator."""
-
-    power_load: float
-    time: float
-
-
-@dataclass
-class DiffusionFinishedInfo:
-    """Notifies the leader that a generator diffusion run is done."""
-
-    aid: str
-
-
-# ---------------------------------------------------------------------------
-# Roles
-# ---------------------------------------------------------------------------
-
-
-class PowerLoadMonitoring(Role):
-    """Observes ``max_active_power`` and forwards it to *target*."""
-
-    def __init__(self, behavior: PyPSABehavior, target) -> None:
-        super().__init__()
-        self._behavior = behavior
-        self._target = target
-
-    def on_agent_event(self, event: Any) -> None:
-        if not isinstance(event, PowerUpdateInfo):
-            return
-        power = self._behavior.observe(self.context.aid, "max_active_power")
-        sim_time = self.context.current_timestamp
-        asyncio.create_task(
-            self.context.send_message(
-                PowerLoadInfo(power_load=float(power), time=sim_time),
-                self._target,
-            )
-        )
-
-
-class PowerLoadAggregator(Role):
-    """Coordinates diffusion once, then applies the resulting schedule."""
-
-    def __init__(
-        self,
-        *,
-        behavior: PyPSABehavior,
-        number_loads: int,
-        generator_aids: list[str],
-        diffusion_trigger,
-        time_to_index: dict[float, int],
-        target_series: np.ndarray,
-        schedule_by_aid: dict[str, np.ndarray],
-    ) -> None:
-        super().__init__()
-        self._behavior = behavior
-        self.number_loads = number_loads
-        self._generator_aids = generator_aids
-        self._trigger = diffusion_trigger
-        self._time_to_index = time_to_index
-        self._target_series = target_series
-        self._schedule_by_aid = schedule_by_aid
-
-        self._diffusion_ready: bool = False
-        self._diffusion_finished_aids: set[str] = set()
-        self._pending: dict[int, float] = {}
-
-        self.demand_map: dict[Any, list[float]] = {}
-        self.target: float = 0.0
-
-    def setup(self) -> None:
-        self.context.subscribe_message(
-            self,
-            self._handle_load_info,
-            lambda c, m: isinstance(c, PowerLoadInfo),
-        )
-        self.context.subscribe_message(
-            self,
-            self._handle_diffusion_finished,
-            lambda c, m: isinstance(c, DiffusionFinishedInfo),
-        )
-
-    def on_ready(self) -> None:
-        # Kick off diffusion exactly once on the full time series.
-        # The diffusion actor's p_max is also vectorised, so it constrains
-        # each timestep independently.
-        initial = DiffusionMessage(
-            phi=np.full(len(self._target_series), 10.0),
-            k=0,
-            data=np.asarray(self._target_series, dtype=float),
-            initial=True,
-        )
-        asyncio.create_task(self.context.send_message(initial, self._trigger))
-
-    def _apply_schedule_index(self, idx: int, target_total: float) -> None:
-        self.target = float(target_total)
-        for aid in self._generator_aids:
-            schedule = self._schedule_by_aid.get(aid)
-            if schedule is None:
-                continue
-            p_schedule = np.asarray(schedule).ravel()
-            if idx >= p_schedule.size:
-                continue
-            self._behavior.act(aid, "regulate", float(p_schedule[idx]))
-
-    def _handle_diffusion_finished(self, message: DiffusionFinishedInfo, meta: dict) -> None:
-        self._diffusion_finished_aids.add(message.aid)
-        if len(self._diffusion_finished_aids) == len(self._generator_aids):
-            self._diffusion_ready = True
-            if self._pending:
-                for idx in sorted(self._pending):
-                    total = self._pending[idx]
-                    self._apply_schedule_index(idx, total)
-                self._pending.clear()
-
-    def _handle_load_info(self, message: PowerLoadInfo, meta: dict) -> None:
-        bucket = self.demand_map.setdefault(message.time, [])
-        bucket.append(float(message.power_load))
-
-        if len(bucket) != self.number_loads:
-            return
-
-        total = float(sum(bucket))
-        idx = self._time_to_index.get(round(float(message.time), 6))
-        if idx is None:
-            return
-
-        if self._diffusion_ready:
-            self._apply_schedule_index(idx, total)
-        else:
-            # Diffusion is still running; remember what we need to apply once
-            # the schedule is available.
-            self._pending[idx] = total
-            # Do not update self.target yet; that keeps P and target aligned in recordings.
-
-
-# ---------------------------------------------------------------------------
-# Diffusion-finished callback
-# ---------------------------------------------------------------------------
-
-
-def _make_finish_callback(
-    *,
-    leader_addr_ref: dict[str, Any | None],
-    schedule_by_aid: dict[str, np.ndarray],
-):
-    """Build the ``(algorithm, carrier) -> None`` hook that stores the schedule."""
-
-    def handle_diffusion_finished(algorithm, carrier) -> None:
-        role = carrier._parent
-        aid = role.context.aid
-
-        # Store the full per-timestep schedule.
-        schedule_by_aid[aid] = np.asarray(algorithm.actor.P, dtype=float).copy()
-
-        leader_addr = leader_addr_ref.get("addr")
-        if leader_addr is not None:
-            asyncio.create_task(
-                role.context.send_message(DiffusionFinishedInfo(aid=aid), leader_addr)
-            )
-        logger.info("Diffusion finished for %s (schedule len=%s)", aid, schedule_by_aid[aid].size)
-
-    return handle_diffusion_finished
 
 
 # ---------------------------------------------------------------------------
@@ -267,8 +99,12 @@ async def execute_test_case(
     scenario = _clip_scenario(scenario, simulate_days)
     behavior = PyPSABehavior.from_scenario(scenario)
     environment = DefaultEnvironment(behavior=behavior)
-    com_sim = SimpleCommunicationSimulation(default_delay_s=delay_s, loss_percent=loss_percent)
-    world = create_world(start_time=0.0, communication_sim=com_sim, environment=environment)
+    com_sim = SimpleCommunicationSimulation(
+        default_delay_s=delay_s, loss_percent=loss_percent
+    )
+    world = create_world(
+        start_time=0.0, communication_sim=com_sim, environment=environment
+    )
 
     # ------------------------------------------------------------------
     # Vectorise across the full load horizon
@@ -277,29 +113,16 @@ async def execute_test_case(
     if not load_refs:
         raise RuntimeError("No loads found for diffusion scenario.")
 
-    def _lookup_ts(ref) -> Any | None:
-        # `scenario.timeseries` uses ComponentRef keys; prefer exact match, but
-        # fall back to a (element_type, component_id) lookup to be robust.
-        ts = scenario.timeseries.get(ref)
-        if ts is not None:
-            return ts
-        for k, v in scenario.timeseries.items():
-            if getattr(k, "element_type", None) == getattr(ref, "element_type", None) and getattr(
-                k, "component_id", None
-            ) == getattr(ref, "component_id", None):
-                return v
-        return None
-
-    load_series_0 = _lookup_ts(load_refs[0])
+    load_series_0 = _lookup_ts(scenario, load_refs[0])
     if load_series_0 is None:
         raise RuntimeError("Load timeseries not found in scenario.timeseries.")
 
     time_index = load_series_0.index[: simulate_days * 24]
-    horizon = len(time_index) # get horizon for simulation
+    horizon = len(time_index)  # get horizon for simulation
     # Total (aggregated) demand per timestep fitted to new time index.
     target_series = np.zeros(horizon, dtype=float)
     for ref in load_refs:
-        s = _lookup_ts(ref)
+        s = _lookup_ts(scenario, ref)
         if s is None:
             raise RuntimeError(f"Load timeseries missing for {ref}.")
         target_series += np.asarray(s.reindex(time_index), dtype=float)
@@ -315,14 +138,27 @@ async def execute_test_case(
     # This gets populated as each generator diffusion participant finishes.
     schedule_by_aid: dict[str, np.ndarray] = {}
     leader_addr_ref: dict[str, Any | None] = {"addr": None}
-    finish_callback = _make_finish_callback(leader_addr_ref=leader_addr_ref, schedule_by_aid=schedule_by_aid)
+    finish_callback = make_finish_callback(
+        leader_addr_ref=leader_addr_ref,
+        schedule_by_aid=schedule_by_aid,
+        finished_message_type=DiffusionFinishedInfo,
+        algorithm_label="Diffusion",
+        schedule_attr="actor.P",
+    )
 
     # -- Generator agents --
     gen_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, STORAGE])
     # sort out hydro as they are not charable
     gen_refs = [gen for gen in gen_refs if "hydro" not in gen.component_id]
     # sort out devices with zero max power/nominal power
-    gen_refs = [gen for gen in gen_refs if behavior._dataframe_for(gen.element_type).loc[gen.component_id].get("p_nom", 0.0) != 0.0]
+    gen_refs = [
+        gen
+        for gen in gen_refs
+        if behavior._dataframe_for(gen.element_type)
+        .loc[gen.component_id]
+        .get("p_nom", 0.0)
+        != 0.0
+    ]
 
     n_gens = len(gen_refs)
     generator_aids = [ref.component_id for ref in gen_refs]
@@ -334,7 +170,7 @@ async def execute_test_case(
         p_nom = float(statics.get("p_nom", 0.0))
 
         # Build a p_max vector aligned with the load horizon.
-        ts = _lookup_ts(ref)
+        ts = _lookup_ts(scenario, ref)
         if ts is None:
             p_max_vec = np.full(horizon, p_nom, dtype=float)
         else:
@@ -357,8 +193,14 @@ async def execute_test_case(
             max_hours = float(statics.get("max_hours", 100.0))
             e_max = max(1e-6, p_nom * max_hours)
 
-            eta_charge = float(statics.get("efficiency_store", statics.get("efficiency_charge", 0.95)))
-            eta_discharge = float(statics.get("efficiency_dispatch", statics.get("efficiency_discharge", 0.95)))
+            eta_charge = float(
+                statics.get("efficiency_store", statics.get("efficiency_charge", 0.95))
+            )
+            eta_discharge = float(
+                statics.get(
+                    "efficiency_dispatch", statics.get("efficiency_discharge", 0.95)
+                )
+            )
 
             soc_initial_raw = statics.get("state_of_charge_initial", np.nan)
             if np.isfinite(soc_initial_raw) and float(soc_initial_raw) > 1e-9:
@@ -406,6 +248,9 @@ async def execute_test_case(
         world.environment.install(agent, id=ref)
         gen_agents.append(agent)
 
+    if not gen_agents:
+        raise RuntimeError("No generator agents found for diffusion scenario.")
+
     # -- Load agents (two-pass: register leader first so its addr is known) --
     leader_agent = RoleAgent()
     world.register(leader_agent, suggested_aid=load_refs[0].component_id)
@@ -413,39 +258,50 @@ async def execute_test_case(
     leader_addr = leader_agent.addr
     leader_addr_ref["addr"] = leader_addr
 
+    def build_start_message() -> Any:
+        # Kick off diffusion exactly once on the full time series.
+        # The diffusion actor's p_max is also vectorised, so it constrains
+        # each timestep independently.
+        return DiffusionMessage(
+            phi=np.full(len(target_series), 10.0),
+            k=0,
+            data=np.asarray(target_series, dtype=float),
+            initial=True,
+        )
+
     leader_agent.add_role(
         PowerLoadAggregator(
             behavior=behavior,
             number_loads=len(load_refs),
             generator_aids=generator_aids,
-            diffusion_trigger=gen_agents[0].addr,
+            trigger=gen_agents[0].addr,
             time_to_index=time_to_index,
-            target_series=target_series,
             schedule_by_aid=schedule_by_aid,
+            finished_message_type=DiffusionFinishedInfo,
+            build_start_message=build_start_message,
         )
     )
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
 
     # add all other load agents
     for ref in load_refs[1:]:
-        agent = agent_composed_of(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
+        agent = agent_composed_of(
+            PowerLoadMonitoring(behavior=behavior, target=leader_addr)
+        )
         world.register(agent, suggested_aid=ref.component_id)
         world.environment.install(agent, id=ref)
-
-    if not gen_agents:
-        raise RuntimeError("No generator agents found for diffusion scenario.")
 
     # Fully-connected diffusion topology across all generator agents.
     topology = complete_topology(len(gen_agents))
     auto_assign(topology, gen_agents)
-
 
     # -- Recordings --
     record_agent_having(
         world,
         "target",
         PowerLoadAggregator,
-        lambda a: next((r.target for r in a.roles if isinstance(r, PowerLoadAggregator)), 0.0
+        lambda a: next(
+            (r.target for r in a.roles if isinstance(r, PowerLoadAggregator)), 0.0
         ),
     )
     record_agent_having(
@@ -455,11 +311,9 @@ async def execute_test_case(
         lambda a: float(behavior.observe(a.aid, "active_power") or 0.0),
     )
 
-
     # -- Simulate --
     async with world:
         await discrete_step_until(world, simulate_days * 24 * 3600.0)
-
 
     # -- Output --
 
@@ -482,34 +336,6 @@ async def execute_test_case(
         write_to=f"{name_base}-stacked.pdf",
     )
 
-def _write_agent_recordings_csv(world, path: str) -> None:
-    """Serialise every per-agent recording as one wide CSV.
-
-    Columns are named ``{key}:{aid}``; values are scalarised to floats.
-    """
-    frames: list[pd.DataFrame] = []
-    for key, rec in world.data_agent_collections.items():
-        if not rec.timeseries:
-            continue
-        length = min([len(rec.time)] + [len(v) for v in rec.timeseries.values()])
-        data = {
-            f"{key}:{aid}": [_scalar(v) for v in values[:length]]
-            for aid, values in rec.timeseries.items()
-        }
-        data["time"] = rec.time[:length]
-        frames.append(pd.DataFrame(data).set_index("time"))
-
-    if not frames:
-        pd.DataFrame().to_csv(path)
-        return
-
-    df = pd.concat(frames, axis=1)
-    df.to_csv(path)
-
-def _scalar(v: Any) -> float:
-    arr = np.asarray(v).ravel()
-    return float(arr[0]) if arr.size else 0.0
-
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -517,23 +343,7 @@ def _scalar(v: Any) -> float:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--network",
-        type=str,
-        default="toy",
-        help=(
-            "Network source. Either 'toy' (the built-in 5-bus fixture), "
-            "a PyPSA example name "
-            f"({', '.join(available_examples())}), or a path to a "
-            ".nc/.h5/.xlsx file or CSV folder."
-        ),
-    )
-    parser.add_argument("--delay-s", type=float, default=0.02)
-    parser.add_argument("--loss-percent", type=float, default=0.00005)
-    parser.add_argument("--name-base", type=str, default="diffusion_withlosses")
-    parser.add_argument("--simulate-days", type=int, default=3)
-    parser.add_argument("--log-level", type=str, default="INFO")
+    parser = build_scenario_argparser(__doc__, default_name_base="diffusion_withlosses")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
@@ -555,27 +365,4 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    # main() # commented out for testing
-
-    ###############
-    ### Testing ###
-    ###############
-
-    simulate_days = 3
-
-    # scenario = build_toy_network(periods=simulate_days * 24) # toy
-    # scenario = load_scenario("storage-hvdc")
-    scenario = load_scenario("../../../resources/networks/base_s_1_elec_2020.nc")
-
-    logging.basicConfig(level=getattr(logging, "INFO", logging.INFO))
-
-    asyncio.run(
-        execute_test_case(
-            scenario=scenario,
-            delay_s=0.02,
-            loss_percent=0.0,
-            name_base="diffusion_without_losses",
-            simulate_days=simulate_days,
-        )
-    )
-
+    main()

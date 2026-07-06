@@ -17,14 +17,11 @@ Flow
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import logging
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-import pandas as pd
 from distributed_resource_optimization import (
     DEEDADMMMessage,
     create_deed_admm_renewable_participant,
@@ -35,7 +32,6 @@ from distributed_resource_optimization.carrier.mango import (
     DistributedOptimizationRole,
 )
 from mango import (
-    Role,
     RoleAgent,
     agent_composed_of,
     auto_assign,
@@ -54,192 +50,30 @@ from energy_scheduling_benchmark import (
     RENEWABLE,
     STORAGE,
     THERMAL,
-    PowerUpdateInfo,
     PyPSABehavior,
-)
-from energy_scheduling_benchmark.networks import (
-    ScenarioData,
-    available_examples,
-    build_toy_network,
-    load_scenario,
 )
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
     stacked_area,
     visualize_results,
 )
-from energy_scheduling_benchmark.scenarios._common import _clip_scenario
+from energy_scheduling_benchmark.scenarios._common import (
+    OptimizationFinishedInfo as DEEDADMMFinishedInfo,
+)
+from energy_scheduling_benchmark.scenarios._common import (
+    PowerLoadAggregator,
+    PowerLoadMonitoring,
+    ScenarioData,
+    _clip_scenario,
+    _lookup_ts,
+    _write_agent_recordings_csv,
+    build_scenario_argparser,
+    build_toy_network,
+    load_scenario,
+    make_finish_callback,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Messages
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class PowerLoadInfo:
-    """Load-side update pushed to the aggregator."""
-
-    power_load: float
-    time: float
-
-
-@dataclass
-class DEEDADMMFinishedInfo:
-    """Notifies the leader that a generator DEED-ADMM run is done."""
-
-    aid: str
-
-
-# ---------------------------------------------------------------------------
-# Roles
-# ---------------------------------------------------------------------------
-
-
-class PowerLoadMonitoring(Role):
-    """Observes ``max_active_power`` and forwards it to *target*."""
-
-    def __init__(self, behavior: PyPSABehavior, target) -> None:
-        super().__init__()
-        self._behavior = behavior
-        self._target = target
-
-    def on_agent_event(self, event: Any) -> None:
-        if not isinstance(event, PowerUpdateInfo):
-            return
-        power = self._behavior.observe(self.context.aid, "max_active_power")
-        sim_time = self.context.current_timestamp
-        asyncio.create_task(
-            self.context.send_message(
-                PowerLoadInfo(power_load=float(power), time=sim_time),
-                self._target,
-            )
-        )
-
-
-class PowerLoadAggregator(Role):
-    """Coordinates DEED-ADMM once, then applies the resulting schedule."""
-
-    def __init__(
-        self,
-        *,
-        behavior: PyPSABehavior,
-        number_loads: int,
-        generator_aids: list[str],
-        deed_admm_trigger,
-        time_to_index: dict[float, int],
-        target_series: np.ndarray,
-        schedule_by_aid: dict[str, np.ndarray],
-        n_time: int,
-    ) -> None:
-        super().__init__()
-        self._behavior = behavior
-        self.number_loads = number_loads
-        self._generator_aids = generator_aids
-        self._trigger = deed_admm_trigger
-        self._time_to_index = time_to_index
-        self._target_series = target_series
-        self._schedule_by_aid = schedule_by_aid
-        self._n_time = n_time
-
-        self._ready: bool = False
-        self._finished_aids: set[str] = set()
-        self._pending: dict[int, float] = {}
-
-        self.demand_map: dict[Any, list[float]] = {}
-        self.target: float = 0.0
-
-    def setup(self) -> None:
-        self.context.subscribe_message(
-            self,
-            self._handle_load_info,
-            lambda c, m: isinstance(c, PowerLoadInfo),
-        )
-        self.context.subscribe_message(
-            self,
-            self._handle_finished,
-            lambda c, m: isinstance(c, DEEDADMMFinishedInfo),
-        )
-
-    def on_ready(self) -> None:
-        initial = DEEDADMMMessage(
-            lam=np.zeros(self._n_time),
-            xi=np.zeros(self._n_time),
-            k=0,
-            data=None,
-            initial=True,
-        )
-        asyncio.create_task(self.context.send_message(initial, self._trigger))
-
-    def _apply_schedule_index(self, idx: int, target_total: float) -> None:
-        self.target = float(target_total)
-        for aid in self._generator_aids:
-            schedule = self._schedule_by_aid.get(aid)
-            if schedule is None:
-                continue
-            p_schedule = np.asarray(schedule).ravel()
-            if idx >= p_schedule.size:
-                continue
-            self._behavior.act(aid, "regulate", float(p_schedule[idx]))
-
-    def _handle_finished(self, message: DEEDADMMFinishedInfo, meta: dict) -> None:
-        self._finished_aids.add(message.aid)
-        if len(self._finished_aids) == len(self._generator_aids):
-            self._ready = True
-            if self._pending:
-                for idx in sorted(self._pending):
-                    total = self._pending[idx]
-                    self._apply_schedule_index(idx, total)
-                self._pending.clear()
-
-    def _handle_load_info(self, message: PowerLoadInfo, meta: dict) -> None:
-        bucket = self.demand_map.setdefault(message.time, [])
-        bucket.append(float(message.power_load))
-
-        if len(bucket) != self.number_loads:
-            return
-
-        total = float(sum(bucket))
-        idx = self._time_to_index.get(round(float(message.time), 6))
-        if idx is None:
-            return
-
-        if self._ready:
-            self._apply_schedule_index(idx, total)
-        else:
-            self._pending[idx] = total
-
-
-# ---------------------------------------------------------------------------
-# Finish callback
-# ---------------------------------------------------------------------------
-
-
-def _make_finish_callback(
-    *,
-    leader_addr_ref: dict[str, Any | None],
-    schedule_by_aid: dict[str, np.ndarray],
-):
-    """Build the ``(algorithm, carrier) -> None`` hook that stores the schedule."""
-
-    def handle_finished(algorithm, carrier) -> None:
-        role = carrier._parent
-        aid = role.context.aid
-
-        schedule_by_aid[aid] = np.asarray(algorithm.P, dtype=float).copy()
-
-        leader_addr = leader_addr_ref.get("addr")
-        if leader_addr is not None:
-            asyncio.create_task(
-                role.context.send_message(DEEDADMMFinishedInfo(aid=aid), leader_addr)
-            )
-        logger.info(
-            "DEED-ADMM finished for %s (schedule len=%s)", aid, schedule_by_aid[aid].size
-        )
-
-    return handle_finished
 
 
 # ---------------------------------------------------------------------------
@@ -274,8 +108,12 @@ async def execute_test_case(
     scenario = _clip_scenario(scenario, simulate_days)
     behavior = PyPSABehavior.from_scenario(scenario)
     environment = DefaultEnvironment(behavior=behavior)
-    com_sim = SimpleCommunicationSimulation(default_delay_s=delay_s, loss_percent=loss_percent)
-    world = create_world(start_time=0.0, communication_sim=com_sim, environment=environment)
+    com_sim = SimpleCommunicationSimulation(
+        default_delay_s=delay_s, loss_percent=loss_percent
+    )
+    world = create_world(
+        start_time=0.0, communication_sim=com_sim, environment=environment
+    )
 
     # ------------------------------------------------------------------
     # Build demand horizon
@@ -284,19 +122,7 @@ async def execute_test_case(
     if not load_refs:
         raise RuntimeError("No loads found for DEED-ADMM scenario.")
 
-    def _lookup_ts(ref) -> Any | None:
-        ts = scenario.timeseries.get(ref)
-        if ts is not None:
-            return ts
-        for k, v in scenario.timeseries.items():
-            if (
-                getattr(k, "element_type", None) == getattr(ref, "element_type", None)
-                and getattr(k, "component_id", None) == getattr(ref, "component_id", None)
-            ):
-                return v
-        return None
-
-    load_series_0 = _lookup_ts(load_refs[0])
+    load_series_0 = _lookup_ts(scenario, load_refs[0])
     if load_series_0 is None:
         raise RuntimeError("Load timeseries not found in scenario.timeseries.")
 
@@ -305,7 +131,7 @@ async def execute_test_case(
 
     target_series = np.zeros(horizon, dtype=float)
     for ref in load_refs:
-        s = _lookup_ts(ref)
+        s = _lookup_ts(scenario, ref)
         if s is None:
             raise RuntimeError(f"Load timeseries missing for {ref}.")
         target_series += np.asarray(s.reindex(time_index), dtype=float)
@@ -319,8 +145,12 @@ async def execute_test_case(
 
     schedule_by_aid: dict[str, np.ndarray] = {}
     leader_addr_ref: dict[str, Any | None] = {"addr": None}
-    finish_callback = _make_finish_callback(
-        leader_addr_ref=leader_addr_ref, schedule_by_aid=schedule_by_aid
+    finish_callback = make_finish_callback(
+        leader_addr_ref=leader_addr_ref,
+        schedule_by_aid=schedule_by_aid,
+        finished_message_type=DEEDADMMFinishedInfo,
+        algorithm_label="DEED-ADMM",
+        schedule_attr="P",
     )
 
     # ------------------------------------------------------------------
@@ -332,11 +162,11 @@ async def execute_test_case(
     generator_aids = [ref.component_id for ref in gen_refs]
 
     # Demand allocation: only generators (thermal + renewable) share demand.
-    # Storage gets d_i = 0 — it contributes net injection, not demand consumption.
+    # Storage contributes net injection rather than sharing d_i — the storage
+    # participant factory below takes no d_i argument at all.
     pure_gen_refs = [r for r in gen_refs if r.element_type != STORAGE]
     n_gen_only = max(len(pure_gen_refs), 1)
     d_i_gen = target_series / n_gen_only
-    d_i_stor = np.zeros(horizon, dtype=float)
 
     gen_agents: list[RoleAgent] = []
     for ref in gen_refs:
@@ -344,7 +174,7 @@ async def execute_test_case(
         cost = float(statics.get("marginal_cost", 0.0))
         p_nom = float(statics.get("p_nom", 0.0))
 
-        ts = _lookup_ts(ref)
+        ts = _lookup_ts(scenario, ref)
         if ts is None:
             p_max_vec = np.full(horizon, p_nom, dtype=float)
         else:
@@ -370,7 +200,9 @@ async def execute_test_case(
                 )
             )
             soc0_raw = statics.get("state_of_charge_initial", np.nan)
-            soc0_raw_f = float(soc0_raw) if np.isfinite(float(soc0_raw)) else float("nan")
+            soc0_raw_f = (
+                float(soc0_raw) if np.isfinite(float(soc0_raw)) else float("nan")
+            )
             if not np.isnan(soc0_raw_f) and soc0_raw_f > 1e-9:
                 soc0_abs = soc0_raw_f
             else:
@@ -391,7 +223,6 @@ async def execute_test_case(
                 max_iter=max_iter,
                 n_agents=n_gens,
             )
-            d_i_ref = d_i_stor
         elif ref.element_type == RENEWABLE:
             participant = create_deed_admm_renewable_participant(
                 finish_callback,
@@ -401,7 +232,6 @@ async def execute_test_case(
                 max_iter=max_iter,
                 n_agents=n_gens,
             )
-            d_i_ref = d_i_gen
         else:
             p_min_pu = float(statics.get("p_min_pu", 0.0))
             p_min = max(0.0, p_min_pu * p_nom)
@@ -415,14 +245,15 @@ async def execute_test_case(
                 max_iter=max_iter,
                 n_agents=n_gens,
             )
-            d_i_ref = d_i_gen
-        _ = d_i_ref  # used above in factory calls; suppress unused-var lint
 
         opt_role = DistributedOptimizationRole(participant)
         agent = agent_composed_of(opt_role)
         world.register(agent, suggested_aid=ref.component_id)
         world.environment.install(agent, id=ref)
         gen_agents.append(agent)
+
+    if not gen_agents:
+        raise RuntimeError("No generator agents found for DEED-ADMM scenario.")
 
     # ------------------------------------------------------------------
     # Load agents
@@ -434,31 +265,39 @@ async def execute_test_case(
     leader_addr = leader_agent.addr
     leader_addr_ref["addr"] = leader_addr
 
+    def build_start_message() -> Any:
+        return DEEDADMMMessage(
+            lam=np.zeros(horizon),
+            xi=np.zeros(horizon),
+            k=0,
+            data=None,
+            initial=True,
+        )
+
     leader_agent.add_role(
         PowerLoadAggregator(
             behavior=behavior,
             number_loads=len(load_refs),
             generator_aids=generator_aids,
-            deed_admm_trigger=gen_agents[0].addr,
+            trigger=gen_agents[0].addr,
             time_to_index=time_to_index,
-            target_series=target_series,
             schedule_by_aid=schedule_by_aid,
-            n_time=horizon,
+            finished_message_type=DEEDADMMFinishedInfo,
+            build_start_message=build_start_message,
         )
     )
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
 
     for ref in load_refs[1:]:
-        agent = agent_composed_of(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
+        agent = agent_composed_of(
+            PowerLoadMonitoring(behavior=behavior, target=leader_addr)
+        )
         world.register(agent, suggested_aid=ref.component_id)
         world.environment.install(agent, id=ref)
 
     # Fully-connected peer topology across all generator agents.
     topology = complete_topology(len(gen_agents))
     auto_assign(topology, gen_agents)
-
-    if not gen_agents:
-        raise RuntimeError("No generator agents found for DEED-ADMM scenario.")
 
     # ------------------------------------------------------------------
     # Recordings
@@ -507,58 +346,22 @@ async def execute_test_case(
     _write_agent_recordings_csv(world, f"{name_base}-df.csv")
 
 
-def _scalar(v: Any) -> float:
-    arr = np.asarray(v).ravel()
-    return float(arr[0]) if arr.size else 0.0
-
-
-def _write_agent_recordings_csv(world, path: str) -> None:
-    """Serialise every per-agent recording as one wide CSV."""
-    frames: list[pd.DataFrame] = []
-    for key, rec in world.data_agent_collections.items():
-        if not rec.timeseries:
-            continue
-        length = min([len(rec.time)] + [len(v) for v in rec.timeseries.values()])
-        data = {
-            f"{key}:{aid}": [_scalar(v) for v in values[:length]]
-            for aid, values in rec.timeseries.items()
-        }
-        data["time"] = rec.time[:length]
-        frames.append(pd.DataFrame(data).set_index("time"))
-
-    if not frames:
-        pd.DataFrame().to_csv(path)
-        return
-
-    df = pd.concat(frames, axis=1)
-    df.to_csv(path)
-
-
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
 
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--network",
-        type=str,
-        default="toy",
-        help=(
-            "Network source. Either 'toy' (the built-in 5-bus fixture), "
-            "a PyPSA example name "
-            f"({', '.join(available_examples())}), or a path to a "
-            ".nc/.h5/.xlsx file or CSV folder."
-        ),
-    )
-    parser.add_argument("--delay-s", type=float, default=0.02)
-    parser.add_argument("--loss-percent", type=float, default=0.00005)
-    parser.add_argument("--name-base", type=str, default="deed_admm")
-    parser.add_argument("--simulate-days", type=int, default=3)
+def _add_deed_admm_args(parser: Any) -> None:
     parser.add_argument("--gamma", type=float, default=0.05)
     parser.add_argument("--max-iter", type=int, default=500)
-    parser.add_argument("--log-level", type=str, default="INFO")
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = build_scenario_argparser(
+        __doc__,
+        default_name_base="deed_admm_withlosses",
+        extra_args=_add_deed_admm_args,
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
@@ -582,26 +385,4 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    # main() # commeted out for testing
-
-    ###############
-    ### Testing ###
-    ###############
-
-    simulate_days = 3
-
-    # scenario = build_toy_network(periods=simulate_days * 24) # toy
-    # scenario = load_scenario("storage-hvdc")
-    scenario = load_scenario("../../../resources/networks/base_s_1_elec_2020.nc")
-
-    logging.basicConfig(level=getattr(logging, "INFO", logging.INFO))
-
-    asyncio.run(
-        execute_test_case(
-            scenario=scenario,
-            delay_s=0.02,
-            loss_percent=0.0,
-            name_base="deed-admm_without_losses",
-            simulate_days=simulate_days,
-        )
-    )
+    main()

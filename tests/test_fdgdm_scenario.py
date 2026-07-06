@@ -15,12 +15,12 @@ import pandas as pd
 import pytest
 
 from energy_scheduling_benchmark.networks import ScenarioData, build_toy_network
+from energy_scheduling_benchmark.scenarios._common import _scalar
 from energy_scheduling_benchmark.scenarios.fdgdm import (
     FDGDMFinishedInfo,
     _capacity_proportional_allocation,
     _keep_hourly,
     _make_finish_callback,
-    _scalar,
     _schedule_storage_soc,
     execute_test_case,
 )
