@@ -227,10 +227,15 @@ async def execute_test_case(
                 n_guess=n_gens,
             )
         else:
+            p_min = 0.0
+            if ref.element_type == THERMAL:
+                p_min_pu = float(statics.get("p_min_pu", 0.0))
+                p_min = max(0.0, p_min_pu * p_nom)
             actor = LinearCostEconomicDispatchDiffusionActor(
                 cost=cost,
                 p_max=p_max_vec,
                 epsilon=0.1,
+                p_min=p_min,
                 n_guess=n_gens,
             )
         participant = create_diffusion_participant(

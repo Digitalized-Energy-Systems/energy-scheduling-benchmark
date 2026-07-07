@@ -215,7 +215,13 @@ async def execute_test_case(
                 epsilon=0.1,
             )
         else:
-            actor = LinearCostEconomicDispatchConsensusActor(cost=cost, p_max=p_max_vec)
+            p_min = 0.0
+            if ref.element_type == THERMAL:
+                p_min_pu = float(statics.get("p_min_pu", 0.0))
+                p_min = max(0.0, p_min_pu * p_nom)
+            actor = LinearCostEconomicDispatchConsensusActor(
+                cost=cost, p_max=p_max_vec, p_min=p_min
+            )
         # The first generator agent is the leader (Jian et al. 2020, eq. 22);
         # it pins λ toward the real system-wide power imbalance ΔP, while all
         # other generators are followers doing pure neighbour averaging.

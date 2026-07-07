@@ -330,6 +330,9 @@ async def execute_test_case(
             continue  # processed in pass 2
 
         lb_vec = np.zeros(horizon, dtype=float)
+        if ref.element_type == THERMAL:
+            p_min_pu = float(statics.get("p_min_pu", 0.0))
+            lb_vec = np.full(horizon, max(0.0, p_min_pu * p_nom), dtype=float)
         gen_specs.append(
             ADMMGeneratorSpec(
                 cost=np.full(horizon, cost, dtype=float),

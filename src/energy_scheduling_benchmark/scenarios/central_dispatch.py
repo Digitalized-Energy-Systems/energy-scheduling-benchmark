@@ -86,6 +86,7 @@ class GeneratorInfo:
     time: datetime
     addr: AgentAddress
     static: bool
+    min_power: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -100,10 +101,16 @@ def _role_addr(role: Role) -> AgentAddress:
 class StaticHandler(Role):
     """Reports a generator's static parameters once on ``on_ready``."""
 
-    def __init__(self, behavior: PyPSABehavior, target: AgentAddress) -> None:
+    def __init__(
+        self,
+        behavior: PyPSABehavior,
+        target: AgentAddress,
+        min_power: float = 0.0,
+    ) -> None:
         super().__init__()
         self._behavior = behavior
         self._target = target
+        self._min_power = min_power
 
     def on_ready(self) -> None:
         aid = self.context.aid
@@ -119,6 +126,7 @@ class StaticHandler(Role):
                     time=t,
                     addr=_role_addr(self),
                     static=True,
+                    min_power=self._min_power,
                 ),
                 self._target,
             )
@@ -133,10 +141,16 @@ class GeneratorMonitoring(Role):
     action to set the generator to the commanded value.
     """
 
-    def __init__(self, behavior: PyPSABehavior, target: AgentAddress) -> None:
+    def __init__(
+        self,
+        behavior: PyPSABehavior,
+        target: AgentAddress,
+        min_power: float = 0.0,
+    ) -> None:
         super().__init__()
         self._behavior = behavior
         self._target = target
+        self._min_power = min_power
         self.P: float = 0.0
 
     def setup(self) -> None:
@@ -161,6 +175,7 @@ class GeneratorMonitoring(Role):
                     time=t,
                     addr=_role_addr(self),
                     static=False,
+                    min_power=self._min_power,
                 ),
                 self._target,
             )
@@ -181,6 +196,7 @@ class Aggregator(Role):
         self.generator_map: dict[Any, list[GeneratorInfo]] = {}
         self.static_generators: list[GeneratorInfo] = []
         self.target: float = 0.0
+        self.dispatch_count: int = 0
 
     def setup(self) -> None:
         self.context.subscribe_message(
@@ -219,6 +235,7 @@ class Aggregator(Role):
             costs=[g.cost for g in all_gen],
             p_max=[g.max_power for g in all_gen],
             demand=self.target,
+            p_min=[g.min_power for g in all_gen],
         )
 
         if not result.success:
@@ -235,11 +252,23 @@ class Aggregator(Role):
             self.target,
             result.objective,
         )
+        self.dispatch_count += 1
         for gen, p in zip(all_gen, result.dispatch):
             asyncio.create_task(
                 self.context.send_message(
                     PowerInfo(power_load=float(p), time=time), gen.addr
                 )
+            )
+
+    async def on_stop(self) -> None:
+        total_ticks = len(self.demand_map)
+        if self.dispatch_count < total_ticks:
+            logger.warning(
+                "Central dispatch only solved %d/%d timestamps — some "
+                "components likely never reported (check has_timeseries "
+                "classification for all generators).",
+                self.dispatch_count,
+                total_ticks,
             )
 
 
@@ -332,14 +361,29 @@ async def execute_test_case(
 
 
 def _install_component_role(ref, behavior, leader_addr, agent) -> None:
-    """Attach the role mix appropriate for the component type."""
+    """Attach the role mix appropriate for the component type.
+
+    Generators without timeseries data (e.g. must-run "renewable-carrier"
+    plants like biomass/geothermal that PyPSA never varies hourly) need a
+    one-shot :class:`StaticHandler` report — otherwise they never report to
+    the aggregator at all, since they'd get neither an on_ready static
+    report (RENEWABLE-only used to skip it) nor a ``PowerUpdateInfo`` event
+    (no timeseries entry to drive one). ``GeneratorMonitoring`` is attached
+    to every generator regardless, since it's also what applies the
+    aggregator's dispatch set-point via ``regulate``.
+    """
     if ref.element_type == LOAD:
         agent.add_role(PowerLoadMonitoring(behavior, leader_addr))
-    elif ref.element_type == THERMAL:
-        agent.add_role(StaticHandler(behavior, leader_addr))
-        agent.add_role(GeneratorMonitoring(behavior, leader_addr))
-    elif ref.element_type == RENEWABLE:
-        agent.add_role(GeneratorMonitoring(behavior, leader_addr))
+        return
+
+    statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
+    p_min_pu = float(statics.get("p_min_pu", 0.0))
+    p_nom = float(statics.get("p_nom", 0.0))
+    min_power = max(0.0, p_min_pu * p_nom)
+
+    if not behavior.has_timeseries(ref):
+        agent.add_role(StaticHandler(behavior, leader_addr, min_power=min_power))
+    agent.add_role(GeneratorMonitoring(behavior, leader_addr, min_power=min_power))
 
 
 # ---------------------------------------------------------------------------
