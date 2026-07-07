@@ -36,6 +36,7 @@ esb-consensus = "energy_scheduling_benchmark.scenarios.consensus:main"
 esb-central-dispatch = "energy_scheduling_benchmark.scenarios.central_dispatch:main"
 esb-admm = "energy_scheduling_benchmark.scenarios.admm:main"
 esb-diffusion = "energy_scheduling_benchmark.scenarios.diffusion:main"
+esb-exact-diffusion = "energy_scheduling_benchmark.scenarios.exact_diffusion:main"
 esb-fdgdm = "energy_scheduling_benchmark.scenarios.fdgdm:main"
 esb-deed-admm = "energy_scheduling_benchmark.scenarios.deed_admm:main"
 
