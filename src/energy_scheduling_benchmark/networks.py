@@ -198,6 +198,7 @@ def load_pypower_case(case: str | int):
     ppc = getattr(_ppa, name)()
     net = pypsa.Network()
     net.import_from_pypower_ppc(ppc)
+    net.name = name
     return net
 
 
@@ -265,6 +266,9 @@ def load_scenario(
     start = _infer_start(net, timeseries)
     final_label = label if label is not None else _default_label(source)
 
+    if getattr(net, "name", "") in ("", "Unnamed Network"):
+        net.name = final_label
+
     return ScenarioData(net=net, timeseries=timeseries, start=start, label=final_label)
 
 
@@ -307,6 +311,7 @@ def build_toy_network(
     import pypsa
 
     net = pypsa.Network()
+    net.name = label
     start = datetime(2024, 1, 1)
     snapshots = pd.date_range(start, periods=periods, freq=freq)
     net.set_snapshots(snapshots)

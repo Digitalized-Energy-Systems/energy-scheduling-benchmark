@@ -47,6 +47,7 @@ from energy_scheduling_benchmark import (
 from energy_scheduling_benchmark.dispatch import solve_central_dispatch
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
+    cost_over_time,
     stacked_area,
     visualize_results,
 )
@@ -55,9 +56,11 @@ from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadMonitoring,
     ScenarioData,
     _clip_scenario,
+    _keep_hourly,
     _write_agent_recordings_csv,
     build_scenario_argparser,
     build_toy_network,
+    compute_overall_cost,
     load_scenario,
 )
 
@@ -299,6 +302,15 @@ async def execute_test_case(
     )
 
     all_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, LOAD])
+    cost_by_aid: dict[str, float] = {
+        ref.component_id: float(
+            behavior._dataframe_for(ref.element_type)
+            .loc[ref.component_id]
+            .get("marginal_cost", 0.0)
+        )
+        for ref in all_refs
+        if ref.element_type != LOAD
+    }
     leader_agent: RoleAgent | None = None
 
     for ref in all_refs:
@@ -339,24 +351,48 @@ async def execute_test_case(
     async with world:
         await discrete_step_until(world, simulate_days * 24 * 3600.0)
 
-    visualize_results(world, write_to=f"{name_base}-observation.pdf")
-
     t_P, Y_P, labels_P = agent_recording_as_plottable(world, "P")
-    _, Y_t, _ = agent_recording_as_plottable(world, "target")
+    t_t, Y_t, _ = agent_recording_as_plottable(world, "target")
+
+    # Drop sub-second convergence-phase noise (report/solve/dispatch round-
+    # trips tick multiple times per hour): keep the last recorded state per
+    # hourly snapshot so the CSV and plots show one row per PyPSA timestep.
+    t_P, Y_P = _keep_hourly(t_P, Y_P)
+    t_t, Y_t = _keep_hourly(t_t, Y_t)
     target_series = Y_t[:, 0] if Y_t.size else np.zeros(len(t_P))
     m = min(len(t_P), len(target_series))
+    t_P, Y_P, target_series = t_P[:m], Y_P[:m], target_series[:m]
 
-    _write_agent_recordings_csv(world, f"{name_base}-df.csv")
+    total_cost, cost_series = compute_overall_cost(cost_by_aid, t_P, Y_P, labels_P)
+    logger.info("%s: overall cost = %.2f", name_base, total_cost)
+    annotation = f"Total cost: {total_cost:,.2f}"
+
+    visualize_results(
+        world, write_to=f"{name_base}-observation.pdf", annotation=annotation
+    )
+
+    _write_agent_recordings_csv(
+        world, f"{name_base}-df.csv", snapshot_step_s=3600.0, extra=cost_series
+    )
 
     stacked_area(
-        np.asarray(t_P[:m]) / 3600.0,
-        Y_P[:m],
+        np.asarray(t_P) / 3600.0,
+        Y_P,
         labels_P,
-        target_series[:m],
+        target_series,
         xlabel="Hour",
         ylabel="P in MW",
         title="Stacked power",
+        annotation=annotation,
         write_to=f"{name_base}-stacked.pdf",
+    )
+
+    cost_over_time(
+        np.asarray(cost_series.index, dtype=float) / 3600.0,
+        cost_series.to_numpy(),
+        title="Cost per timestep",
+        annotation=annotation,
+        write_to=f"{name_base}-cost.pdf",
     )
 
 

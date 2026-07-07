@@ -58,6 +58,7 @@ from energy_scheduling_benchmark import (
 )
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
+    cost_over_time,
     stacked_area,
     visualize_results,
 )
@@ -69,10 +70,12 @@ from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadMonitoring,
     ScenarioData,
     _clip_scenario,
+    _keep_hourly,
     _lookup_ts,
     _write_agent_recordings_csv,
     build_scenario_argparser,
     build_toy_network,
+    compute_overall_cost,
     load_scenario,
     make_finish_callback,
 )
@@ -299,8 +302,10 @@ async def execute_test_case(
     storage_refs = [r for r in nonthermal_refs if r.element_type == STORAGE]
     renewable_gen_ts = np.zeros(horizon, dtype=float)
 
+    cost_by_aid: dict[str, float] = {}
     for ref in renewable_refs:
         statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
+        cost_by_aid[ref.component_id] = float(statics.get("marginal_cost", 0.0))
         p_nom = float(statics.get("p_nom", 0.0))
         ts = _lookup_ts(scenario, ref)
         sched = (
@@ -316,6 +321,7 @@ async def execute_test_case(
 
     for ref in storage_refs:
         statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
+        cost_by_aid[ref.component_id] = float(statics.get("marginal_cost", 0.0))
         p_nom = float(statics.get("p_nom", 0.0))
 
         # Inflow from PyPSA timeseries (e.g. reservoir hydro); falls back to
@@ -373,6 +379,11 @@ async def execute_test_case(
     if len(thermal_refs) == 1:
         _sched_1 = np.minimum(adjusted_target, thermal_p_max_vecs[0])
         schedule_by_aid[thermal_refs[0].component_id] = _sched_1
+        cost_by_aid[thermal_refs[0].component_id] = float(
+            behavior._dataframe_for(thermal_refs[0].element_type)
+            .loc[thermal_refs[0].component_id]
+            .get("marginal_cost", 0.0)
+        )
         adjusted_target = np.maximum(adjusted_target - _sched_1, 0.0)
         nonthermal_refs = nonthermal_refs + thermal_refs
         thermal_refs = []
@@ -449,6 +460,7 @@ async def execute_test_case(
     for i, ref in enumerate(thermal_refs):
         statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
         cost = float(statics.get("marginal_cost", 0.0))
+        cost_by_aid[ref.component_id] = cost
         p_max_vec = thermal_p_max_vecs[i]
 
         actor = LinearCostEconomicDispatchFDGDMActor(
@@ -564,9 +576,17 @@ async def execute_test_case(
 
     target_series_plot = Y_t[:, 0] if Y_t.size else np.zeros(len(t_P))
 
-    _write_agent_recordings_csv(world, f"{name_base}-df.csv", snapshot_step_s=3600.0)
+    total_cost, cost_series = compute_overall_cost(cost_by_aid, t_P, Y_P, labels_P)
+    logger.info("%s: overall cost = %.2f", name_base, total_cost)
+    annotation = f"Total cost: {total_cost:,.2f}"
 
-    visualize_results(world, write_to=f"{name_base}-observation.pdf")
+    _write_agent_recordings_csv(
+        world, f"{name_base}-df.csv", snapshot_step_s=3600.0, extra=cost_series
+    )
+
+    visualize_results(
+        world, write_to=f"{name_base}-observation.pdf", annotation=annotation
+    )
 
     stacked_area(
         np.asarray(t_P) / 3600.0,
@@ -576,24 +596,17 @@ async def execute_test_case(
         xlabel="Hour",
         ylabel="P in MW",
         title="Stacked power",
+        annotation=annotation,
         write_to=f"{name_base}-stacked.pdf",
     )
 
-
-def _keep_hourly(
-    t_list: list | np.ndarray,
-    Y_arr: np.ndarray,
-    step_s: float = 3600.0,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return the last recorded state per hourly snapshot, dropping sub-second noise."""
-    if len(t_list) == 0:
-        return np.asarray(t_list), Y_arr
-    t = np.asarray(t_list, dtype=float)
-    buckets = (t // step_s).astype(int)
-    # last index of each unique bucket (reverse → find-first → un-reverse)
-    _, first_in_rev = np.unique(buckets[::-1], return_index=True)
-    last_idx = np.sort(len(t) - 1 - first_in_rev)
-    return t[last_idx], Y_arr[last_idx]
+    cost_over_time(
+        np.asarray(cost_series.index, dtype=float) / 3600.0,
+        cost_series.to_numpy(),
+        title="Cost per timestep",
+        annotation=annotation,
+        write_to=f"{name_base}-cost.pdf",
+    )
 
 
 # ---------------------------------------------------------------------------

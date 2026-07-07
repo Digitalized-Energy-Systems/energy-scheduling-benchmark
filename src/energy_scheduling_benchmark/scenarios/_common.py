@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from dataclasses import replace as _dataclass_replace
 from typing import Any
@@ -40,7 +40,9 @@ __all__ = [
     "_clip_scenario",
     "_lookup_ts",
     "_scalar",
+    "_keep_hourly",
     "_write_agent_recordings_csv",
+    "compute_overall_cost",
     "build_scenario_argparser",
     "PowerLoadInfo",
     "OptimizationFinishedInfo",
@@ -80,14 +82,44 @@ def _lookup_ts(scenario: ScenarioData, ref: Any) -> Any | None:
     return None
 
 
+def _keep_hourly(
+    t_list: list | np.ndarray,
+    Y_arr: np.ndarray,
+    step_s: float = 3600.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the last recorded state per hourly snapshot, dropping sub-second noise.
+
+    A "P"/"target" recording ticks on every discrete-event step (report/solve/
+    dispatch round-trips, retries, per-iteration peer rounds), not just once
+    per snapshot. Applying this before plotting keeps stacked-area/cost-over-
+    time charts showing one point per hour instead of intra-hour convergence
+    noise — the same bucket-and-keep-last logic :func:`compute_overall_cost`
+    already applies internally to its own return value.
+    """
+    if len(t_list) == 0:
+        return np.asarray(t_list), Y_arr
+    t = np.asarray(t_list, dtype=float)
+    buckets = (t // step_s).astype(int)
+    # last index of each unique bucket (reverse → find-first → un-reverse)
+    _, first_in_rev = np.unique(buckets[::-1], return_index=True)
+    last_idx = np.sort(len(t) - 1 - first_in_rev)
+    return t[last_idx], Y_arr[last_idx]
+
+
 def _write_agent_recordings_csv(
-    world: Any, path: str, snapshot_step_s: float = 0.0
+    world: Any,
+    path: str,
+    snapshot_step_s: float = 0.0,
+    extra: pd.Series | None = None,
 ) -> None:
     """Write all per-agent recordings to a single wide CSV.
 
     When *snapshot_step_s* > 0, only the last recorded state per time bucket is
     kept (e.g. one row per hour), dropping sub-second convergence-phase noise
     from algorithms that iterate on the simulation clock (see FDGDM).
+
+    *extra*, if given, is an additional column (e.g. the per-timestep total
+    cost from :func:`compute_overall_cost`) merged in on the time index.
     """
     frames: list[pd.DataFrame] = []
     for key, rec in world.data_agent_collections.items():
@@ -112,7 +144,51 @@ def _write_agent_recordings_csv(
         df = df.groupby(bucket.values).last()
         df.index.name = "time"
 
+    if extra is not None:
+        if snapshot_step_s > 0:
+            # *extra*'s index is raw seconds too (e.g. from a "P" recording
+            # already de-duplicated to one sample per bucket) — rebucket it
+            # the same way so it lines up with df's now-bucketed integer index
+            # instead of joining on raw timestamps that no longer appear there.
+            bucket = (extra.index.to_series() // snapshot_step_s).astype(int)
+            extra = pd.Series(extra.values, index=bucket.values, name=extra.name)
+        df = df.join(extra, how="outer")
+
     df.to_csv(path)
+
+
+def compute_overall_cost(
+    cost_by_aid: dict[str, float],
+    t_P: Sequence[float],
+    Y_P: np.ndarray,
+    labels_P: Sequence[str],
+    step_s: float = 3600.0,
+) -> tuple[float, pd.Series]:
+    """Total linear cost of a "P" recording: sum_t sum_i cost_by_aid[aid_i] * P_i(t).
+
+    A "P" recording ticks on every discrete-event step, not just once per
+    snapshot — e.g. central_dispatch's report/solve/dispatch round-trip
+    records the same settled dispatch 3 times per hour. Summing those raw
+    ticks would multiply-count the same dispatch decision, so *t_P*/*Y_P* are
+    first collapsed to one (the last) sample per *step_s* bucket, same as
+    FDGDM's own de-duplication for its plots.
+
+    Returns ``(total, per_step)`` where *per_step* is a ``"cost:total"``
+    series indexed by the de-duplicated *t_P*, suitable for merging into the
+    recordings CSV via :func:`_write_agent_recordings_csv`'s ``extra``
+    parameter.
+    """
+    t_arr = np.asarray(t_P, dtype=float)
+    if step_s > 0 and t_arr.size:
+        buckets = (t_arr // step_s).astype(int)
+        _, first_in_rev = np.unique(buckets[::-1], return_index=True)
+        last_idx = np.sort(len(t_arr) - 1 - first_in_rev)
+        t_arr = t_arr[last_idx]
+        Y_P = Y_P[last_idx]
+
+    cost_vec = np.array([cost_by_aid.get(aid, 0.0) for aid in labels_P])
+    per_step = pd.Series((Y_P * cost_vec).sum(axis=1), index=t_arr, name="cost:total")
+    return float(per_step.sum()), per_step
 
 
 def build_scenario_argparser(

@@ -14,7 +14,12 @@ import numpy as np
 if TYPE_CHECKING:  # pragma: no cover
     from mango.simulation.world import SimulationWorld
 
-__all__ = ["visualize_results", "stacked_area", "agent_recording_as_plottable"]
+__all__ = [
+    "visualize_results",
+    "stacked_area",
+    "cost_over_time",
+    "agent_recording_as_plottable",
+]
 
 
 def visualize_results(
@@ -22,14 +27,23 @@ def visualize_results(
     *,
     write_to: str = "observation.pdf",
     colormap: str = "Paired",
+    annotation: str | None = None,
 ) -> Any:
     """Render a grid of all recordings in *world* to *write_to*.
 
     Thin wrapper around :func:`mango.simulation.visualization.plot_recordings`.
+    When *annotation* is given (e.g. a total-cost summary), it's added as a
+    figure-level suptitle and the figure is re-saved with it included.
     """
     from mango.simulation.visualization import plot_recordings
 
-    return plot_recordings(world, colormap=colormap, write_to=write_to)
+    if annotation is None:
+        return plot_recordings(world, colormap=colormap, write_to=write_to)
+
+    fig = plot_recordings(world, colormap=colormap, write_to=None)
+    fig.suptitle(annotation, fontsize=9, y=0.995)
+    fig.savefig(write_to)
+    return fig
 
 
 def stacked_area(
@@ -41,6 +55,7 @@ def stacked_area(
     xlabel: str = "Time",
     ylabel: str = "Value",
     title: str = "Stacked power",
+    annotation: str | None = None,
     write_to: str = "stacked.pdf",
 ) -> Any:
     """Draw a stacked-area plot of ``Y`` with a target overlay.
@@ -85,11 +100,46 @@ def stacked_area(
             step="post",
         )
 
-    ax.plot(time, target, color="black", linewidth=2.0, label="Target", drawstyle="steps-post")
+    ax.plot(
+        time,
+        target,
+        color="black",
+        linewidth=2.0,
+        label="Target",
+        drawstyle="steps-post",
+    )
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
-    ax.set_title(title)
+    ax.set_title(f"{title}\n{annotation}" if annotation else title)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=3, frameon=False)
+    fig.tight_layout()
+    fig.savefig(write_to)
+    plt.close(fig)
+    return fig
+
+
+def cost_over_time(
+    time: Sequence[float],
+    cost: Sequence[float],
+    *,
+    xlabel: str = "Hour",
+    ylabel: str = "Cost",
+    title: str = "Cost per timestep",
+    annotation: str | None = None,
+    write_to: str = "cost.pdf",
+) -> Any:
+    """Draw a line plot of total cost per timestep.
+
+    Intended for the ``per_step`` series returned by
+    :func:`~energy_scheduling_benchmark.scenarios._common.compute_overall_cost`.
+    """
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(time, cost, color="tab:red", linewidth=1.5, drawstyle="steps-post")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(f"{title}\n{annotation}" if annotation else title)
     fig.tight_layout()
     fig.savefig(write_to)
     plt.close(fig)

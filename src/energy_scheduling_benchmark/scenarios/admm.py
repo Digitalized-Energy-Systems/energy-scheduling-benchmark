@@ -55,6 +55,7 @@ from energy_scheduling_benchmark import (
 )
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
+    cost_over_time,
     stacked_area,
     visualize_results,
 )
@@ -68,10 +69,12 @@ from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadMonitoring,
     ScenarioData,
     _clip_scenario,
+    _keep_hourly,
     _lookup_ts,
     _write_agent_recordings_csv,
     build_scenario_argparser,
     build_toy_network,
+    compute_overall_cost,
     load_scenario,
 )
 
@@ -142,11 +145,13 @@ class PowerLoadAggregator(_BasePowerLoadAggregator):
         adjusted_target_series: np.ndarray,
         gen_specs: list[ADMMGeneratorSpec],
         schedule_by_aid: dict[str, np.ndarray],
+        dispatch_epsilon: float = 0.1,
     ) -> None:
         def build_start_message() -> Any:
             data = create_admm_sharing_data(
                 target=np.asarray(adjusted_target_series, dtype=float),
                 generators=gen_specs if gen_specs else None,
+                epsilon=dispatch_epsilon,
             )
             return StartCoordinatedDistributedOptimization(
                 input=create_sharing_admm_start(data)
@@ -267,6 +272,46 @@ async def execute_test_case(
     rho = 0.2
     dispatch_epsilon = 0.1
 
+    # --- Per-generator epsilon (capacity-scaled) ---
+    # A single shared epsilon gives every generator the same price-response
+    # band width (epsilon * p_nom) above its own marginal cost. For merit
+    # order to hold, that band must be small relative to the spread of
+    # marginal costs across generators — otherwise many generators are still
+    # in their partial "ramp" region at the clearing price simultaneously,
+    # so power gets spread roughly by capacity rather than sorted by cost.
+    # On the toy network (2-3 similarly-sized generators, cost spread 50)
+    # that's harmless, but on real PyPSA-Eur networks generator capacities
+    # span orders of magnitude (tens to tens-of-thousands of MW): scaling
+    # the band off typical/mean capacity (as opposed to the cost spread)
+    # makes it far wider than the cost spread itself, which still breaks
+    # merit order. Scale epsilon inversely with p_nom so every generator's
+    # band is a small, fixed fraction of the cost spread, independent of its
+    # own capacity.
+    nonstorage_refs = [ref for ref in gen_refs if ref.element_type != STORAGE]
+    eps_by_aid: dict[str, float] = {}
+    if len(nonstorage_refs) >= 2:
+        costs_all = [
+            float(
+                behavior._dataframe_for(r.element_type)
+                .loc[r.component_id]
+                .get("marginal_cost", 0.0)
+            )
+            for r in nonstorage_refs
+        ]
+        p_noms_all = [
+            float(
+                behavior._dataframe_for(r.element_type).loc[r.component_id].get("p_nom", 0.0)
+            )
+            for r in nonstorage_refs
+        ]
+        cost_range = max(costs_all) - min(costs_all)
+        target_band = max(dispatch_epsilon, 0.1 * cost_range)
+        for ref, p_nom in zip(nonstorage_refs, p_noms_all):
+            eps_by_aid[ref.component_id] = target_band / max(p_nom, 1.0)
+    else:
+        for ref in nonstorage_refs:
+            eps_by_aid[ref.component_id] = dispatch_epsilon
+
     schedule_by_aid: dict[str, np.ndarray] = {}
     leader_addr_ref: dict[str, Any | None] = {"addr": None}
     finish_callback = _make_finish_callback(
@@ -278,9 +323,11 @@ async def execute_test_case(
 
     # --- Pass 1: thermals and renewables ---
     storage_refs_and_params: list[tuple[Any, dict]] = []
+    cost_by_aid: dict[str, float] = {}
     for ref in gen_refs:
         statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
         cost = float(statics.get("marginal_cost", 0.0))
+        cost_by_aid[ref.component_id] = cost
         p_nom = float(statics.get("p_nom", 0.0))
 
         ts = _lookup_ts(scenario, ref)
@@ -333,11 +380,13 @@ async def execute_test_case(
         if ref.element_type == THERMAL:
             p_min_pu = float(statics.get("p_min_pu", 0.0))
             lb_vec = np.full(horizon, max(0.0, p_min_pu * p_nom), dtype=float)
+        gen_epsilon = eps_by_aid[ref.component_id]
         gen_specs.append(
             ADMMGeneratorSpec(
                 cost=np.full(horizon, cost, dtype=float),
                 lb=lb_vec,
                 ub=np.asarray(p_max_vec, dtype=float),
+                epsilon=gen_epsilon,
             )
         )
         actor = create_admm_economic_dispatch_actor(
@@ -345,7 +394,7 @@ async def execute_test_case(
             np.asarray(p_max_vec, dtype=float),
             cost=cost,
             n_participants=n_gens,
-            epsilon=dispatch_epsilon,
+            epsilon=gen_epsilon,
         )
         agent = agent_composed_of(ADMMGeneratorRole(actor, finish_callback))
         world.register(agent, suggested_aid=ref.component_id)
@@ -398,6 +447,7 @@ async def execute_test_case(
             adjusted_target_series=adjusted_target,
             gen_specs=gen_specs,
             schedule_by_aid=schedule_by_aid,
+            dispatch_epsilon=dispatch_epsilon,
         )
     )
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
@@ -434,11 +484,26 @@ async def execute_test_case(
 
     # --- Write outputs ---
     t_P, Y_P, labels_P = agent_recording_as_plottable(world, "P")
-    _, Y_t, _ = agent_recording_as_plottable(world, "target")
-    target_recorded = Y_t[:, 0] if Y_t.size else np.zeros(len(t_P))
+    t_t, Y_t, _ = agent_recording_as_plottable(world, "target")
 
-    _write_agent_recordings_csv(world, f"{name_base}-df.csv")
-    visualize_results(world, write_to=f"{name_base}-observation.pdf")
+    # Drop sub-second convergence-phase noise: keep the last recorded state
+    # per hourly snapshot so the CSV and plots show one row per PyPSA timestep.
+    t_P, Y_P = _keep_hourly(t_P, Y_P)
+    t_t, Y_t = _keep_hourly(t_t, Y_t)
+    target_recorded = Y_t[:, 0] if Y_t.size else np.zeros(len(t_P))
+    m = min(len(t_P), len(target_recorded))
+    t_P, Y_P, target_recorded = t_P[:m], Y_P[:m], target_recorded[:m]
+
+    total_cost, cost_series = compute_overall_cost(cost_by_aid, t_P, Y_P, labels_P)
+    logger.info("%s: overall cost = %.2f", name_base, total_cost)
+    annotation = f"Total cost: {total_cost:,.2f}"
+
+    _write_agent_recordings_csv(
+        world, f"{name_base}-df.csv", snapshot_step_s=3600.0, extra=cost_series
+    )
+    visualize_results(
+        world, write_to=f"{name_base}-observation.pdf", annotation=annotation
+    )
     stacked_area(
         np.asarray(t_P) / 3600.0,
         Y_P,
@@ -447,7 +512,15 @@ async def execute_test_case(
         xlabel="Hour",
         ylabel="P in MW",
         title="Stacked power – ADMM",
+        annotation=annotation,
         write_to=f"{name_base}-stacked.pdf",
+    )
+    cost_over_time(
+        np.asarray(cost_series.index, dtype=float) / 3600.0,
+        cost_series.to_numpy(),
+        title="Cost per timestep",
+        annotation=annotation,
+        write_to=f"{name_base}-cost.pdf",
     )
 
 
