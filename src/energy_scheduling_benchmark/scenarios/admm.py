@@ -1,14 +1,16 @@
-"""Distributed economic-dispatch scenario using sharing ADMM.
+"""Distributed economic-dispatch scenario using iterative (exchange) ADMM.
 
-Two-pass approach
------------------
-1. Merit-order clearing prices are computed from thermal/renewable specs.
-2. Each storage unit is pre-scheduled by a CVXPY LP (:func:`solve_battery_price_schedule`)
-   that enforces SOC constraints exactly; its output is subtracted from the
-   demand target and replayed via a :class:`FixedScheduleActor` during ADMM.
-3. Thermals and renewables respond to the clearing price in one ADMM round via
-   :class:`LinearCostEconomicDispatchADMMFlexActor`.
-4. As simulation time advances the leader applies per-timestep set-points.
+Mirrors the archived ``admm_old`` prototype's collector/agent structure —
+each generator (and storage unit) solves its own local proximal QP each
+round; the leader runs the exchange-ADMM ``Σxᵢ = target`` consensus loop
+(:func:`~distributed_resource_optimization.create_consensus_target_reach_admm_coordinator`)
+until the primal/dual residuals converge, rather than a single-shot
+merit-order clearing price. Thermals/renewables use a box-bounded proximal
+actor (:func:`~distributed_resource_optimization.create_admm_flex_actor_box_bounded`);
+storage uses a SOC-constrained proximal actor
+(:func:`~distributed_resource_optimization.create_admm_proximal_storage_actor`)
+that co-optimizes charge/discharge timing within the same loop instead of
+being pre-scheduled from a clearing price.
 """
 
 from __future__ import annotations
@@ -20,16 +22,11 @@ from typing import Any
 import numpy as np
 from distributed_resource_optimization import (
     ADMMAnswer,
-    ADMMGeneratorSpec,
     ADMMMessage,
-    create_admm_economic_dispatch_actor,
-    create_admm_sharing_data,
-    create_sharing_target_distance_admm_coordinator,
-    solve_battery_price_schedule,
-)
-from distributed_resource_optimization.algorithm.admm.sharing_admm import (
-    _z_from_clearing_prices,
-    create_sharing_admm_start,
+    create_admm_flex_actor_box_bounded,
+    create_admm_proximal_storage_actor,
+    create_admm_start_consensus,
+    create_consensus_target_reach_admm_coordinator,
 )
 from distributed_resource_optimization.carrier.mango import (
     CoordinatorRole,
@@ -51,7 +48,7 @@ from energy_scheduling_benchmark import (
     RENEWABLE,
     STORAGE,
     THERMAL,
-    PyPSABehavior,
+    SchedulingBehavior,
 )
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
@@ -72,10 +69,12 @@ from energy_scheduling_benchmark.scenarios._common import (
     _keep_hourly,
     _lookup_ts,
     _write_agent_recordings_csv,
+    build_behavior,
     build_scenario_argparser,
     build_toy_network,
     compute_overall_cost,
-    load_scenario,
+    require_lossless_transport,
+    resolve_scenario,
 )
 
 logger = logging.getLogger(__name__)
@@ -137,24 +136,17 @@ class PowerLoadAggregator(_BasePowerLoadAggregator):
     def __init__(
         self,
         *,
-        behavior: PyPSABehavior,
+        behavior: SchedulingBehavior,
         number_loads: int,
         generator_aids: list[str],
         admm_trigger: Any,
         time_to_index: dict[float, int],
-        adjusted_target_series: np.ndarray,
-        gen_specs: list[ADMMGeneratorSpec],
+        target_series: np.ndarray,
         schedule_by_aid: dict[str, np.ndarray],
-        dispatch_epsilon: float = 0.1,
     ) -> None:
         def build_start_message() -> Any:
-            data = create_admm_sharing_data(
-                target=np.asarray(adjusted_target_series, dtype=float),
-                generators=gen_specs if gen_specs else None,
-                epsilon=dispatch_epsilon,
-            )
             return StartCoordinatedDistributedOptimization(
-                input=create_sharing_admm_start(data)
+                input=create_admm_start_consensus(np.asarray(target_series, dtype=float))
             )
 
         super().__init__(
@@ -211,18 +203,19 @@ async def execute_test_case(
     *,
     scenario: ScenarioData | None = None,
     delay_s: float = 0.02,
-    loss_percent: float = 0.00005,
+    loss_percent: float = 0.0,
     name_base: str = "admm",
     simulate_days: int = 3,
 ) -> None:
     """Run the ADMM benchmark once and write CSV + PDF outputs."""
+    require_lossless_transport(loss_percent, "ADMM")
 
     # --- World setup ---
     if scenario is None:
         scenario = build_toy_network(periods=simulate_days * 24)
 
     scenario = _clip_scenario(scenario, simulate_days)
-    behavior = PyPSABehavior.from_scenario(scenario)
+    behavior = build_behavior(scenario)
     com_sim = SimpleCommunicationSimulation(
         default_delay_s=delay_s, loss_percent=loss_percent
     )
@@ -263,54 +256,13 @@ async def execute_test_case(
     gen_refs = [
         g
         for g in gen_refs
-        if behavior._dataframe_for(g.element_type).loc[g.component_id].get("p_nom", 0.0)
+        if behavior.get_statics(g).get("p_nom", 0.0)
         != 0.0
     ]
 
     generator_aids = [ref.component_id for ref in gen_refs]
-    n_gens = len(gen_refs)
-    rho = 0.2
-    dispatch_epsilon = 0.1
-
-    # --- Per-generator epsilon (capacity-scaled) ---
-    # A single shared epsilon gives every generator the same price-response
-    # band width (epsilon * p_nom) above its own marginal cost. For merit
-    # order to hold, that band must be small relative to the spread of
-    # marginal costs across generators — otherwise many generators are still
-    # in their partial "ramp" region at the clearing price simultaneously,
-    # so power gets spread roughly by capacity rather than sorted by cost.
-    # On the toy network (2-3 similarly-sized generators, cost spread 50)
-    # that's harmless, but on real PyPSA-Eur networks generator capacities
-    # span orders of magnitude (tens to tens-of-thousands of MW): scaling
-    # the band off typical/mean capacity (as opposed to the cost spread)
-    # makes it far wider than the cost spread itself, which still breaks
-    # merit order. Scale epsilon inversely with p_nom so every generator's
-    # band is a small, fixed fraction of the cost spread, independent of its
-    # own capacity.
-    nonstorage_refs = [ref for ref in gen_refs if ref.element_type != STORAGE]
-    eps_by_aid: dict[str, float] = {}
-    if len(nonstorage_refs) >= 2:
-        costs_all = [
-            float(
-                behavior._dataframe_for(r.element_type)
-                .loc[r.component_id]
-                .get("marginal_cost", 0.0)
-            )
-            for r in nonstorage_refs
-        ]
-        p_noms_all = [
-            float(
-                behavior._dataframe_for(r.element_type).loc[r.component_id].get("p_nom", 0.0)
-            )
-            for r in nonstorage_refs
-        ]
-        cost_range = max(costs_all) - min(costs_all)
-        target_band = max(dispatch_epsilon, 0.1 * cost_range)
-        for ref, p_nom in zip(nonstorage_refs, p_noms_all):
-            eps_by_aid[ref.component_id] = target_band / max(p_nom, 1.0)
-    else:
-        for ref in nonstorage_refs:
-            eps_by_aid[ref.component_id] = dispatch_epsilon
+    rho = 1.0
+    max_iters = 2000
 
     schedule_by_aid: dict[str, np.ndarray] = {}
     leader_addr_ref: dict[str, Any | None] = {"addr": None}
@@ -319,13 +271,11 @@ async def execute_test_case(
     )
 
     gen_agents: list[RoleAgent] = []
-    gen_specs: list[ADMMGeneratorSpec] = []  # merit-order specs (thermals + renewables)
-
-    # --- Pass 1: thermals and renewables ---
-    storage_refs_and_params: list[tuple[Any, dict]] = []
     cost_by_aid: dict[str, float] = {}
+
+    # --- Register one proximal ADMM actor per generator/storage unit ---
     for ref in gen_refs:
-        statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
+        statics = behavior.get_statics(ref)
         cost = float(statics.get("marginal_cost", 0.0))
         cost_by_aid[ref.component_id] = cost
         p_nom = float(statics.get("p_nom", 0.0))
@@ -358,67 +308,29 @@ async def execute_test_case(
                 else 0.5 * e_max
             )
             e_initial = float(np.clip(soc_initial_abs / e_max, 0.0, 1.0))
-            storage_refs_and_params.append(
-                (
-                    ref,
-                    {
-                        "p_charge_max": p_charge_max,
-                        "p_discharge_max": p_discharge_max,
-                        "e_max": e_max,
-                        "eta_charge": max(1e-6, eta_charge),
-                        "eta_discharge": max(1e-6, eta_discharge),
-                        "e_initial": e_initial,
-                        "e_final": e_initial,
-                        "charge_cost": max(0.0, cost),
-                        "discharge_cost": max(0.0, cost),
-                    },
-                )
+            actor = create_admm_proximal_storage_actor(
+                horizon=horizon,
+                e_max=e_max,
+                p_charge_max=p_charge_max,
+                p_discharge_max=p_discharge_max,
+                eta_charge=max(1e-6, eta_charge),
+                eta_discharge=max(1e-6, eta_discharge),
+                e_initial=e_initial,
+                e_final=e_initial,
+                charge_cost=max(0.0, cost),
+                discharge_cost=max(0.0, cost),
             )
-            continue  # processed in pass 2
-
-        lb_vec = np.zeros(horizon, dtype=float)
-        if ref.element_type == THERMAL:
-            p_min_pu = float(statics.get("p_min_pu", 0.0))
-            lb_vec = np.full(horizon, max(0.0, p_min_pu * p_nom), dtype=float)
-        gen_epsilon = eps_by_aid[ref.component_id]
-        gen_specs.append(
-            ADMMGeneratorSpec(
-                cost=np.full(horizon, cost, dtype=float),
+        else:
+            lb_vec = np.zeros(horizon, dtype=float)
+            if ref.element_type == THERMAL:
+                p_min_pu = float(statics.get("p_min_pu", 0.0))
+                lb_vec = np.full(horizon, max(0.0, p_min_pu * p_nom), dtype=float)
+            actor = create_admm_flex_actor_box_bounded(
                 lb=lb_vec,
-                ub=np.asarray(p_max_vec, dtype=float),
-                epsilon=gen_epsilon,
+                u=np.asarray(p_max_vec, dtype=float),
+                S=np.full(horizon, cost, dtype=float),
             )
-        )
-        actor = create_admm_economic_dispatch_actor(
-            lb_vec,
-            np.asarray(p_max_vec, dtype=float),
-            cost=cost,
-            n_participants=n_gens,
-            epsilon=gen_epsilon,
-        )
-        agent = agent_composed_of(ADMMGeneratorRole(actor, finish_callback))
-        world.register(agent, suggested_aid=ref.component_id)
-        world.environment.install(agent, id=ref)
-        gen_agents.append(agent)
 
-    # --- Compute clearing prices for battery pre-scheduling ---
-    adjusted_target = target_series.copy()
-    if gen_specs:
-        precompute_data = create_admm_sharing_data(
-            target=target_series, generators=gen_specs, epsilon=dispatch_epsilon
-        )
-        pi0 = rho * n_gens * _z_from_clearing_prices(precompute_data, rho, n_gens)
-    else:
-        pi0 = np.zeros(horizon, dtype=float)
-
-    # --- Pass 2: storage — pre-schedule via LP, then register FixedScheduleActor ---
-    for ref, params in storage_refs_and_params:
-        battery_sched = solve_battery_price_schedule(horizon=horizon, pi=pi0, **params)
-        adjusted_target -= battery_sched
-        schedule_by_aid[ref.component_id] = (
-            battery_sched  # pre-stored; callback overwrites identically
-        )
-        actor = FixedScheduleActor(battery_sched)
         agent = agent_composed_of(ADMMGeneratorRole(actor, finish_callback))
         world.register(agent, suggested_aid=ref.component_id)
         world.environment.install(agent, id=ref)
@@ -434,8 +346,9 @@ async def execute_test_case(
     leader_addr = leader_agent.addr
     leader_addr_ref["addr"] = leader_addr
 
-    coordinator = create_sharing_target_distance_admm_coordinator()
-    coordinator.rho = rho
+    coordinator = create_consensus_target_reach_admm_coordinator(
+        rho=rho, max_iters=max_iters, alpha=0.0
+    )
     leader_agent.add_role(CoordinatorRole(coordinator))
     leader_agent.add_role(
         PowerLoadAggregator(
@@ -444,10 +357,8 @@ async def execute_test_case(
             generator_aids=generator_aids,
             admm_trigger=leader_addr,
             time_to_index=time_to_index,
-            adjusted_target_series=adjusted_target,
-            gen_specs=gen_specs,
+            target_series=target_series,
             schedule_by_aid=schedule_by_aid,
-            dispatch_epsilon=dispatch_epsilon,
         )
     )
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
@@ -535,11 +446,7 @@ def main(argv: list[str] | None = None) -> None:
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
-    scenario = (
-        build_toy_network(periods=args.simulate_days * 24)
-        if args.network == "toy"
-        else load_scenario(args.network)
-    )
+    scenario = resolve_scenario(args.network, simulate_days=args.simulate_days)
     asyncio.run(
         execute_test_case(
             scenario=scenario,

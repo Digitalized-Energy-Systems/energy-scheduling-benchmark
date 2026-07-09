@@ -47,7 +47,6 @@ from energy_scheduling_benchmark import (
     RENEWABLE,
     STORAGE,
     THERMAL,
-    PyPSABehavior,
 )
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
@@ -66,11 +65,12 @@ from energy_scheduling_benchmark.scenarios._common import (
     _keep_hourly,
     _lookup_ts,
     _write_agent_recordings_csv,
+    build_behavior,
     build_scenario_argparser,
     build_toy_network,
     compute_overall_cost,
-    load_scenario,
     make_finish_callback,
+    resolve_scenario,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,7 +100,7 @@ async def execute_test_case(
         scenario = build_toy_network(periods=simulate_days * 24)
 
     scenario = _clip_scenario(scenario, simulate_days)
-    behavior = PyPSABehavior.from_scenario(scenario)
+    behavior = build_behavior(scenario)
     environment = DefaultEnvironment(behavior=behavior)
     com_sim = SimpleCommunicationSimulation(
         default_delay_s=delay_s, loss_percent=loss_percent
@@ -155,10 +155,60 @@ async def execute_test_case(
     gen_refs = [gen for gen in gen_refs if "hydro" not in gen.component_id]
     generator_aids = [ref.component_id for ref in gen_refs]
 
+    # --- Per-generator epsilon (capacity-scaled) ---
+    # A single shared epsilon gives every generator the same price-response
+    # band width (epsilon * p_nom) above its own marginal cost. For merit
+    # order to hold, that band must be small relative to the spread of
+    # marginal costs across generators — otherwise many generators are still
+    # in their partial "ramp" region at the clearing price simultaneously, so
+    # power gets spread roughly by capacity rather than sorted by cost. On
+    # real PyPSA-Eur networks generator capacities span orders of magnitude
+    # (tens to tens-of-thousands of MW); scaling the band off typical/mean
+    # capacity makes it far wider than the cost spread, breaking merit order.
+    # Scale epsilon inversely with p_nom so every generator's band is a
+    # small, fixed fraction of the cost spread, independent of its capacity.
+    default_epsilon = 0.1
+    nonstorage_refs = [ref for ref in gen_refs if ref.element_type != STORAGE]
+    eps_by_aid: dict[str, float] = {}
+    cost_range = 0.0
+    if len(nonstorage_refs) >= 2:
+        costs_all = [
+            float(
+                behavior.get_statics(r)
+                .get("marginal_cost", 0.0)
+            )
+            for r in nonstorage_refs
+        ]
+        cost_range = max(costs_all) - min(costs_all)
+        target_band = max(default_epsilon, 0.1 * cost_range)
+    else:
+        target_band = default_epsilon
+    for ref in nonstorage_refs:
+        p_nom_ref = float(
+            behavior.get_statics(ref).get("p_nom", 0.0)
+        )
+        eps_by_aid[ref.component_id] = target_band / max(p_nom_ref, 1.0)
+
+    # --- Leader gain (demand-scaled) ---
+    # The leader's price update is `lam += leader_gain * ΔP` (Jian et al.
+    # 2020, eq. 22), where ΔP is the *absolute* system-wide power imbalance
+    # (MW). A fixed leader_gain conflates two unrelated scales: ΔP grows with
+    # total demand (tens to tens-of-thousands of MW on real networks), while
+    # a sensible λ correction should stay within a few multiples of the cost
+    # spread (a handful to ~100 €/MWh). A gain tuned for a toy network's
+    # ~100 MW demand becomes wildly too large at ~60,000 MW: each correction
+    # overshoots the cost spread by orders of magnitude, so λ oscillates
+    # chaotically and never settles, no matter how many iterations run.
+    # Scaling the gain by cost_range / demand keeps one demand-scale
+    # imbalance mapped to roughly one cost-spread-scale price correction,
+    # independent of network size.
+    mean_target = float(np.mean(target_series)) if horizon > 0 else 0.0
+    leader_gain = max(cost_range, 1.0) / max(mean_target, 1.0)
+
     gen_agents: list[RoleAgent] = []
     cost_by_aid: dict[str, float] = {}
     for gen_idx, ref in enumerate(gen_refs):
-        statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
+        statics = behavior.get_statics(ref)
         cost = float(statics.get("marginal_cost", 0.0))
         cost_by_aid[ref.component_id] = cost
         p_nom = float(statics.get("p_nom", 0.0))
@@ -217,7 +267,7 @@ async def execute_test_case(
                 soc_max=1.0,
                 charge_cost=max(0.0, cost),
                 discharge_cost=max(0.0, cost),
-                epsilon=0.1,
+                epsilon=target_band / max(p_nom, 1.0),
             )
         else:
             p_min = 0.0
@@ -225,7 +275,7 @@ async def execute_test_case(
                 p_min_pu = float(statics.get("p_min_pu", 0.0))
                 p_min = max(0.0, p_min_pu * p_nom)
             actor = LinearCostEconomicDispatchConsensusActor(
-                cost=cost, p_max=p_max_vec, p_min=p_min
+                cost=cost, p_max=p_max_vec, p_min=p_min, epsilon=eps_by_aid[ref.component_id]
             )
         # The first generator agent is the leader (Jian et al. 2020, eq. 22);
         # it pins λ toward the real system-wide power imbalance ΔP, while all
@@ -233,10 +283,10 @@ async def execute_test_case(
         participant = create_averaging_consensus_participant(
             finish_callback=finish_callback,
             consensus_actor=actor,
-            max_iter=200,
+            max_iter=500,
             alpha=0.2,
             is_leader=(gen_idx == 0),
-            leader_gain=0.05,
+            leader_gain=leader_gain,
         )
 
         opt_role = DistributedOptimizationRole(participant)
@@ -373,10 +423,7 @@ def main(argv: list[str] | None = None) -> None:
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
-    if args.network == "toy":
-        scenario = build_toy_network(periods=args.simulate_days * 24)
-    else:
-        scenario = load_scenario(args.network)
+    scenario = resolve_scenario(args.network, simulate_days=args.simulate_days)
 
     asyncio.run(
         execute_test_case(

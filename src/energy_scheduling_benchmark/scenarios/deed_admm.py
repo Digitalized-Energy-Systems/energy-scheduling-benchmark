@@ -50,7 +50,6 @@ from energy_scheduling_benchmark import (
     RENEWABLE,
     STORAGE,
     THERMAL,
-    PyPSABehavior,
 )
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
@@ -69,11 +68,13 @@ from energy_scheduling_benchmark.scenarios._common import (
     _keep_hourly,
     _lookup_ts,
     _write_agent_recordings_csv,
+    build_behavior,
     build_scenario_argparser,
     build_toy_network,
     compute_overall_cost,
-    load_scenario,
     make_finish_callback,
+    require_lossless_transport,
+    resolve_scenario,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ async def execute_test_case(
     *,
     scenario: ScenarioData | None = None,
     delay_s: float = 0.02,
-    loss_percent: float = 0.00005,
+    loss_percent: float = 0.0,
     name_base: str = "deed_admm",
     simulate_days: int = 3,
     gamma: float = 0.05,
@@ -105,11 +106,13 @@ async def execute_test_case(
     max_iter:
         Maximum number of DEED-ADMM iterations.
     """
+    require_lossless_transport(loss_percent, "DEED-ADMM")
+
     if scenario is None:
         scenario = build_toy_network(periods=simulate_days * 24)
 
     scenario = _clip_scenario(scenario, simulate_days)
-    behavior = PyPSABehavior.from_scenario(scenario)
+    behavior = build_behavior(scenario)
     environment = DefaultEnvironment(behavior=behavior)
     com_sim = SimpleCommunicationSimulation(
         default_delay_s=delay_s, loss_percent=loss_percent
@@ -174,7 +177,7 @@ async def execute_test_case(
     gen_agents: list[RoleAgent] = []
     cost_by_aid: dict[str, float] = {}
     for ref in gen_refs:
-        statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
+        statics = behavior.get_statics(ref)
         cost = float(statics.get("marginal_cost", 0.0))
         cost_by_aid[ref.component_id] = cost
         p_nom = float(statics.get("p_nom", 0.0))
@@ -396,10 +399,7 @@ def main(argv: list[str] | None = None) -> None:
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
-    if args.network == "toy":
-        scenario = build_toy_network(periods=args.simulate_days * 24)
-    else:
-        scenario = load_scenario(args.network)
+    scenario = resolve_scenario(args.network, simulate_days=args.simulate_days)
 
     asyncio.run(
         execute_test_case(

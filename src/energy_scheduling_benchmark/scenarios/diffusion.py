@@ -47,7 +47,6 @@ from energy_scheduling_benchmark import (
     RENEWABLE,
     STORAGE,
     THERMAL,
-    PyPSABehavior,
 )
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
@@ -66,11 +65,13 @@ from energy_scheduling_benchmark.scenarios._common import (
     _keep_hourly,
     _lookup_ts,
     _write_agent_recordings_csv,
+    build_behavior,
     build_scenario_argparser,
     build_toy_network,
     compute_overall_cost,
-    load_scenario,
     make_finish_callback,
+    require_lossless_transport,
+    resolve_scenario,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,7 +86,7 @@ async def execute_test_case(
     *,
     scenario: ScenarioData | None = None,
     delay_s: float = 0.02,
-    loss_percent: float = 0.00005,
+    loss_percent: float = 0.0,
     name_base: str = "diffusion",
     simulate_days: int = 3,
 ) -> None:
@@ -96,11 +97,13 @@ async def execute_test_case(
     scenario:
         Pre-built :class:`ScenarioData`.  Defaults to the toy 5-bus network.
     """
+    require_lossless_transport(loss_percent, "Diffusion")
+
     if scenario is None:
         scenario = build_toy_network(periods=simulate_days * 24)
 
     scenario = _clip_scenario(scenario, simulate_days)
-    behavior = PyPSABehavior.from_scenario(scenario)
+    behavior = build_behavior(scenario)
     environment = DefaultEnvironment(behavior=behavior)
     com_sim = SimpleCommunicationSimulation(
         default_delay_s=delay_s, loss_percent=loss_percent
@@ -155,21 +158,66 @@ async def execute_test_case(
     gen_refs = [gen for gen in gen_refs if "hydro" not in gen.component_id]
     # sort out devices with zero max power/nominal power
     gen_refs = [
-        gen
-        for gen in gen_refs
-        if behavior._dataframe_for(gen.element_type)
-        .loc[gen.component_id]
-        .get("p_nom", 0.0)
-        != 0.0
+        gen for gen in gen_refs if behavior.get_statics(gen).get("p_nom", 0.0) != 0.0
     ]
 
     n_gens = len(gen_refs)
     generator_aids = [ref.component_id for ref in gen_refs]
 
+    # --- Per-generator epsilon (capacity-scaled) ---
+    # A single shared epsilon gives every generator the same price-response
+    # band width (epsilon * p_nom) above its own marginal cost. For merit
+    # order to hold, that band must be small relative to the spread of
+    # marginal costs across generators — otherwise many generators are still
+    # in their partial "ramp" region at the clearing price simultaneously, so
+    # power gets spread roughly by capacity rather than sorted by cost. On
+    # real PyPSA-Eur networks generator capacities span orders of magnitude
+    # (tens to tens-of-thousands of MW); scaling the band off typical/mean
+    # capacity makes it far wider than the cost spread, breaking merit order.
+    # Scale epsilon inversely with p_nom so every generator's band is a
+    # small, fixed fraction of the cost spread, independent of its capacity.
+    default_epsilon = 0.1
+    nonstorage_refs = [ref for ref in gen_refs if ref.element_type != STORAGE]
+    eps_by_aid: dict[str, float] = {}
+    costs_all: list[float] = []
+    if len(nonstorage_refs) >= 2:
+        costs_all = [
+            float(behavior.get_statics(r).get("marginal_cost", 0.0))
+            for r in nonstorage_refs
+        ]
+        cost_range = max(costs_all) - min(costs_all)
+        target_band = max(default_epsilon, 0.1 * cost_range)
+    else:
+        target_band = default_epsilon
+    for ref in nonstorage_refs:
+        p_nom_ref = float(behavior.get_statics(ref).get("p_nom", 0.0))
+        eps_by_aid[ref.component_id] = target_band / max(p_nom_ref, 1.0)
+
+    # --- Stability-derived gradient step ---
+    # Ces et al. 2025 tune the feedback gain ε offline (genetic algorithm,
+    # Sec. 3.5) because their agents cannot see the system. This setup code
+    # can: each actor's price response has slope p_nom/target_band, so the
+    # dual-ascent loop (whose combine step averages the n gradients) is
+    # stable iff ε < 2n/Σ(p_nom_i/band). Take a quarter of that bound. A
+    # fixed ε that converges on the toy network (~100 MW) oscillates without
+    # ever balancing on GW-scale networks, where the aggregate slope is four
+    # orders of magnitude steeper.
+    total_p_nom = sum(
+        float(behavior.get_statics(ref).get("p_nom", 0.0)) for ref in gen_refs
+    )
+    grad_step = 0.5 * n_gens * target_band / max(total_p_nom, 1.0)
+
+    # Warm-start λ at the mean marginal cost — Ces et al. 2025 initialise the
+    # incremental cost from the cost coefficients at the initial dispatch
+    # (eqs. 23/24) rather than from an arbitrary constant, which cuts the
+    # approach phase of the iteration considerably on networks whose clearing
+    # price is far from any fixed default.
+    initial_lam = float(np.mean(costs_all)) if costs_all else 10.0
+
     gen_agents: list[RoleAgent] = []
     cost_by_aid: dict[str, float] = {}
     for ref in gen_refs:
-        statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
+        statics = behavior.get_statics(ref)
         cost = float(statics.get("marginal_cost", 0.0))
         cost_by_aid[ref.component_id] = cost
         p_nom = float(statics.get("p_nom", 0.0))
@@ -228,7 +276,7 @@ async def execute_test_case(
                 soc_max=1.0,
                 charge_cost=max(0.0, cost),
                 discharge_cost=max(0.0, cost),
-                epsilon=0.1,
+                epsilon=target_band / max(p_nom, 1.0),
                 n_guess=n_gens,
             )
         else:
@@ -239,15 +287,17 @@ async def execute_test_case(
             actor = LinearCostEconomicDispatchDiffusionActor(
                 cost=cost,
                 p_max=p_max_vec,
-                epsilon=0.1,
+                epsilon=eps_by_aid[ref.component_id],
                 p_min=p_min,
                 n_guess=n_gens,
             )
         participant = create_diffusion_participant(
             finish_callback=finish_callback,
             diffusion_actor=actor,
-            max_iter=300,
-            epsilon=0.2,
+            initial_lam=initial_lam,
+            max_iter=2000,
+            epsilon=grad_step,
+            tol=1e-3,
             horizon=horizon,
         )
 
@@ -273,7 +323,7 @@ async def execute_test_case(
         # The diffusion actor's p_max is also vectorised, so it constrains
         # each timestep independently.
         return DiffusionMessage(
-            phi=np.full(len(target_series), 10.0),
+            phi=np.full(len(target_series), initial_lam),
             k=0,
             data=np.asarray(target_series, dtype=float),
             initial=True,
@@ -289,6 +339,8 @@ async def execute_test_case(
             schedule_by_aid=schedule_by_aid,
             finished_message_type=DiffusionFinishedInfo,
             build_start_message=build_start_message,
+            demand_target=target_series,
+            balance_label="Diffusion",
         )
     )
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
@@ -383,10 +435,7 @@ def main(argv: list[str] | None = None) -> None:
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
-    if args.network == "toy":
-        scenario = build_toy_network(periods=args.simulate_days * 24)
-    else:
-        scenario = load_scenario(args.network)
+    scenario = resolve_scenario(args.network, simulate_days=args.simulate_days)
 
     asyncio.run(
         execute_test_case(

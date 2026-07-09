@@ -27,6 +27,7 @@ from mango_energy_environments import (
     ComponentRef,
     PowerUpdateInfo,
     PyPSABehavior,
+    SchedulingBehavior,
 )
 
 from .dispatch import solve_central_dispatch
@@ -44,6 +45,7 @@ from .plotting import stacked_area, visualize_results
 
 __all__ = [
     "PyPSABehavior",
+    "SchedulingBehavior",
     "ComponentRef",
     "PowerUpdateInfo",
     "THERMAL",

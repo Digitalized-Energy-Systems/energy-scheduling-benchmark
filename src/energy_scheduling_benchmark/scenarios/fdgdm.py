@@ -54,7 +54,6 @@ from energy_scheduling_benchmark import (
     RENEWABLE,
     STORAGE,
     THERMAL,
-    PyPSABehavior,
 )
 from energy_scheduling_benchmark.plotting import (
     agent_recording_as_plottable,
@@ -73,11 +72,13 @@ from energy_scheduling_benchmark.scenarios._common import (
     _keep_hourly,
     _lookup_ts,
     _write_agent_recordings_csv,
+    build_behavior,
     build_scenario_argparser,
     build_toy_network,
     compute_overall_cost,
-    load_scenario,
     make_finish_callback,
+    require_lossless_transport,
+    resolve_scenario,
 )
 
 logger = logging.getLogger(__name__)
@@ -211,7 +212,7 @@ async def execute_test_case(
     *,
     scenario: ScenarioData | None = None,
     delay_s: float = 0.02,
-    loss_percent: float = 0.00005,
+    loss_percent: float = 0.0,
     name_base: str = "fdgdm",
     simulate_days: int = 3,
 ) -> None:
@@ -222,11 +223,13 @@ async def execute_test_case(
     scenario:
         Pre-built :class:`ScenarioData`.  Defaults to the toy 5-bus network.
     """
+    require_lossless_transport(loss_percent, "FDGDM")
+
     if scenario is None:
         scenario = build_toy_network(periods=simulate_days * 24)
 
     scenario = _clip_scenario(scenario, simulate_days)
-    behavior = PyPSABehavior.from_scenario(scenario)
+    behavior = build_behavior(scenario)
     environment = DefaultEnvironment(behavior=behavior)
     com_sim = SimpleCommunicationSimulation(
         default_delay_s=delay_s, loss_percent=loss_percent
@@ -275,8 +278,7 @@ async def execute_test_case(
     gen_refs = [
         gen
         for gen in gen_refs
-        if behavior._dataframe_for(gen.element_type)
-        .loc[gen.component_id]
+        if behavior.get_statics(gen)
         .get("p_nom", 0.0)
         != 0.0
     ]
@@ -304,7 +306,7 @@ async def execute_test_case(
 
     cost_by_aid: dict[str, float] = {}
     for ref in renewable_refs:
-        statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
+        statics = behavior.get_statics(ref)
         cost_by_aid[ref.component_id] = float(statics.get("marginal_cost", 0.0))
         p_nom = float(statics.get("p_nom", 0.0))
         ts = _lookup_ts(scenario, ref)
@@ -320,7 +322,7 @@ async def execute_test_case(
     net_load_ts = (target_series - renewable_gen_ts).astype(float)
 
     for ref in storage_refs:
-        statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
+        statics = behavior.get_statics(ref)
         cost_by_aid[ref.component_id] = float(statics.get("marginal_cost", 0.0))
         p_nom = float(statics.get("p_nom", 0.0))
 
@@ -361,9 +363,7 @@ async def execute_test_case(
     # ------------------------------------------------------------------
     thermal_p_max_vecs: list[np.ndarray] = []
     for _ref_th in thermal_refs:
-        _statics_th = behavior._dataframe_for(_ref_th.element_type).loc[
-            _ref_th.component_id
-        ]
+        _statics_th = behavior.get_statics(_ref_th)
         _p_nom_th = float(_statics_th.get("p_nom", 0.0))
         _ts_th = _lookup_ts(scenario, _ref_th)
         thermal_p_max_vecs.append(
@@ -380,8 +380,7 @@ async def execute_test_case(
         _sched_1 = np.minimum(adjusted_target, thermal_p_max_vecs[0])
         schedule_by_aid[thermal_refs[0].component_id] = _sched_1
         cost_by_aid[thermal_refs[0].component_id] = float(
-            behavior._dataframe_for(thermal_refs[0].element_type)
-            .loc[thermal_refs[0].component_id]
+            behavior.get_statics(thermal_refs[0])
             .get("marginal_cost", 0.0)
         )
         adjusted_target = np.maximum(adjusted_target - _sched_1, 0.0)
@@ -427,8 +426,7 @@ async def execute_test_case(
     if n_thermals >= 2:
         thermal_costs = [
             float(
-                behavior._dataframe_for(r.element_type)
-                .loc[r.component_id]
+                behavior.get_statics(r)
                 .get("marginal_cost", 0.0)
             )
             for r in thermal_refs
@@ -436,8 +434,7 @@ async def execute_test_case(
         cost_diff = max(thermal_costs) - min(thermal_costs)
         thermal_p_nom_list = [
             float(
-                behavior._dataframe_for(r.element_type)
-                .loc[r.component_id]
+                behavior.get_statics(r)
                 .get("p_nom", 0.0)
             )
             for r in thermal_refs
@@ -458,7 +455,7 @@ async def execute_test_case(
     # -- Thermal generator agents (FDGDM participants) --
     thermal_gen_agents: list[RoleAgent] = []
     for i, ref in enumerate(thermal_refs):
-        statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
+        statics = behavior.get_statics(ref)
         cost = float(statics.get("marginal_cost", 0.0))
         cost_by_aid[ref.component_id] = cost
         p_max_vec = thermal_p_max_vecs[i]
@@ -620,10 +617,7 @@ def main(argv: list[str] | None = None) -> None:
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
-    if args.network == "toy":
-        scenario = build_toy_network(periods=args.simulate_days * 24)
-    else:
-        scenario = load_scenario(args.network)
+    scenario = resolve_scenario(args.network, simulate_days=args.simulate_days)
 
     asyncio.run(
         execute_test_case(

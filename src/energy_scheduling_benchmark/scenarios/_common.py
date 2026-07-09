@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 from mango import Role
 
-from energy_scheduling_benchmark import PowerUpdateInfo
+from energy_scheduling_benchmark import PowerUpdateInfo, PyPSABehavior
 from energy_scheduling_benchmark.networks import (
     ScenarioData,
     available_examples,
@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "build_toy_network",
     "load_scenario",
+    "resolve_scenario",
+    "build_behavior",
     "_clip_scenario",
     "_lookup_ts",
     "_scalar",
@@ -44,12 +46,61 @@ __all__ = [
     "_write_agent_recordings_csv",
     "compute_overall_cost",
     "build_scenario_argparser",
+    "require_lossless_transport",
     "PowerLoadInfo",
     "OptimizationFinishedInfo",
     "PowerLoadMonitoring",
     "PowerLoadAggregator",
     "make_finish_callback",
 ]
+
+
+def resolve_scenario(network: str, *, simulate_days: int) -> ScenarioData:
+    """Resolve the CLI ``--network`` argument into a :class:`ScenarioData` bundle.
+
+    ``"toy"`` builds the built-in 5-bus fixture sized to the simulated window;
+    anything else (PyPSA example name, ``.nc``/``.h5``/``.xlsx``/CSV path, or
+    PYPOWER case) goes through :func:`load_scenario`.
+
+    :param network: Value of the ``--network`` CLI argument.
+    :param simulate_days: Number of simulated days, used to size the toy network.
+    """
+    if network == "toy":
+        return build_toy_network(periods=simulate_days * 24)
+    return load_scenario(network)
+
+
+def build_behavior(scenario: ScenarioData) -> PyPSABehavior:
+    """Return the environment behavior driving *scenario*'s PyPSA network.
+
+    :param scenario: Scenario bundle from :func:`resolve_scenario`/:func:`load_scenario`.
+    """
+    return PyPSABehavior.from_scenario(scenario)
+
+
+def require_lossless_transport(loss_percent: float, algorithm_name: str) -> None:
+    """Fail fast instead of deadlocking under simulated packet loss.
+
+    FDGDM, Diffusion, Exact Diffusion, DEED-ADMM, and ADMM all advance a
+    round only once *every* neighbour (or, for ADMM, every participant the
+    coordinator awaits via ``asyncio.gather``) has replied for that round --
+    there is no retry and no partial-quorum fallback. A single dropped
+    message therefore hangs that round (and the whole simulation) forever
+    rather than degrading gracefully, unlike the averaging-consensus
+    algorithm, which has a catch-up path that lets a node skip ahead once
+    any neighbour's message for a later iteration arrives.
+
+    :param loss_percent: The scenario's configured comms packet-loss percentage.
+    :param algorithm_name: Name to include in the error message.
+    :raises ValueError: If *loss_percent* is not exactly zero.
+    """
+    if loss_percent != 0.0:
+        raise ValueError(
+            f"{algorithm_name} requires lossless message delivery (loss_percent=0.0); "
+            f"got {loss_percent!r}. This algorithm waits for every neighbour's reply "
+            "each round with no retry, so any packet loss can deadlock the run instead "
+            "of degrading gracefully. Use --loss-percent 0 (or omit the flag)."
+        )
 
 
 def _clip_scenario(scenario: ScenarioData, simulate_days: int) -> ScenarioData:
@@ -293,6 +344,9 @@ class PowerLoadAggregator(Role):
         finished_message_type: type,
         build_start_message: Callable[[], Any],
         n_finished_required: int | None = None,
+        demand_target: np.ndarray | None = None,
+        balance_label: str = "",
+        balance_tol: float = 0.01,
     ) -> None:
         super().__init__()
         self._behavior = behavior
@@ -308,6 +362,11 @@ class PowerLoadAggregator(Role):
             if n_finished_required is not None
             else len(generator_aids)
         )
+        self._demand_target = (
+            None if demand_target is None else np.asarray(demand_target, dtype=float)
+        )
+        self._balance_label = balance_label
+        self._balance_tol = balance_tol
 
         self._ready: bool = False
         self._finished_aids: set[str] = set()
@@ -315,6 +374,10 @@ class PowerLoadAggregator(Role):
 
         self.demand_map: dict[Any, list[float]] = {}
         self.target: float = 0.0  # recorded by the world for plotting
+        #: Largest per-timestep |Σ schedules − demand| / demand after the
+        #: optimization finished; ``None`` until verified (or if no
+        #: ``demand_target`` was supplied).
+        self.balance_max_rel_gap: float | None = None
 
     def setup(self) -> None:
         self.context.subscribe_message(
@@ -349,9 +412,50 @@ class PowerLoadAggregator(Role):
         self._finished_aids.add(message.aid)
         if len(self._finished_aids) == self._n_finished_required:
             self._ready = True
+            self._verify_balance()
             for idx in sorted(self._pending):
                 self._apply_schedule_index(idx, self._pending[idx])
             self._pending.clear()
+
+    def _verify_balance(self) -> None:
+        """Check the finished schedules against the known demand target.
+
+        Ces et al. 2025 verify power balance before accepting a distributed
+        solution; without this an unconverged run silently dispatches an
+        infeasible schedule whose "cost" is meaningless (unserved demand looks
+        cheap, over-generation looks expensive).
+        """
+        if self._demand_target is None:
+            return
+        m = len(self._demand_target)
+        total = np.zeros(m, dtype=float)
+        for aid in self._generator_aids:
+            schedule = self._schedule_by_aid.get(aid)
+            if schedule is None:
+                continue
+            arr = np.asarray(schedule, dtype=float).ravel()
+            n = min(m, arr.size)
+            total[:n] += arr[:n]
+        gap = self._demand_target - total
+        rel = np.abs(gap) / np.maximum(np.abs(self._demand_target), 1e-9)
+        self.balance_max_rel_gap = float(rel.max()) if rel.size else 0.0
+        label = self._balance_label or type(self).__name__
+        if self.balance_max_rel_gap > self._balance_tol:
+            logger.error(
+                "%s: schedules violate power balance — max per-timestep "
+                "|generation − demand| is %.1f%% of demand (tolerance %.1f%%). "
+                "The optimization did not converge; treat this run's cost as "
+                "invalid.",
+                label,
+                100.0 * self.balance_max_rel_gap,
+                100.0 * self._balance_tol,
+            )
+        else:
+            logger.info(
+                "%s: power balance verified — max per-timestep gap %.3f%% of demand.",
+                label,
+                100.0 * self.balance_max_rel_gap,
+            )
 
     def _handle_load_info(self, message: PowerLoadInfo, meta: dict) -> None:
         bucket = self.demand_map.setdefault(message.time, [])
