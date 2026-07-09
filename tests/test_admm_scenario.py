@@ -13,13 +13,11 @@ from unittest.mock import MagicMock
 import numpy as np
 import pandas as pd
 import pytest
-from distributed_resource_optimization import solve_battery_price_schedule
 from mango_energy_environments import ComponentRef
 
 from energy_scheduling_benchmark.networks import ScenarioData, build_toy_network
 from energy_scheduling_benchmark.scenarios._common import _scalar
 from energy_scheduling_benchmark.scenarios.admm import (
-    FixedScheduleActor,
     _lookup_ts,
     _make_finish_callback,
     execute_test_case,
@@ -297,89 +295,3 @@ class TestADMMScenarioIntegration:
         assert float(gap.mean()) < 20.0, f"Mean generation-demand gap {gap.mean():.1f} MW is too large"
 
 
-class TestFixedScheduleActor:
-    """FixedScheduleActor always replies with its pre-computed schedule."""
-
-    async def test_replies_with_fixed_schedule(self):
-        from unittest.mock import MagicMock
-
-        from distributed_resource_optimization import ADMMMessage
-
-        sched = np.array([1.0, 2.0, 3.0])
-        actor = FixedScheduleActor(sched)
-
-        replies = []
-
-        class FakeCarrier:
-            def reply_to_other(self, msg, meta):
-                replies.append(msg)
-
-        msg = MagicMock(spec=ADMMMessage)
-        await actor.on_exchange_message(FakeCarrier(), msg, {})
-
-        assert len(replies) == 1
-        assert np.allclose(replies[0].x, sched)
-
-    def test_x_is_a_copy(self):
-        original = np.array([1.0, 2.0])
-        actor = FixedScheduleActor(original)
-        original[0] = 99.0
-        assert actor.x[0] == pytest.approx(1.0)
-
-    async def test_ignores_non_admm_messages(self):
-        actor = FixedScheduleActor(np.array([1.0]))
-        calls = []
-
-        class FakeCarrier:
-            def reply_to_other(self, msg, meta):
-                calls.append(msg)
-
-        await actor.on_exchange_message(FakeCarrier(), "not-an-admm-message", {})
-        assert calls == []
-
-
-class TestSolveBatteryPriceSchedule:
-    """solve_battery_price_schedule solves an SOC-constrained LP."""
-
-    def test_discharges_when_price_exceeds_cost(self):
-        # High uniform price, zero discharge cost → should discharge
-        pi = np.full(6, 10.0)
-        sched = solve_battery_price_schedule(
-            horizon=6, pi=pi,
-            e_max=20.0, p_charge_max=5.0, p_discharge_max=5.0,
-            eta_charge=1.0, eta_discharge=1.0,
-            e_initial=0.5, e_final=0.5,
-        )
-        assert sched is not None
-        assert float(np.max(sched)) > 0.1
-
-    def test_soc_never_goes_negative(self):
-        pi = np.array([1.0, 5.0, 1.0, 5.0, 1.0, 5.0])
-        sched = solve_battery_price_schedule(
-            horizon=6, pi=pi,
-            e_max=10.0, p_charge_max=3.0, p_discharge_max=3.0,
-            eta_charge=0.95, eta_discharge=0.95,
-            e_initial=0.5, e_final=0.5,
-        )
-        e = 0.5 * 10.0
-        for p in sched:
-            if p >= 0:
-                e -= p / 0.95
-            else:
-                e += (-p) * 0.95
-            assert e >= -1e-4
-
-    def test_terminal_soc_is_respected(self):
-        pi = np.full(4, 1.0)
-        sched = solve_battery_price_schedule(
-            horizon=4, pi=pi,
-            e_max=10.0, p_charge_max=5.0, p_discharge_max=5.0,
-            e_initial=0.3, e_final=0.3,
-        )
-        e = 0.3 * 10.0
-        for p in sched:
-            if p >= 0:
-                e -= p
-            else:
-                e += (-p)
-        assert abs(e - 0.3 * 10.0) < 0.5

@@ -21,8 +21,6 @@ from typing import Any
 
 import numpy as np
 from distributed_resource_optimization import (
-    ADMMAnswer,
-    ADMMMessage,
     create_admm_flex_actor_box_bounded,
     create_admm_proximal_storage_actor,
     create_admm_start_consensus,
@@ -81,30 +79,6 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Actors
-# ---------------------------------------------------------------------------
-
-
-class FixedScheduleActor:
-    """ADMM participant that always replies with a pre-computed schedule.
-
-    Used for storage units whose schedule was computed by the CVXPY LP before
-    the ADMM run.  Participating in the ADMM protocol allows the coordinator
-    to wait for all generators (including storage) to reply.
-    """
-
-    def __init__(self, schedule: np.ndarray) -> None:
-        self.x = np.asarray(schedule, dtype=float).copy()
-
-    async def on_exchange_message(
-        self, carrier: Any, message_data: Any, meta: dict
-    ) -> None:
-        if not isinstance(message_data, ADMMMessage):
-            return
-        carrier.reply_to_other(ADMMAnswer(x=self.x), meta)
-
-
-# ---------------------------------------------------------------------------
 # Roles
 # ---------------------------------------------------------------------------
 
@@ -158,6 +132,8 @@ class PowerLoadAggregator(_BasePowerLoadAggregator):
             schedule_by_aid=schedule_by_aid,
             finished_message_type=ADMMFinishedInfo,
             build_start_message=build_start_message,
+            demand_target=target_series,
+            balance_label="ADMM",
         )
 
 
@@ -252,6 +228,7 @@ async def execute_test_case(
 
     # --- Generator agent creation ---
     gen_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, STORAGE])
+    # Filter out hydro: its dispatch is driven by inflow, which the storage
     gen_refs = [g for g in gen_refs if "hydro" not in g.component_id]
     gen_refs = [
         g
