@@ -12,6 +12,11 @@ Flow
    matches the total number of components it solves a Pyomo LP that
    dispatches generation cost-optimally and meets the aggregated load,
    and ships ``PowerInfo`` messages back with each generator's share.
+
+Storage units are deliberately excluded: only thermal/renewable generators
+and loads participate, so on networks with storage this scenario's cost is
+a storage-less merit-order baseline rather than a like-for-like comparison
+with the distributed scenarios (which pre-schedule storage).
 """
 
 from __future__ import annotations
@@ -19,7 +24,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 import numpy as np
@@ -61,7 +65,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_scenario_argparser,
     build_toy_network,
     compute_overall_cost,
-    load_scenario,
+    resolve_scenario,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,7 +81,7 @@ class PowerInfo:
     """Power set-point / observation exchanged with the aggregator."""
 
     power_load: float
-    time: datetime
+    time: float  # simulation seconds (``context.current_timestamp``)
 
 
 @dataclass
@@ -86,7 +90,7 @@ class GeneratorInfo:
 
     max_power: float
     cost: float
-    time: datetime
+    time: float  # simulation seconds (``context.current_timestamp``)
     addr: AgentAddress
     static: bool
     min_power: float = 0.0
@@ -102,7 +106,14 @@ def _role_addr(role: Role) -> AgentAddress:
 
 
 class StaticHandler(Role):
-    """Reports a generator's static parameters once on ``on_ready``."""
+    """Reports a generator's static parameters once on ``on_ready``.
+
+    The report is sent exactly once with no retry: under simulated packet
+    loss a dropped static report means the aggregator's component count
+    stays incomplete for *every* timestep, so the whole run produces zero
+    dispatches (surfaced only by the ``Aggregator.on_stop`` warning).
+    Dropped *dynamic* reports merely skip the affected timestep.
+    """
 
     def __init__(
         self,
@@ -303,11 +314,7 @@ async def execute_test_case(
 
     all_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, LOAD])
     cost_by_aid: dict[str, float] = {
-        ref.component_id: float(
-            behavior._dataframe_for(ref.element_type)
-            .loc[ref.component_id]
-            .get("marginal_cost", 0.0)
-        )
+        ref.component_id: float(behavior.get_statics(ref).get("marginal_cost", 0.0))
         for ref in all_refs
         if ref.element_type != LOAD
     }
@@ -317,21 +324,18 @@ async def execute_test_case(
         # The first agent carries the Aggregator role (acts as leader).
         if leader_agent is None:
             aggregator = Aggregator(num_components=len(all_refs))
-            roles: list[Role] = [aggregator]
-            agent = agent_composed_of(*roles)
+            agent = agent_composed_of(aggregator)
             world.register(agent, suggested_aid=ref.component_id)
             world.environment.install(agent, id=ref)
             leader_agent = agent
-            leader_addr = leader_agent.addr
             # The leader itself may also be e.g. a thermal gen → add monitoring.
-            _install_component_role(ref, behavior, leader_addr, agent)
+            _install_component_role(ref, behavior, leader_agent.addr, agent)
             continue
 
-        leader_addr = leader_agent.addr
         agent = RoleAgent()
         world.register(agent, suggested_aid=ref.component_id)
         world.environment.install(agent, id=ref)
-        _install_component_role(ref, behavior, leader_addr, agent)
+        _install_component_role(ref, behavior, leader_agent.addr, agent)
 
     record_agent_having(
         world,
@@ -412,7 +416,7 @@ def _install_component_role(ref, behavior, leader_addr, agent) -> None:
         agent.add_role(PowerLoadMonitoring(behavior, leader_addr))
         return
 
-    statics = behavior._dataframe_for(ref.element_type).loc[ref.component_id]
+    statics = behavior.get_statics(ref)
     p_min_pu = float(statics.get("p_min_pu", 0.0))
     p_nom = float(statics.get("p_nom", 0.0))
     min_power = max(0.0, p_min_pu * p_nom)
@@ -435,10 +439,7 @@ def main(argv: list[str] | None = None) -> None:
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
-    if args.network == "toy":
-        scenario = build_toy_network(periods=args.simulate_days * 24)
-    else:
-        scenario = load_scenario(args.network)
+    scenario = resolve_scenario(args.network, simulate_days=args.simulate_days)
 
     asyncio.run(
         execute_test_case(

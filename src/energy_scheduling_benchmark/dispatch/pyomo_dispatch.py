@@ -38,12 +38,23 @@ class DispatchResult:
     solver_status: str
 
 
+_solver_name: str | None = None
+
+
 def _pick_solver() -> pyo.SolverFactory:
-    """Pick an available LP solver.  Prefers HiGHS (``highspy``), falls back to GLPK."""
+    """Pick an available LP solver.  Prefers HiGHS (``highspy``), falls back to GLPK.
+
+    The winning solver name is cached so repeated per-timestep solves skip
+    the availability probes.
+    """
+    global _solver_name
+    if _solver_name is not None:
+        return pyo.SolverFactory(_solver_name)
     for name in ("appsi_highs", "glpk", "cbc"):
         try:
             solver = pyo.SolverFactory(name)
             if solver.available(exception_flag=False):
+                _solver_name = name
                 return solver
         except Exception:  # noqa: BLE001 — probe failure is fine, try next
             continue
@@ -107,7 +118,10 @@ def solve_central_dispatch(
     )
 
     solver = _pick_solver()
-    results = solver.solve(model, tee=False)
+    # appsi solvers raise RuntimeError instead of reporting failure when asked
+    # to auto-load the solution of an infeasible solve — defer loading until
+    # the termination condition is known.
+    results = solver.solve(model, load_solutions=False, tee=False)
 
     status = str(results.solver.termination_condition)
     success = status in {"optimal", "locallyOptimal"}
@@ -120,6 +134,7 @@ def solve_central_dispatch(
             solver_status=status,
         )
 
+    model.solutions.load_from(results)
     dispatch = [float(pyo.value(model.p[i])) for i in model.G]
     objective = float(pyo.value(model.cost))
     return DispatchResult(
