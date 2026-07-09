@@ -85,7 +85,7 @@ async def execute_test_case(
     *,
     scenario: ScenarioData | None = None,
     delay_s: float = 0.02,
-    loss_percent: float = 0.00005,
+    loss_percent: float = 0.0,
     name_base: str = "consensus",
     simulate_days: int = 3,
 ) -> None:
@@ -151,7 +151,7 @@ async def execute_test_case(
 
     # -- Generator agents --
     gen_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, STORAGE])
-    # sort out hydro as they are not charable
+    # filter out hydro since it is not chargeable
     gen_refs = [gen for gen in gen_refs if "hydro" not in gen.component_id]
     generator_aids = [ref.component_id for ref in gen_refs]
 
@@ -327,6 +327,8 @@ async def execute_test_case(
             schedule_by_aid=schedule_by_aid,
             finished_message_type=ConsensusFinishedInfo,
             build_start_message=build_start_message,
+            demand_target=target_series,
+            balance_label="Consensus",
         )
     )
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
@@ -417,7 +419,7 @@ async def execute_test_case(
 
 def main(argv: list[str] | None = None) -> None:
     parser = build_scenario_argparser(
-        __doc__, default_name_base="consensus_withoutlosses"
+        __doc__, default_name_base="consensus_withlosses"
     )
     args = parser.parse_args(argv)
 
