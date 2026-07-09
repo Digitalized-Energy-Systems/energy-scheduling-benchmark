@@ -104,8 +104,9 @@ async def execute_test_case(
     weight_rule:
         Combination-weight rule for the combine step -- one of
         ``"averaging"``, ``"relative_degree"``, ``"mean_metropolis"``,
-        ``"hastings"``. Defaults to ``"averaging"``, the best-performing rule
-        (#1) in Ces et al. 2025 Table I.
+        ``"hastings"``. Defaults to ``"averaging"`` (rule #1 in Ces et al.
+        2025 Table I's numbering), which their results section finds
+        best-performing.
     """
     require_lossless_transport(loss_percent, "Exact Diffusion")
 
@@ -164,7 +165,7 @@ async def execute_test_case(
 
     # -- Generator agents --
     gen_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, STORAGE])
-    # sort out hydro as they are not charable
+    # filter out hydro as they are not chargeable
     gen_refs = [gen for gen in gen_refs if "hydro" not in gen.component_id]
     # sort out devices with zero max power/nominal power
     gen_refs = [
@@ -458,7 +459,7 @@ def main(argv: list[str] | None = None) -> None:
         default="averaging",
         choices=["averaging", "relative_degree", "mean_metropolis", "hastings"],
         help="Combination-weight rule for the combine step (default: averaging, "
-        "the best-performing rule in Ces et al. 2025 Table I).",
+        "the rule Ces et al. 2025's results find best-performing).",
     )
     args = parser.parse_args(argv)
 

@@ -154,7 +154,7 @@ async def execute_test_case(
 
     # -- Generator agents --
     gen_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, STORAGE])
-    # sort out hydro as they are not charable
+    # filter out hydro as they are not chargeable
     gen_refs = [gen for gen in gen_refs if "hydro" not in gen.component_id]
     # sort out devices with zero max power/nominal power
     gen_refs = [
