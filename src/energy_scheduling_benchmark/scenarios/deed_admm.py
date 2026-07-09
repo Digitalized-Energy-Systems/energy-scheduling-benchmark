@@ -182,16 +182,6 @@ async def execute_test_case(
         cost_by_aid[ref.component_id] = cost
         p_nom = float(statics.get("p_nom", 0.0))
 
-        ts = _lookup_ts(scenario, ref)
-        if ts is None:
-            p_max_vec = np.full(horizon, p_nom, dtype=float)
-        else:
-            values = np.asarray(ts.reindex(time_index), dtype=float)
-            if ref.element_type == RENEWABLE:
-                p_max_vec = values * p_nom
-            else:
-                p_max_vec = values
-
         if ref.element_type == STORAGE:
             p_min_pu = float(statics.get("p_min_pu", -1.0))
             p_max_pu = float(statics.get("p_max_pu", 1.0))
@@ -232,6 +222,12 @@ async def execute_test_case(
                 n_agents=n_gens,
             )
         elif ref.element_type == RENEWABLE:
+            # Availability timeseries is per-unit in PyPSA; scale by p_nom.
+            ts = _lookup_ts(scenario, ref)
+            if ts is None:
+                p_max_vec = np.full(horizon, p_nom, dtype=float)
+            else:
+                p_max_vec = np.asarray(ts.reindex(time_index), dtype=float) * p_nom
             participant = create_deed_admm_renewable_participant(
                 finish_callback,
                 p_max_timeseries=p_max_vec,
@@ -292,6 +288,8 @@ async def execute_test_case(
             schedule_by_aid=schedule_by_aid,
             finished_message_type=DEEDADMMFinishedInfo,
             build_start_message=build_start_message,
+            demand_target=target_series,
+            balance_label="DEED-ADMM",
         )
     )
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
