@@ -556,11 +556,10 @@ async def execute_test_case(
     )
 
     # -- Simulate --
-    # Run until just past the LAST desired snapshot (index simulate_days*24-1).
-    # Using simulate_days*24*3600 exactly would hit the NEXT day's midnight
-    # snapshot in a multi-day network (e.g. a 6-day .nc with simulate_days=3
-    # fires the day-4 snapshot at t=259200 s), creating a stale duplicate row
-    # because the 0.02 s-delayed PowerLoadInfo for that step never arrives.
+    # Run until just past the LAST snapshot inside the window (index
+    # simulate_days*24-1). Since _clip_scenario trims the timeseries before
+    # PyPSABehavior schedules its ticks, no snapshot fires after that point
+    # anyway; stopping here just avoids simulating an empty final hour.
     sim_end_s = (simulate_days * 24 - 1) * 3600.0 + 1.0
     async with world:
         await discrete_step_until(world, sim_end_s)

@@ -227,12 +227,11 @@ class TestFDGDMScenarioIntegration:
         )
 
     async def test_total_generation_tracks_demand(self, tmp_path):
-        """Sum of generator power should be non-trivially close to demand.
+        """Sum of generator power should track demand closely (mean gap < 5 MW).
 
         FDGDM conserves the initial total-power allocation (zero-row-sum weight
-        matrix), so it does not re-balance to exactly match dynamic demand the
-        way ADMM does.  We use a wider tolerance (50 MW) than the ADMM scenario
-        test (20 MW) to account for this property.
+        matrix); the demand-feasible proportional initial allocation makes the
+        conserved total match demand, so the gap should stay small.
         """
         scenario = build_toy_network(periods=24)
         name_base = str(tmp_path / "fdgdm")
@@ -259,6 +258,18 @@ class TestFDGDMScenarioIntegration:
         assert float(gap.mean()) < 5.0, (
             f"Mean generation-demand gap {gap.mean():.1f} MW is too large"
         )
+
+    async def test_raises_on_lossy_transport(self, tmp_path):
+        """FDGDM advances a round only when every neighbour replied; packet
+        loss would deadlock the run, so the scenario must refuse to start."""
+        scenario = build_toy_network(periods=24)
+        with pytest.raises(ValueError, match="lossless"):
+            await execute_test_case(
+                scenario=scenario,
+                loss_percent=5.0,
+                name_base=str(tmp_path / "fdgdm"),
+                simulate_days=1,
+            )
 
 
 # ---------------------------------------------------------------------------

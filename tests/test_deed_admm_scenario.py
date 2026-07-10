@@ -71,3 +71,15 @@ class TestExecuteTestCase:
                 name_base=str(tmp_path / "deed_admm"),
                 simulate_days=1,
             )
+
+    async def test_raises_on_lossy_transport(self, tmp_path):
+        """DEED-ADMM advances a round only when every neighbour replied; packet
+        loss would deadlock the run, so the scenario must refuse to start."""
+        scenario = build_toy_network(periods=24)
+        with pytest.raises(ValueError, match="lossless"):
+            await execute_test_case(
+                scenario=scenario,
+                loss_percent=5.0,
+                name_base=str(tmp_path / "deed_admm"),
+                simulate_days=1,
+            )

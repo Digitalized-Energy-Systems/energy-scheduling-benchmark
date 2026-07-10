@@ -34,15 +34,21 @@ def visualize_results(
     Thin wrapper around :func:`mango.simulation.visualization.plot_recordings`.
     When *annotation* is given (e.g. a total-cost summary), it's added as a
     figure-level suptitle and the figure is re-saved with it included.
+
+    The figure is closed after saving (matplotlib retains open pyplot figures
+    indefinitely, which leaks memory across batch runs); it is still returned
+    for callers that want to inspect it.
     """
+    import matplotlib.pyplot as plt
     from mango.simulation.visualization import plot_recordings
 
     if annotation is None:
-        return plot_recordings(world, colormap=colormap, write_to=write_to)
-
-    fig = plot_recordings(world, colormap=colormap, write_to=None)
-    fig.suptitle(annotation, fontsize=9, y=0.995)
-    fig.savefig(write_to)
+        fig = plot_recordings(world, colormap=colormap, write_to=write_to)
+    else:
+        fig = plot_recordings(world, colormap=colormap, write_to=None)
+        fig.suptitle(annotation, fontsize=9, y=0.995)
+        fig.savefig(write_to)
+    plt.close(fig)
     return fig
 
 

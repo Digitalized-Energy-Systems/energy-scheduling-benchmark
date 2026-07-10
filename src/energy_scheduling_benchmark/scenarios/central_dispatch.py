@@ -295,7 +295,7 @@ async def execute_test_case(
     *,
     scenario: ScenarioData | None = None,
     delay_s: float = 0.02,
-    loss_percent: float = 0.00005,
+    loss_percent: float = 0.0,
     name_base: str = "central_dispatch",
     simulate_days: int = 3,
 ) -> None:

@@ -228,7 +228,9 @@ async def execute_test_case(
 
     # --- Generator agent creation ---
     gen_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, STORAGE])
-    # Filter out hydro: its dispatch is driven by inflow, which the storage
+    # Filter out hydro: its dispatch is driven by natural inflow, which the
+    # storage actor does not model (it assumes freely schedulable
+    # charge/discharge), so hydro units cannot participate meaningfully.
     gen_refs = [g for g in gen_refs if "hydro" not in g.component_id]
     gen_refs = [
         g

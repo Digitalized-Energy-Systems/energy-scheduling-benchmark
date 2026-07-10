@@ -224,6 +224,12 @@ def compute_overall_cost(
     first collapsed to one (the last) sample per *step_s* bucket, same as
     FDGDM's own de-duplication for its plots.
 
+    Negative recorded power (storage charging) is clipped to zero before
+    weighting: charging is not credited as negative cost at the unit's own
+    marginal cost, so scenarios that record raw charging power (consensus,
+    ADMM, diffusion, DEED-ADMM) and FDGDM (which clamps its "P" recording to
+    ``max(0, ·)``) produce comparable totals.
+
     Returns ``(total, per_step)`` where *per_step* is a ``"cost:total"``
     series indexed by the de-duplicated *t_P*, suitable for merging into the
     recordings CSV via :func:`_write_agent_recordings_csv`'s ``extra``
@@ -238,7 +244,9 @@ def compute_overall_cost(
         Y_P = Y_P[last_idx]
 
     cost_vec = np.array([cost_by_aid.get(aid, 0.0) for aid in labels_P])
-    per_step = pd.Series((Y_P * cost_vec).sum(axis=1), index=t_arr, name="cost:total")
+    per_step = pd.Series(
+        (np.maximum(Y_P, 0.0) * cost_vec).sum(axis=1), index=t_arr, name="cost:total"
+    )
     return float(per_step.sum()), per_step
 
 

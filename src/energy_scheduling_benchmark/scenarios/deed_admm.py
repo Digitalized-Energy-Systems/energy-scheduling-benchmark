@@ -164,6 +164,10 @@ async def execute_test_case(
     # ------------------------------------------------------------------
     gen_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, STORAGE])
     gen_refs = [ref for ref in gen_refs if "hydro" not in ref.component_id]
+    # sort out devices with zero max power/nominal power
+    gen_refs = [
+        ref for ref in gen_refs if behavior.get_statics(ref).get("p_nom", 0.0) != 0.0
+    ]
     n_gens = len(gen_refs)
     generator_aids = [ref.component_id for ref in gen_refs]
 

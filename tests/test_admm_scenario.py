@@ -294,4 +294,16 @@ class TestADMMScenarioIntegration:
         gap = (tail_tgt - tail_gen).abs()
         assert float(gap.mean()) < 20.0, f"Mean generation-demand gap {gap.mean():.1f} MW is too large"
 
+    async def test_raises_on_lossy_transport(self, tmp_path):
+        """The ADMM coordinator gathers every participant's reply each round;
+        packet loss would deadlock the run, so the scenario must refuse to start."""
+        scenario = build_toy_network(periods=24)
+        with pytest.raises(ValueError, match="lossless"):
+            await execute_test_case(
+                scenario=scenario,
+                loss_percent=5.0,
+                name_base=str(tmp_path / "admm"),
+                simulate_days=1,
+            )
+
 

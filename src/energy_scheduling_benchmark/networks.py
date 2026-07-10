@@ -28,6 +28,7 @@ Typical use::
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -119,6 +120,8 @@ def load_network(source: str | Path | pypsa.Network | Callable[[], Any]):
     * ``callable`` → called with no args, expected to return a network.
     * ``str`` that matches an :func:`available_examples` name → loaded
       via :func:`load_example`.
+    * ``str`` of the form ``case<N>`` (e.g. ``case14``, ``case118``) →
+      loaded via :func:`load_pypower_case` (requires ``pypower``).
     * ``str | Path`` pointing at a file or directory → loaded via the
       appropriate PyPSA importer based on the suffix:
 
@@ -134,11 +137,13 @@ def load_network(source: str | Path | pypsa.Network | Callable[[], Any]):
     if callable(source):
         return source()
 
-    # String: example name takes priority over file path when it matches.
+    # String: example / PYPOWER-case names take priority over file paths.
     if isinstance(source, str):
         normalised = source.replace("_", "-").lower()
         if normalised in _EXAMPLE_MAP:
             return load_example(source)
+        if re.fullmatch(r"case\d+", source.lower()):
+            return load_pypower_case(source.lower())
 
     path = Path(source)
     if path.is_dir():
@@ -161,7 +166,8 @@ def load_network(source: str | Path | pypsa.Network | Callable[[], Any]):
     raise ValueError(
         f"Unsupported network source: {source!r}. "
         f"Expected a pypsa.Network, an example name "
-        f"({', '.join(available_examples())}), or a .nc/.h5/.xlsx/CSV-folder path."
+        f"({', '.join(available_examples())}), a PYPOWER case name "
+        f"(case14, case30, …), or a .nc/.h5/.xlsx/CSV-folder path."
     )
 
 
@@ -242,7 +248,7 @@ def load_scenario(
     ----------
     source:
         Anything accepted by :func:`load_network` — example name, file path,
-        PYPOWER case (via :func:`load_pypower_case` manually), callable,
+        PYPOWER case name (``case14``, ``case118`` …), callable,
         or existing :class:`pypsa.Network`.
     timeseries:
         Optional explicit timeseries that overrides automatic extraction.

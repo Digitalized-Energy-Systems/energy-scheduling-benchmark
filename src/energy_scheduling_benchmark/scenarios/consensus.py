@@ -153,6 +153,10 @@ async def execute_test_case(
     gen_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, STORAGE])
     # filter out hydro since it is not chargeable
     gen_refs = [gen for gen in gen_refs if "hydro" not in gen.component_id]
+    # sort out devices with zero max power/nominal power
+    gen_refs = [
+        gen for gen in gen_refs if behavior.get_statics(gen).get("p_nom", 0.0) != 0.0
+    ]
     generator_aids = [ref.component_id for ref in gen_refs]
 
     # --- Per-generator epsilon (capacity-scaled) ---
