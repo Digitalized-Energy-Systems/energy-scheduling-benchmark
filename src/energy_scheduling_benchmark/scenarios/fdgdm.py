@@ -504,8 +504,9 @@ async def execute_test_case(
     leader_addr_ref["addr"] = leader_addr
 
     def build_start_message() -> Any:
-        # Kick off FDGDM on the thermal sub-problem using the pre-computed
-        # demand-feasible initial allocation (capped at min p_max per step).
+        # Kick off FDGDM on the thermal sub-problem.  The kickoff data is an
+        # equal split of the residual demand, but each thermal actor overrides
+        # it with its own pre-computed initial_schedule on the first project().
         return create_fdgdm_start(data=fdgdm_initial_p)
 
     leader_agent.add_role(
@@ -519,6 +520,8 @@ async def execute_test_case(
             finished_message_type=FDGDMFinishedInfo,
             build_start_message=build_start_message,
             n_finished_required=len(thermal_refs),
+            demand_target=target_series,
+            balance_label="FDGDM",
         )
     )
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))

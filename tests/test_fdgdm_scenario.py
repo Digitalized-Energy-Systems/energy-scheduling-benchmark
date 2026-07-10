@@ -170,8 +170,9 @@ class TestFDGDMScenarioIntegration:
         assert any("P:" in col for col in df.columns)
 
     async def test_raises_when_network_has_no_loads(self, tmp_path):
-        import pypsa
         from datetime import datetime
+
+        import pypsa
 
         net = pypsa.Network()
         net.set_snapshots(pd.date_range("2024-01-01", periods=24, freq="h"))
@@ -201,6 +202,29 @@ class TestFDGDMScenarioIntegration:
         power_cols = [c for c in df.columns if c.startswith("P:")]
         assert len(power_cols) >= 1
         assert any(df[col].abs().max() > 1e-3 for col in power_cols)
+
+    async def test_balance_verification_runs_and_passes(self, tmp_path, caplog):
+        """The aggregator must verify power balance after FDGDM finishes
+        (demand_target/balance_label wiring, like the sibling scenarios)."""
+        import logging
+
+        scenario = build_toy_network(periods=24)
+        name_base = str(tmp_path / "fdgdm")
+        with caplog.at_level(logging.INFO):
+            await execute_test_case(
+                scenario=scenario,
+                delay_s=0.0,
+                loss_percent=0.0,
+                name_base=name_base,
+                simulate_days=1,
+            )
+        balance_msgs = [
+            r for r in caplog.records if "power balance" in r.getMessage()
+        ]
+        assert balance_msgs, "expected a balance verification log entry"
+        assert all(r.levelno < logging.ERROR for r in balance_msgs), (
+            "balance verification reported a violation on the toy network"
+        )
 
     async def test_total_generation_tracks_demand(self, tmp_path):
         """Sum of generator power should be non-trivially close to demand.
