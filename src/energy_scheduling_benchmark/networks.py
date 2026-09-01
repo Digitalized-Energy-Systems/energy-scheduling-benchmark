@@ -142,7 +142,7 @@ def load_network(source: str | Path | pypsa.Network | Callable[[], Any]):
         normalised = source.replace("_", "-").lower()
         if normalised in _EXAMPLE_MAP:
             return load_example(source)
-        if re.fullmatch(r"case\d+", source.lower()):
+        if re.fullmatch(r"case\d+", source.lower()) and not Path(source).exists():
             return load_pypower_case(source.lower())
 
     path = Path(source)

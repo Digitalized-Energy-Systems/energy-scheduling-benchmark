@@ -11,7 +11,7 @@ import sys
 
 import pypsa
 
-network = pypsa.Network(sys.argv[1] if len(sys.argv) > 1 else "base_s_1_elec_2020.nc")
+network = pypsa.Network(sys.argv[1] if len(sys.argv) > 1 else "lower_saxony_2030.nc")
 
 print(network.components)
 print(network.generators)

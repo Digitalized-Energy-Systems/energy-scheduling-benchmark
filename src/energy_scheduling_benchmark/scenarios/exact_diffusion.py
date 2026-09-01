@@ -73,6 +73,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_scenario_argparser,
     build_toy_network,
     compute_overall_cost,
+    filter_and_cache_statics,
     make_finish_callback,
     require_lossless_transport,
     resolve_scenario,
@@ -167,10 +168,8 @@ async def execute_test_case(
     gen_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, STORAGE])
     # filter out hydro as they are not chargeable
     gen_refs = [gen for gen in gen_refs if "hydro" not in gen.component_id]
-    # sort out devices with zero max power/nominal power
-    gen_refs = [
-        gen for gen in gen_refs if behavior.get_statics(gen).get("p_nom", 0.0) != 0.0
-    ]
+    # sort out devices with zero/non-finite max power/nominal power
+    gen_refs, statics_by_ref = filter_and_cache_statics(behavior, gen_refs)
 
     n_gens = len(gen_refs)
     generator_aids = [ref.component_id for ref in gen_refs]
@@ -193,15 +192,14 @@ async def execute_test_case(
     costs_all: list[float] = []
     if len(nonstorage_refs) >= 2:
         costs_all = [
-            float(behavior.get_statics(r).get("marginal_cost", 0.0))
-            for r in nonstorage_refs
+            float(statics_by_ref[r].get("marginal_cost", 0.0)) for r in nonstorage_refs
         ]
         cost_range = max(costs_all) - min(costs_all)
         target_band = max(default_epsilon, 0.1 * cost_range)
     else:
         target_band = default_epsilon
     for ref in nonstorage_refs:
-        p_nom_ref = float(behavior.get_statics(ref).get("p_nom", 0.0))
+        p_nom_ref = float(statics_by_ref[ref].get("p_nom", 0.0))
         eps_by_aid[ref.component_id] = target_band / max(p_nom_ref, 1.0)
 
     # --- Stability-derived gradient step ---
@@ -214,7 +212,7 @@ async def execute_test_case(
     # ever balancing on GW-scale networks, where the aggregate slope is four
     # orders of magnitude steeper.
     total_p_nom = sum(
-        float(behavior.get_statics(ref).get("p_nom", 0.0)) for ref in gen_refs
+        float(statics_by_ref[ref].get("p_nom", 0.0)) for ref in gen_refs
     )
     # Half the classical-diffusion step: the correction stage acts like a
     # momentum term, roughly halving the stable step range. Measured on
@@ -234,7 +232,7 @@ async def execute_test_case(
     gen_agents: list[RoleAgent] = []
     cost_by_aid: dict[str, float] = {}
     for ref in gen_refs:
-        statics = behavior.get_statics(ref)
+        statics = statics_by_ref[ref]
         cost = float(statics.get("marginal_cost", 0.0))
         cost_by_aid[ref.component_id] = cost
         p_nom = float(statics.get("p_nom", 0.0))
@@ -386,6 +384,9 @@ async def execute_test_case(
             (r.target for r in a.roles if isinstance(r, PowerLoadAggregator)), 0.0
         ),
     )
+    # "P" is summed by compute_overall_cost (scenarios/_common.py), which clips
+    # negative values (storage charging) to 0 before costing — see its
+    # docstring for the sign convention this recording must follow.
     record_agent_having(
         world,
         "P",

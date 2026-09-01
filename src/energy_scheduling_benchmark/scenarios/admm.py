@@ -71,6 +71,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_scenario_argparser,
     build_toy_network,
     compute_overall_cost,
+    filter_and_cache_statics,
     require_lossless_transport,
     resolve_scenario,
 )
@@ -232,12 +233,8 @@ async def execute_test_case(
     # storage actor does not model (it assumes freely schedulable
     # charge/discharge), so hydro units cannot participate meaningfully.
     gen_refs = [g for g in gen_refs if "hydro" not in g.component_id]
-    gen_refs = [
-        g
-        for g in gen_refs
-        if behavior.get_statics(g).get("p_nom", 0.0)
-        != 0.0
-    ]
+    # sort out devices with zero/non-finite max power/nominal power
+    gen_refs, statics_by_ref = filter_and_cache_statics(behavior, gen_refs)
 
     generator_aids = [ref.component_id for ref in gen_refs]
     rho = 1.0
@@ -254,7 +251,7 @@ async def execute_test_case(
 
     # --- Register one proximal ADMM actor per generator/storage unit ---
     for ref in gen_refs:
-        statics = behavior.get_statics(ref)
+        statics = statics_by_ref[ref]
         cost = float(statics.get("marginal_cost", 0.0))
         cost_by_aid[ref.component_id] = cost
         p_nom = float(statics.get("p_nom", 0.0))
@@ -361,6 +358,9 @@ async def execute_test_case(
             (r.target for r in a.roles if isinstance(r, PowerLoadAggregator)), 0.0
         ),
     )
+    # "P" is summed by compute_overall_cost (scenarios/_common.py), which clips
+    # negative values (storage charging) to 0 before costing — see its
+    # docstring for the sign convention this recording must follow.
     record_agent_having(
         world,
         "P",

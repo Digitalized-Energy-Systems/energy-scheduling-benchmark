@@ -76,6 +76,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_scenario_argparser,
     build_toy_network,
     compute_overall_cost,
+    filter_and_cache_statics,
     make_finish_callback,
     require_lossless_transport,
     resolve_scenario,
@@ -275,13 +276,8 @@ async def execute_test_case(
     # -- Generator classification --
     gen_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, STORAGE])
     gen_refs = [gen for gen in gen_refs if "hydro" not in gen.component_id]
-    gen_refs = [
-        gen
-        for gen in gen_refs
-        if behavior.get_statics(gen)
-        .get("p_nom", 0.0)
-        != 0.0
-    ]
+    # sort out devices with zero/non-finite max power/nominal power
+    gen_refs, statics_by_ref = filter_and_cache_statics(behavior, gen_refs)
 
     thermal_refs = [r for r in gen_refs if r.element_type == THERMAL]
     nonthermal_refs = [r for r in gen_refs if r.element_type != THERMAL]
@@ -306,7 +302,7 @@ async def execute_test_case(
 
     cost_by_aid: dict[str, float] = {}
     for ref in renewable_refs:
-        statics = behavior.get_statics(ref)
+        statics = statics_by_ref[ref]
         cost_by_aid[ref.component_id] = float(statics.get("marginal_cost", 0.0))
         p_nom = float(statics.get("p_nom", 0.0))
         ts = _lookup_ts(scenario, ref)
@@ -322,7 +318,7 @@ async def execute_test_case(
     net_load_ts = (target_series - renewable_gen_ts).astype(float)
 
     for ref in storage_refs:
-        statics = behavior.get_statics(ref)
+        statics = statics_by_ref[ref]
         cost_by_aid[ref.component_id] = float(statics.get("marginal_cost", 0.0))
         p_nom = float(statics.get("p_nom", 0.0))
 
@@ -363,7 +359,7 @@ async def execute_test_case(
     # ------------------------------------------------------------------
     thermal_p_max_vecs: list[np.ndarray] = []
     for _ref_th in thermal_refs:
-        _statics_th = behavior.get_statics(_ref_th)
+        _statics_th = statics_by_ref[_ref_th]
         _p_nom_th = float(_statics_th.get("p_nom", 0.0))
         _ts_th = _lookup_ts(scenario, _ref_th)
         thermal_p_max_vecs.append(
@@ -380,8 +376,7 @@ async def execute_test_case(
         _sched_1 = np.minimum(adjusted_target, thermal_p_max_vecs[0])
         schedule_by_aid[thermal_refs[0].component_id] = _sched_1
         cost_by_aid[thermal_refs[0].component_id] = float(
-            behavior.get_statics(thermal_refs[0])
-            .get("marginal_cost", 0.0)
+            statics_by_ref[thermal_refs[0]].get("marginal_cost", 0.0)
         )
         adjusted_target = np.maximum(adjusted_target - _sched_1, 0.0)
         nonthermal_refs = nonthermal_refs + thermal_refs
@@ -425,19 +420,11 @@ async def execute_test_case(
     # ------------------------------------------------------------------
     if n_thermals >= 2:
         thermal_costs = [
-            float(
-                behavior.get_statics(r)
-                .get("marginal_cost", 0.0)
-            )
-            for r in thermal_refs
+            float(statics_by_ref[r].get("marginal_cost", 0.0)) for r in thermal_refs
         ]
         cost_diff = max(thermal_costs) - min(thermal_costs)
         thermal_p_nom_list = [
-            float(
-                behavior.get_statics(r)
-                .get("p_nom", 0.0)
-            )
-            for r in thermal_refs
+            float(statics_by_ref[r].get("p_nom", 0.0)) for r in thermal_refs
         ]
         total_p_nom = sum(thermal_p_nom_list)
         active_steps = adjusted_target[~zero_demand_mask]
@@ -455,7 +442,7 @@ async def execute_test_case(
     # -- Thermal generator agents (FDGDM participants) --
     thermal_gen_agents: list[RoleAgent] = []
     for i, ref in enumerate(thermal_refs):
-        statics = behavior.get_statics(ref)
+        statics = statics_by_ref[ref]
         cost = float(statics.get("marginal_cost", 0.0))
         cost_by_aid[ref.component_id] = cost
         p_max_vec = thermal_p_max_vecs[i]
@@ -546,6 +533,9 @@ async def execute_test_case(
             (r.target for r in a.roles if isinstance(r, PowerLoadAggregator)), 0.0
         ),
     )
+    # "P" is summed by compute_overall_cost (scenarios/_common.py), which clips
+    # negative values to 0 before costing — see its docstring for the sign
+    # convention. FDGDM already clips here (below) rather than relying on that.
     record_agent_having(
         world,
         "P",

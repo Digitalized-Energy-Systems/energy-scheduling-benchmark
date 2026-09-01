@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from dataclasses import replace as _dataclass_replace
@@ -23,7 +24,7 @@ import numpy as np
 import pandas as pd
 from mango import Role
 
-from energy_scheduling_benchmark import PowerUpdateInfo, PyPSABehavior
+from energy_scheduling_benchmark import ComponentRef, PowerUpdateInfo, PyPSABehavior
 from energy_scheduling_benchmark.networks import (
     ScenarioData,
     available_examples,
@@ -47,6 +48,7 @@ __all__ = [
     "compute_overall_cost",
     "build_scenario_argparser",
     "require_lossless_transport",
+    "filter_and_cache_statics",
     "PowerLoadInfo",
     "OptimizationFinishedInfo",
     "PowerLoadMonitoring",
@@ -76,6 +78,31 @@ def build_behavior(scenario: ScenarioData) -> PyPSABehavior:
     :param scenario: Scenario bundle from :func:`resolve_scenario`/:func:`load_scenario`.
     """
     return PyPSABehavior.from_scenario(scenario)
+
+
+def filter_and_cache_statics(
+    behavior: PyPSABehavior, refs: Sequence[ComponentRef]
+) -> tuple[list[ComponentRef], dict[ComponentRef, dict]]:
+    """Drop components with zero or non-finite nominal power.
+
+    Returns the surviving refs plus a ``{ref: statics}`` cache. ``get_statics``
+    rebuilds the component's full observer registry on every call, so scenarios
+    that need a component's static row more than once should fetch it here
+    once and reuse the returned dict instead of calling ``get_statics`` again.
+
+    :param behavior: Environment behavior to query, from :func:`build_behavior`.
+    :param refs: Candidate component refs (e.g. from ``get_components_by_type``).
+    """
+    statics_by_ref: dict[ComponentRef, dict] = {}
+    kept: list[ComponentRef] = []
+    for ref in refs:
+        statics = behavior.get_statics(ref)
+        p_nom = statics.get("p_nom", 0.0)
+        if not math.isfinite(p_nom) or p_nom == 0.0:
+            continue
+        statics_by_ref[ref] = statics
+        kept.append(ref)
+    return kept, statics_by_ref
 
 
 def require_lossless_transport(loss_percent: float, algorithm_name: str) -> None:
@@ -191,6 +218,13 @@ def _write_agent_recordings_csv(
     df = pd.concat(frames, axis=1)
 
     if snapshot_step_s > 0 and not df.empty:
+        # Deliberately not routed through _keep_hourly: this df is a
+        # multi-column, outer-joined frame where different agents' columns
+        # tick at different raw timestamps, so many cells in any given row are
+        # already NaN. groupby(...).last() keeps each column's own last
+        # non-null value per bucket; picking one row index per bucket (as
+        # _keep_hourly does for a single (t, Y) series) would instead drop
+        # columns that simply didn't tick on that bucket's literal last row.
         bucket = (df.index.to_series() // snapshot_step_s).astype(int)
         df = df.groupby(bucket.values).last()
         df.index.name = "time"
@@ -237,11 +271,7 @@ def compute_overall_cost(
     """
     t_arr = np.asarray(t_P, dtype=float)
     if step_s > 0 and t_arr.size:
-        buckets = (t_arr // step_s).astype(int)
-        _, first_in_rev = np.unique(buckets[::-1], return_index=True)
-        last_idx = np.sort(len(t_arr) - 1 - first_in_rev)
-        t_arr = t_arr[last_idx]
-        Y_P = Y_P[last_idx]
+        t_arr, Y_P = _keep_hourly(t_arr, Y_P, step_s)
 
     cost_vec = np.array([cost_by_aid.get(aid, 0.0) for aid in labels_P])
     per_step = pd.Series(
