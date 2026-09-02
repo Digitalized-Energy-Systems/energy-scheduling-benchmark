@@ -48,12 +48,6 @@ from energy_scheduling_benchmark import (
     STORAGE,
     THERMAL,
 )
-from energy_scheduling_benchmark.plotting import (
-    agent_recording_as_plottable,
-    cost_over_time,
-    stacked_area,
-    visualize_results,
-)
 from energy_scheduling_benchmark.scenarios._common import (
     OptimizationFinishedInfo as ConsensusFinishedInfo,
 )
@@ -62,16 +56,15 @@ from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadMonitoring,
     ScenarioData,
     _clip_scenario,
-    _keep_hourly,
     _lookup_ts,
-    _write_agent_recordings_csv,
     build_behavior,
+    build_group_map,
     build_scenario_argparser,
     build_toy_network,
-    compute_overall_cost,
     filter_and_cache_statics,
     make_finish_callback,
     resolve_scenario,
+    write_scenario_outputs,
 )
 
 logger = logging.getLogger(__name__)
@@ -156,6 +149,7 @@ async def execute_test_case(
     gen_refs = [gen for gen in gen_refs if "hydro" not in gen.component_id]
     # sort out devices with zero/non-finite max power/nominal power
     gen_refs, statics_by_ref = filter_and_cache_statics(behavior, gen_refs)
+    group_map = build_group_map(gen_refs, statics_by_ref=statics_by_ref)
     generator_aids = [ref.component_id for ref in gen_refs]
 
     # --- Per-generator epsilon (capacity-scaled) ---
@@ -272,7 +266,10 @@ async def execute_test_case(
                 p_min_pu = float(statics.get("p_min_pu", 0.0))
                 p_min = max(0.0, p_min_pu * p_nom)
             actor = LinearCostEconomicDispatchConsensusActor(
-                cost=cost, p_max=p_max_vec, p_min=p_min, epsilon=eps_by_aid[ref.component_id]
+                cost=cost,
+                p_max=p_max_vec,
+                p_min=p_min,
+                epsilon=eps_by_aid[ref.component_id],
             )
         # The first generator agent is the leader (Jian et al. 2020, eq. 22);
         # it pins λ toward the real system-wide power imbalance ΔP, while all
@@ -366,49 +363,13 @@ async def execute_test_case(
         await discrete_step_until(world, simulate_days * 24 * 3600.0)
 
     # -- Output --
-
-    t_P, Y_P, labels_P = agent_recording_as_plottable(world, "P")
-    t_t, Y_t, _ = agent_recording_as_plottable(world, "target")
-
-    # Drop sub-second convergence-phase noise (consensus iterations tick
-    # multiple times per hour): keep the last recorded state per hourly
-    # snapshot so the CSV and plots show one row per PyPSA timestep.
-    t_P, Y_P = _keep_hourly(t_P, Y_P)
-    t_t, Y_t = _keep_hourly(t_t, Y_t)
-    target_series = Y_t[:, 0] if Y_t.size else np.zeros(len(t_P))
-    m = min(len(t_P), len(target_series))
-    t_P, Y_P, target_series = t_P[:m], Y_P[:m], target_series[:m]
-
-    total_cost, cost_series = compute_overall_cost(cost_by_aid, t_P, Y_P, labels_P)
-    logger.info("%s: overall cost = %.2f", name_base, total_cost)
-    annotation = f"Total cost: {total_cost:,.2f}"
-
-    visualize_results(
-        world, write_to=f"{name_base}-observation.pdf", annotation=annotation
-    )
-
-    stacked_area(
-        np.asarray(t_P) / 3600.0,
-        Y_P,
-        labels_P,
-        target_series,
-        xlabel="Hour",
-        ylabel="P in MW",
-        title="Stacked power",
-        annotation=annotation,
-        write_to=f"{name_base}-stacked.pdf",
-    )
-
-    cost_over_time(
-        np.asarray(cost_series.index, dtype=float) / 3600.0,
-        cost_series.to_numpy(),
-        title="Cost per timestep",
-        annotation=annotation,
-        write_to=f"{name_base}-cost.pdf",
-    )
-
-    _write_agent_recordings_csv(
-        world, f"{name_base}-df.csv", snapshot_step_s=3600.0, extra=cost_series
+    write_scenario_outputs(
+        world,
+        name_base=name_base,
+        cost_by_aid=cost_by_aid,
+        group_map=group_map,
+        net=scenario.net,
+        label="consensus",
     )
 
 
@@ -418,9 +379,7 @@ async def execute_test_case(
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = build_scenario_argparser(
-        __doc__, default_name_base="consensus_withlosses"
-    )
+    parser = build_scenario_argparser(__doc__, default_name_base="consensus_withlosses")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))

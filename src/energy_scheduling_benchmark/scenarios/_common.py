@@ -24,7 +24,12 @@ import numpy as np
 import pandas as pd
 from mango import Role
 
-from energy_scheduling_benchmark import ComponentRef, PowerUpdateInfo, PyPSABehavior
+from energy_scheduling_benchmark import (
+    LOAD,
+    ComponentRef,
+    PowerUpdateInfo,
+    PyPSABehavior,
+)
 from energy_scheduling_benchmark.networks import (
     ScenarioData,
     available_examples,
@@ -32,6 +37,15 @@ from energy_scheduling_benchmark.networks import (
     load_scenario,
 )
 from energy_scheduling_benchmark.plotting import _to_scalar as _scalar
+from energy_scheduling_benchmark.plotting import (
+    agent_recording_as_plottable,
+    cost_over_time,
+    generation_vs_demand,
+    order_carriers,
+    per_unit_small_multiples,
+    resolve_carrier_colors,
+    stacked_area,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +60,9 @@ __all__ = [
     "_keep_hourly",
     "_write_agent_recordings_csv",
     "compute_overall_cost",
+    "build_group_map",
+    "carrier_style",
+    "write_scenario_outputs",
     "build_scenario_argparser",
     "require_lossless_transport",
     "filter_and_cache_statics",
@@ -278,6 +295,161 @@ def compute_overall_cost(
         (np.maximum(Y_P, 0.0) * cost_vec).sum(axis=1), index=t_arr, name="cost:total"
     )
     return float(per_step.sum()), per_step
+
+
+# ---------------------------------------------------------------------------
+# Result output
+# ---------------------------------------------------------------------------
+
+
+def build_group_map(
+    refs: Sequence[ComponentRef],
+    *,
+    statics_by_ref: dict[ComponentRef, dict] | None = None,
+    behavior: Any | None = None,
+) -> dict[str, str]:
+    """Map ``component_id -> carrier`` for the stacked / per-unit plots.
+
+    The carrier comes from the cached statics row when *statics_by_ref* is
+    given, else from ``behavior.get_statics(ref)``.  Components without a
+    carrier fall back to their ``element_type`` (``"storage"`` etc.), then to
+    ``"other"``.  ``LOAD`` refs are skipped (loads never enter the ``"P"``
+    recording).  Keys are ``str(component_id)`` so they match the agent AIDs
+    used as plot labels.
+    """
+    out: dict[str, str] = {}
+    for ref in refs:
+        if getattr(ref, "element_type", None) == LOAD:
+            continue
+        statics: dict | None = None
+        if statics_by_ref is not None:
+            statics = statics_by_ref.get(ref)
+        if statics is None and behavior is not None:
+            statics = behavior.get_statics(ref)
+        carrier = (statics or {}).get("carrier")
+        if carrier is not None and not pd.isna(carrier) and str(carrier).strip():
+            out[str(ref.component_id)] = str(carrier)
+        else:
+            out[str(ref.component_id)] = str(
+                getattr(ref, "element_type", None) or "other"
+            )
+    return out
+
+
+def carrier_style(net: Any) -> tuple[dict[str, str], dict[str, str]]:
+    """Return ``({carrier: colour}, {carrier: nice_name})`` from ``net.carriers``.
+
+    Both dicts are empty when the network carries no carrier metadata (e.g. the
+    toy network).
+    """
+    colors: dict[str, str] = {}
+    names: dict[str, str] = {}
+    carriers = getattr(net, "carriers", None)
+    if carriers is None or len(carriers) == 0:
+        return colors, names
+    for carrier, row in carriers.iterrows():
+        col = row.get("color") if hasattr(row, "get") else None
+        if isinstance(col, str) and col.strip():
+            colors[str(carrier)] = col
+        nice = row.get("nice_name") if hasattr(row, "get") else None
+        if isinstance(nice, str) and nice.strip():
+            names[str(carrier)] = nice
+    return colors, names
+
+
+def write_scenario_outputs(
+    world: Any,
+    *,
+    name_base: str,
+    cost_by_aid: dict[str, float],
+    group_map: dict[str, str],
+    net: Any,
+    label: str = "",
+    snapshot_step_s: float = 3600.0,
+) -> float:
+    """Write the standard scenario result files and return the total cost.
+
+    Emits ``<name_base>-{df.csv,stacked.pdf,observation.pdf,balance.pdf,cost.pdf}``:
+
+    * ``df.csv`` — every per-agent recording, one row per hourly snapshot
+      (unchanged format; consumed by ``compare_costs.py``).
+    * ``stacked.pdf`` — generation stacked by carrier, with the demand target.
+    * ``observation.pdf`` — per-unit power as a grid of per-carrier subplots.
+    * ``balance.pdf`` — total generation vs demand + residual.
+    * ``cost.pdf`` — dispatch cost per timestep.
+    """
+    t_P, Y_P, labels_P = agent_recording_as_plottable(world, "P")
+    t_t, Y_t, _ = agent_recording_as_plottable(world, "target")
+
+    t_P, Y_P = _keep_hourly(t_P, Y_P)
+    t_t, Y_t = _keep_hourly(t_t, Y_t)
+    target_series = Y_t[:, 0] if Y_t.size else np.zeros(len(t_P))
+    m = min(len(t_P), len(target_series))
+    t_P, Y_P, target_series = t_P[:m], Y_P[:m], target_series[:m]
+
+    total_cost, cost_series = compute_overall_cost(cost_by_aid, t_P, Y_P, labels_P)
+    logger.info("%s: overall cost = %.2f", name_base, total_cost)
+    annotation = f"Total cost: {total_cost:,.2f}"
+    suffix = f" – {label}" if label else ""
+
+    _write_agent_recordings_csv(
+        world, f"{name_base}-df.csv", snapshot_step_s=snapshot_step_s, extra=cost_series
+    )
+
+    style_colors, nice_names = carrier_style(net)
+    carriers = sorted(set(group_map.values()))
+    band_colors = resolve_carrier_colors(carriers, style_colors)
+    band_order = order_carriers(carriers)
+    hours = np.asarray(t_P, dtype=float) / 3600.0
+
+    stacked_area(
+        hours,
+        Y_P,
+        labels_P,
+        target_series,
+        xlabel="Hour",
+        ylabel="P in MW",
+        title=f"Stacked power{suffix}",
+        annotation=annotation,
+        groups=group_map,
+        colors=band_colors,
+        order=band_order,
+        write_to=f"{name_base}-stacked.pdf",
+    )
+
+    per_unit_small_multiples(
+        hours,
+        Y_P,
+        labels_P,
+        group_map,
+        xlabel="Hour",
+        ylabel="P in MW",
+        title=f"Per-unit power{suffix}",
+        annotation=annotation,
+        carrier_names=nice_names,
+        write_to=f"{name_base}-observation.pdf",
+    )
+
+    generation_vs_demand(
+        hours,
+        Y_P,
+        target_series,
+        xlabel="Hour",
+        ylabel="P in MW",
+        title=f"Generation vs demand{suffix}",
+        annotation=annotation,
+        write_to=f"{name_base}-balance.pdf",
+    )
+
+    cost_over_time(
+        np.asarray(cost_series.index, dtype=float) / 3600.0,
+        cost_series.to_numpy(),
+        title=f"Cost per timestep{suffix}",
+        annotation=annotation,
+        write_to=f"{name_base}-cost.pdf",
+    )
+
+    return total_cost
 
 
 def build_scenario_argparser(

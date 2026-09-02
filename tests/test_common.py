@@ -5,9 +5,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from energy_scheduling_benchmark import ComponentRef
 from energy_scheduling_benchmark.networks import build_toy_network
 from energy_scheduling_benchmark.scenarios._common import (
     _clip_scenario,
+    build_group_map,
+    carrier_style,
     compute_overall_cost,
     require_lossless_transport,
 )
@@ -58,6 +61,57 @@ class TestComputeOverallCost:
         Y = np.array([[10.0]])
         total, _ = compute_overall_cost({}, t, Y, ["mystery"])
         assert total == pytest.approx(0.0)
+
+
+class TestBuildGroupMap:
+    def test_carrier_from_cache_load_skipped(self):
+        r_gas = ComponentRef("thermal", "virtual/1: CCGT")
+        r_wind = ComponentRef("renewable", "w1")
+        r_load = ComponentRef("load", "l1")
+        group_map = build_group_map(
+            [r_gas, r_wind, r_load],
+            statics_by_ref={
+                r_gas: {"carrier": "CCGT"},
+                r_wind: {"carrier": "offwind-ac"},
+                r_load: {"carrier": "AC"},
+            },
+        )
+        assert group_map == {"virtual/1: CCGT": "CCGT", "w1": "offwind-ac"}
+
+    def test_missing_carrier_falls_back_to_element_type(self):
+        r_store = ComponentRef("storage", "batt0")
+        group_map = build_group_map(
+            [r_store], statics_by_ref={r_store: {"carrier": ""}}
+        )
+        assert group_map == {"batt0": "storage"}
+
+    def test_nan_carrier_falls_back(self):
+        r = ComponentRef("thermal", "g0")
+        group_map = build_group_map([r], statics_by_ref={r: {"carrier": np.nan}})
+        assert group_map == {"g0": "thermal"}
+
+    def test_behavior_fallback_when_no_cache(self):
+        class FakeBehavior:
+            def get_statics(self, ref):
+                return {"carrier": "solar"}
+
+        r = ComponentRef("renewable", "s0")
+        assert build_group_map([r], behavior=FakeBehavior()) == {"s0": "solar"}
+
+
+class TestCarrierStyle:
+    def test_populated_carriers_table(self):
+        import pypsa
+
+        net = pypsa.Network()
+        net.add("Carrier", "CCGT", color="#a85522", nice_name="Combined-Cycle Gas")
+        net.add("Carrier", "solar", color="#f9d002", nice_name="Solar")
+        colors, names = carrier_style(net)
+        assert colors["CCGT"] == "#a85522"
+        assert names["solar"] == "Solar"
+
+    def test_empty_carriers_table(self):
+        assert carrier_style(build_toy_network(periods=24).net) == ({}, {})
 
 
 class TestRequireLosslessTransport:

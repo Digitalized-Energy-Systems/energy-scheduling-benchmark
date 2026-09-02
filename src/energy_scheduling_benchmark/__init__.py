@@ -41,7 +41,12 @@ from .networks import (
     load_pypower_case,
     load_scenario,
 )
-from .plotting import stacked_area, visualize_results
+from .plotting import (
+    generation_vs_demand,
+    per_unit_small_multiples,
+    stacked_area,
+    visualize_results,
+)
 
 __all__ = [
     "PyPSABehavior",
@@ -54,6 +59,8 @@ __all__ = [
     "STORAGE",
     "solve_central_dispatch",
     "stacked_area",
+    "per_unit_small_multiples",
+    "generation_vs_demand",
     "visualize_results",
     "ScenarioData",
     "available_examples",
