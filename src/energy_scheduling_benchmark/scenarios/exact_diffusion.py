@@ -54,6 +54,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     StorageParams,
     _clip_scenario,
     build_demand_horizon,
+    build_group_map,
     build_p_max_vec,
     build_toy_network,
     build_world,
@@ -142,6 +143,7 @@ async def execute_test_case(
 
     # -- Generator agents --
     gen_refs, statics_by_ref = collect_generator_refs(behavior)
+    group_map = build_group_map(gen_refs, statics_by_ref=statics_by_ref)
     n_gens = len(gen_refs)
     generator_aids = [ref.component_id for ref in gen_refs]
 
@@ -296,6 +298,9 @@ async def execute_test_case(
         aggregator=aggregator,
         balance_tol=balance_tol,
         strict=strict,
+        group_map=group_map,
+        net=scenario.net,
+        label="exact diffusion",
     )
 
 

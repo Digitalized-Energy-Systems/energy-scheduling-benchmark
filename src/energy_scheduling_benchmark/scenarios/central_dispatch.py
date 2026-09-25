@@ -45,6 +45,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadMonitoring,
     ScenarioData,
     _clip_scenario,
+    build_group_map,
     build_toy_network,
     build_world,
     run_scenario_main,
@@ -295,6 +296,7 @@ async def execute_test_case(
         for ref in all_refs
         if ref.element_type != LOAD
     }
+    group_map = build_group_map(all_refs, behavior=behavior)
     leader_agent: RoleAgent | None = None
 
     for ref in all_refs:
@@ -332,7 +334,14 @@ async def execute_test_case(
     async with world:
         await discrete_step_until(world, simulate_days * 24 * 3600.0)
 
-    write_scenario_outputs(world, name_base=name_base, cost_by_aid=cost_by_aid)
+    write_scenario_outputs(
+        world,
+        name_base=name_base,
+        cost_by_aid=cost_by_aid,
+        group_map=group_map,
+        net=scenario.net,
+        label="central dispatch",
+    )
 
 
 def _install_component_role(ref, behavior, leader_addr, agent) -> None:

@@ -59,6 +59,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     _clip_scenario,
     _lookup_ts,
     build_demand_horizon,
+    build_group_map,
     build_toy_network,
     build_world,
     collect_generator_refs,
@@ -244,6 +245,7 @@ async def execute_test_case(
 
     # -- Generator classification --
     gen_refs, statics_by_ref = collect_generator_refs(behavior)
+    group_map = build_group_map(gen_refs, statics_by_ref=statics_by_ref)
 
     thermal_refs = [r for r in gen_refs if r.element_type == THERMAL]
     nonthermal_refs = [r for r in gen_refs if r.element_type != THERMAL]
@@ -516,6 +518,9 @@ async def execute_test_case(
         aggregator=aggregator,
         balance_tol=balance_tol,
         strict=strict,
+        group_map=group_map,
+        net=scenario.net,
+        label="FDGDM",
     )
 
 
