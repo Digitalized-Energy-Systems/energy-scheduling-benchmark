@@ -74,8 +74,9 @@ Seven scenario entry points are installed:
 | `esb-deed-admm`        | DEED-ADMM (Zhu et al. 2025)                                        |
 
 All seven share the same CLI flags: `--network`, `--name-base`,
-`--simulate-days`, `--delay-s` (comms delay), `--loss-percent` (packet loss),
-`--log-level`.  Every distributed algorithm except averaging consensus
+`--simulate-days`, `--delay-s` (comms delay), `--loss-percent` (packet loss,
+given as a fraction from 0 to 1, e.g. `0.05` for 5 % — despite the name, not
+0–100), `--log-level`.  Every distributed algorithm except averaging consensus
 requires lossless transport and refuses to run with `--loss-percent != 0`.
 
 ```bash
