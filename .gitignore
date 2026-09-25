@@ -13,3 +13,6 @@ dist/
 *.csv
 !EnergySchedulingBenchmark.jl/*.pdf
 !EnergySchedulingBenchmark.jl/*.csv
+
+# Claude Code worktree checkouts
+.claude/worktrees/
