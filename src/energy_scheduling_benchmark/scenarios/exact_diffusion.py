@@ -18,8 +18,7 @@ Flow
 
 from __future__ import annotations
 
-import asyncio
-import logging
+import argparse
 from typing import Any
 
 import numpy as np
@@ -38,25 +37,12 @@ from mango import (
     auto_assign,
     complete_topology,
 )
-from mango.simulation.communication import SimpleCommunicationSimulation
-from mango.simulation.environment import DefaultEnvironment
-from mango.simulation.world import (
-    create_world,
-    discrete_step_until,
-    record_agent_having,
-)
+from mango.simulation.world import discrete_step_until
 
 from energy_scheduling_benchmark import (
     LOAD,
-    RENEWABLE,
     STORAGE,
     THERMAL,
-)
-from energy_scheduling_benchmark.plotting import (
-    agent_recording_as_plottable,
-    cost_over_time,
-    stacked_area,
-    visualize_results,
 )
 from energy_scheduling_benchmark.scenarios._common import (
     OptimizationFinishedInfo as ExactDiffusionFinishedInfo,
@@ -65,22 +51,20 @@ from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadAggregator,
     PowerLoadMonitoring,
     ScenarioData,
+    StorageParams,
     _clip_scenario,
-    _keep_hourly,
-    _lookup_ts,
-    _write_agent_recordings_csv,
-    build_behavior,
-    build_scenario_argparser,
+    build_demand_horizon,
+    build_p_max_vec,
     build_toy_network,
-    compute_overall_cost,
-    filter_and_cache_statics,
+    build_world,
+    capacity_scaled_epsilon,
+    collect_generator_refs,
+    install_standard_recordings,
     make_finish_callback,
     require_lossless_transport,
-    resolve_scenario,
+    run_scenario_main,
+    write_scenario_outputs,
 )
-
-logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Scenario entry point
@@ -95,6 +79,10 @@ async def execute_test_case(
     name_base: str = "exact_diffusion",
     simulate_days: int = 3,
     weight_rule: str = "averaging",
+    max_iter: int = 6000,
+    tol: float = 1e-3,
+    balance_tol: float = 0.01,
+    strict: bool = False,
 ) -> None:
     """Run the exact-diffusion benchmark once and write out CSV + plots.
 
@@ -108,6 +96,16 @@ async def execute_test_case(
         ``"hastings"``. Defaults to ``"averaging"`` (rule #1 in Ces et al.
         2025 Table I's numbering), which their results section finds
         best-performing.
+    max_iter:
+        Maximum exact-diffusion iterations per generator.
+    tol:
+        Per-round λ-change convergence tolerance.
+    balance_tol:
+        Max allowed per-timestep |generation - demand| / demand before the
+        finished schedule is flagged as not converged.
+    strict:
+        If true, raise instead of writing outputs when the power-balance
+        check fails.
     """
     require_lossless_transport(loss_percent, "Exact Diffusion")
 
@@ -115,14 +113,7 @@ async def execute_test_case(
         scenario = build_toy_network(periods=simulate_days * 24)
 
     scenario = _clip_scenario(scenario, simulate_days)
-    behavior = build_behavior(scenario)
-    environment = DefaultEnvironment(behavior=behavior)
-    com_sim = SimpleCommunicationSimulation(
-        default_delay_s=delay_s, loss_percent=loss_percent
-    )
-    world = create_world(
-        start_time=0.0, communication_sim=com_sim, environment=environment
-    )
+    world, behavior = build_world(scenario, delay_s=delay_s, loss_percent=loss_percent)
 
     # ------------------------------------------------------------------
     # Vectorise across the full load horizon
@@ -131,27 +122,12 @@ async def execute_test_case(
     if not load_refs:
         raise RuntimeError("No loads found for exact-diffusion scenario.")
 
-    load_series_0 = _lookup_ts(scenario, load_refs[0])
-    if load_series_0 is None:
-        raise RuntimeError("Load timeseries not found in scenario.timeseries.")
-
-    time_index = load_series_0.index[: simulate_days * 24]
-    horizon = len(time_index)  # get horizon for simulation
-    # Total (aggregated) demand per timestep fitted to new time index.
-    target_series = np.zeros(horizon, dtype=float)
-    for ref in load_refs:
-        s = _lookup_ts(scenario, ref)
-        if s is None:
-            raise RuntimeError(f"Load timeseries missing for {ref}.")
-        target_series += np.asarray(s.reindex(time_index), dtype=float)
-
-    # Map mango simulation time (seconds from simulation start) → index in schedule. Creates dict for later plotting
-    start_dt = behavior.start_datetime
-    time_to_index: dict[float, int] = {}
-    for i, ts in enumerate(time_index):
-        dt = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
-        sim_seconds = (dt - start_dt).total_seconds()
-        time_to_index[round(float(sim_seconds), 6)] = i
+    demand = build_demand_horizon(
+        behavior, scenario, load_refs, simulate_days=simulate_days
+    )
+    time_index, horizon = demand.time_index, demand.horizon
+    target_series = demand.target_series
+    time_to_index = demand.time_to_index
 
     # This gets populated as each generator exact-diffusion participant finishes.
     schedule_by_aid: dict[str, np.ndarray] = {}
@@ -165,42 +141,13 @@ async def execute_test_case(
     )
 
     # -- Generator agents --
-    gen_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, STORAGE])
-    # filter out hydro as they are not chargeable
-    gen_refs = [gen for gen in gen_refs if "hydro" not in gen.component_id]
-    # sort out devices with zero/non-finite max power/nominal power
-    gen_refs, statics_by_ref = filter_and_cache_statics(behavior, gen_refs)
-
+    gen_refs, statics_by_ref = collect_generator_refs(behavior)
     n_gens = len(gen_refs)
     generator_aids = [ref.component_id for ref in gen_refs]
 
     # --- Per-generator epsilon (capacity-scaled) ---
-    # A single shared epsilon gives every generator the same price-response
-    # band width (epsilon * p_nom) above its own marginal cost. For merit
-    # order to hold, that band must be small relative to the spread of
-    # marginal costs across generators — otherwise many generators are still
-    # in their partial "ramp" region at the clearing price simultaneously, so
-    # power gets spread roughly by capacity rather than sorted by cost. On
-    # real PyPSA-Eur networks generator capacities span orders of magnitude
-    # (tens to tens-of-thousands of MW); scaling the band off typical/mean
-    # capacity makes it far wider than the cost spread, breaking merit order.
-    # Scale epsilon inversely with p_nom so every generator's band is a
-    # small, fixed fraction of the cost spread, independent of its capacity.
-    default_epsilon = 0.1
-    nonstorage_refs = [ref for ref in gen_refs if ref.element_type != STORAGE]
-    eps_by_aid: dict[str, float] = {}
-    costs_all: list[float] = []
-    if len(nonstorage_refs) >= 2:
-        costs_all = [
-            float(statics_by_ref[r].get("marginal_cost", 0.0)) for r in nonstorage_refs
-        ]
-        cost_range = max(costs_all) - min(costs_all)
-        target_band = max(default_epsilon, 0.1 * cost_range)
-    else:
-        target_band = default_epsilon
-    for ref in nonstorage_refs:
-        p_nom_ref = float(statics_by_ref[ref].get("p_nom", 0.0))
-        eps_by_aid[ref.component_id] = target_band / max(p_nom_ref, 1.0)
+    # See capacity_scaled_epsilon's docstring for the rationale.
+    eps = capacity_scaled_epsilon(gen_refs, statics_by_ref)
 
     # --- Stability-derived gradient step ---
     # Ces et al. 2025 tune the feedback gain ε offline (genetic algorithm,
@@ -211,23 +158,21 @@ async def execute_test_case(
     # fixed ε that converges on the toy network (~100 MW) oscillates without
     # ever balancing on GW-scale networks, where the aggregate slope is four
     # orders of magnitude steeper.
-    total_p_nom = sum(
-        float(statics_by_ref[ref].get("p_nom", 0.0)) for ref in gen_refs
-    )
+    total_p_nom = sum(float(statics_by_ref[ref].get("p_nom", 0.0)) for ref in gen_refs)
     # Half the classical-diffusion step: the correction stage acts like a
     # momentum term, roughly halving the stable step range. Measured on
     # base_s_5_elec_2019: at the classical step exact diffusion settles into
     # a permanent limit cycle (1.4% energy imbalance, 20% worst hour, even
     # after 8000 iterations); at half the step it converges to a fully
     # balanced dispatch.
-    grad_step = 0.25 * n_gens * target_band / max(total_p_nom, 1.0)
+    grad_step = 0.25 * n_gens * eps.target_band / max(total_p_nom, 1.0)
 
     # Warm-start λ at the mean marginal cost — Ces et al. 2025 initialise the
     # incremental cost from the cost coefficients at the initial dispatch
     # (eqs. 23/24) rather than from an arbitrary constant, which cuts the
     # approach phase of the iteration considerably on networks whose clearing
     # price is far from any fixed default.
-    initial_lam = float(np.mean(costs_all)) if costs_all else 10.0
+    initial_lam = float(np.mean(eps.costs_all)) if eps.costs_all else 10.0
 
     gen_agents: list[RoleAgent] = []
     cost_by_aid: dict[str, float] = {}
@@ -237,64 +182,25 @@ async def execute_test_case(
         cost_by_aid[ref.component_id] = cost
         p_nom = float(statics.get("p_nom", 0.0))
 
-        # Build a p_max vector aligned with the load horizon.
-        ts = _lookup_ts(scenario, ref)
-        if ts is None:
-            p_max_vec = np.full(horizon, p_nom, dtype=float)
-        else:
-            values = np.asarray(ts.reindex(time_index), dtype=float)
-            # For renewable generators, `PyPSABehavior` interprets these as
-            # per-unit availability and multiplies by the nominal capacity.
-            if ref.element_type == RENEWABLE:
-                p_max_vec = values * p_nom
-            else:
-                p_max_vec = values
-
         if ref.element_type == STORAGE:
-            # get data for storage from model and if not provided use substitutes
-            p_min_pu = float(statics.get("p_min_pu", -1.0))
-            p_max_pu = float(statics.get("p_max_pu", 1.0))
-
-            p_charge_max = max(0.0, (-p_min_pu * p_nom) if p_min_pu < 0.0 else p_nom)
-            p_discharge_max = max(0.0, p_max_pu * p_nom)
-
-            max_hours = float(statics.get("max_hours", 100.0))
-            e_max = max(1e-6, p_nom * max_hours)
-
-            eta_charge = float(
-                statics.get("efficiency_store", statics.get("efficiency_charge", 0.95))
-            )
-            eta_discharge = float(
-                statics.get(
-                    "efficiency_dispatch", statics.get("efficiency_discharge", 0.95)
-                )
-            )
-
-            soc_initial_raw = statics.get("state_of_charge_initial", np.nan)
-            if np.isfinite(soc_initial_raw) and float(soc_initial_raw) > 1e-9:
-                soc_initial_abs = float(soc_initial_raw)
-            else:
-                # PyPSA default is often 0.0; treat that as "unspecified" here so
-                # storage can participate in the benchmark without extra config.
-                soc_initial_abs = 0.5 * e_max
-            e_initial = float(np.clip(soc_initial_abs / e_max, 0.0, 1.0))
-
+            sp = StorageParams.from_statics(statics, p_nom)
             actor = ReservoirStorageDiffusionActor(
-                e_max=e_max,
-                p_charge_max=p_charge_max,
-                p_discharge_max=p_discharge_max,
-                eta_charge=max(1e-6, eta_charge),
-                eta_discharge=max(1e-6, eta_discharge),
-                e_initial=e_initial,
-                e_final=e_initial,
+                e_max=sp.e_max,
+                p_charge_max=sp.p_charge_max,
+                p_discharge_max=sp.p_discharge_max,
+                eta_charge=sp.eta_charge,
+                eta_discharge=sp.eta_discharge,
+                e_initial=sp.e_initial,
+                e_final=sp.e_initial,
                 soc_min=0.0,
                 soc_max=1.0,
                 charge_cost=max(0.0, cost),
                 discharge_cost=max(0.0, cost),
-                epsilon=target_band / max(p_nom, 1.0),
+                epsilon=eps.target_band / max(p_nom, 1.0),
                 n_guess=n_gens,
             )
         else:
+            p_max_vec = build_p_max_vec(scenario, ref, statics, time_index, horizon)
             p_min = 0.0
             if ref.element_type == THERMAL:
                 p_min_pu = float(statics.get("p_min_pu", 0.0))
@@ -302,7 +208,7 @@ async def execute_test_case(
             actor = LinearCostEconomicDispatchDiffusionActor(
                 cost=cost,
                 p_max=p_max_vec,
-                epsilon=eps_by_aid[ref.component_id],
+                epsilon=eps.eps_by_aid[ref.component_id],
                 p_min=p_min,
                 n_guess=n_gens,
             )
@@ -310,9 +216,9 @@ async def execute_test_case(
             finish_callback=finish_callback,
             diffusion_actor=actor,
             initial_lam=initial_lam,
-            max_iter=6000,
+            max_iter=max_iter,
             epsilon=grad_step,
-            tol=1e-3,
+            tol=tol,
             horizon=horizon,
             weight_rule=weight_rule,
         )
@@ -345,20 +251,20 @@ async def execute_test_case(
             initial=True,
         )
 
-    leader_agent.add_role(
-        PowerLoadAggregator(
-            behavior=behavior,
-            number_loads=len(load_refs),
-            generator_aids=generator_aids,
-            trigger=gen_agents[0].addr,
-            time_to_index=time_to_index,
-            schedule_by_aid=schedule_by_aid,
-            finished_message_type=ExactDiffusionFinishedInfo,
-            build_start_message=build_start_message,
-            demand_target=target_series,
-            balance_label="Exact Diffusion",
-        )
+    aggregator = PowerLoadAggregator(
+        behavior=behavior,
+        number_loads=len(load_refs),
+        generator_aids=generator_aids,
+        trigger=gen_agents[0].addr,
+        time_to_index=time_to_index,
+        schedule_by_aid=schedule_by_aid,
+        finished_message_type=ExactDiffusionFinishedInfo,
+        build_start_message=build_start_message,
+        demand_target=target_series,
+        balance_label="Exact Diffusion",
+        balance_tol=balance_tol,
     )
+    leader_agent.add_role(aggregator)
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
 
     # add all other load agents
@@ -376,72 +282,20 @@ async def execute_test_case(
     auto_assign(topology, gen_agents)
 
     # -- Recordings --
-    record_agent_having(
-        world,
-        "target",
-        PowerLoadAggregator,
-        lambda a: next(
-            (r.target for r in a.roles if isinstance(r, PowerLoadAggregator)), 0.0
-        ),
-    )
-    # "P" is summed by compute_overall_cost (scenarios/_common.py), which clips
-    # negative values (storage charging) to 0 before costing — see its
-    # docstring for the sign convention this recording must follow.
-    record_agent_having(
-        world,
-        "P",
-        DistributedOptimizationRole,
-        lambda a: float(behavior.observe(a.aid, "active_power") or 0.0),
-    )
+    install_standard_recordings(world, behavior)
 
     # -- Simulate --
     async with world:
         await discrete_step_until(world, simulate_days * 24 * 3600.0)
 
     # -- Output --
-
-    t_P, Y_P, labels_P = agent_recording_as_plottable(world, "P")
-    t_t, Y_t, _ = agent_recording_as_plottable(world, "target")
-
-    # Drop sub-second convergence-phase noise (diffusion iterations tick
-    # multiple times per hour): keep the last recorded state per hourly
-    # snapshot so the CSV and plots show one row per PyPSA timestep.
-    t_P, Y_P = _keep_hourly(t_P, Y_P)
-    t_t, Y_t = _keep_hourly(t_t, Y_t)
-    target_series = Y_t[:, 0] if Y_t.size else np.zeros(len(t_P))
-    m = min(len(t_P), len(target_series))
-    t_P, Y_P, target_series = t_P[:m], Y_P[:m], target_series[:m]
-
-    total_cost, cost_series = compute_overall_cost(cost_by_aid, t_P, Y_P, labels_P)
-    logger.info("%s: overall cost = %.2f", name_base, total_cost)
-    annotation = f"Total cost: {total_cost:,.2f}"
-
-    _write_agent_recordings_csv(
-        world, f"{name_base}-df.csv", snapshot_step_s=3600.0, extra=cost_series
-    )
-
-    visualize_results(
-        world, write_to=f"{name_base}-observation.pdf", annotation=annotation
-    )
-
-    stacked_area(
-        np.asarray(t_P) / 3600.0,
-        Y_P,
-        labels_P,
-        target_series,
-        xlabel="Hour",
-        ylabel="P in MW",
-        title="Stacked power",
-        annotation=annotation,
-        write_to=f"{name_base}-stacked.pdf",
-    )
-
-    cost_over_time(
-        np.asarray(cost_series.index, dtype=float) / 3600.0,
-        cost_series.to_numpy(),
-        title="Cost per timestep",
-        annotation=annotation,
-        write_to=f"{name_base}-cost.pdf",
+    write_scenario_outputs(
+        world,
+        name_base=name_base,
+        cost_by_aid=cost_by_aid,
+        aggregator=aggregator,
+        balance_tol=balance_tol,
+        strict=strict,
     )
 
 
@@ -450,10 +304,7 @@ async def execute_test_case(
 # ---------------------------------------------------------------------------
 
 
-def main(argv: list[str] | None = None) -> None:
-    parser = build_scenario_argparser(
-        __doc__, default_name_base="exact_diffusion_withlosses"
-    )
+def _add_exact_diffusion_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--weight-rule",
         type=str,
@@ -462,21 +313,30 @@ def main(argv: list[str] | None = None) -> None:
         help="Combination-weight rule for the combine step (default: averaging, "
         "the rule Ces et al. 2025's results find best-performing).",
     )
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--max-iter",
+        type=int,
+        default=6000,
+        help="Maximum exact-diffusion iterations.",
+    )
+    parser.add_argument(
+        "--tol",
+        type=float,
+        default=1e-3,
+        help="Per-round λ-change convergence tolerance.",
+    )
 
-    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
-    scenario = resolve_scenario(args.network, simulate_days=args.simulate_days)
-
-    asyncio.run(
-        execute_test_case(
-            scenario=scenario,
-            delay_s=args.delay_s,
-            loss_percent=args.loss_percent,
-            name_base=args.name_base,
-            simulate_days=args.simulate_days,
-            weight_rule=args.weight_rule,
-        )
+def main(argv: list[str] | None = None) -> None:
+    run_scenario_main(
+        execute_test_case,
+        doc=__doc__,
+        default_name_base="exact_diffusion",
+        extra_args=_add_exact_diffusion_args,
+        extra_kwargs=("weight_rule", "max_iter", "tol"),
+        lossless_only=True,
+        with_balance_tol=True,
+        argv=argv,
     )
 
 

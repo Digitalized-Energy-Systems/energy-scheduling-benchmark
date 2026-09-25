@@ -15,6 +15,7 @@ being pre-scheduled from a clearing price.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 from typing import Any
@@ -33,47 +34,31 @@ from distributed_resource_optimization.carrier.mango import (
     StartCoordinatedDistributedOptimization,
 )
 from mango import RoleAgent, agent_composed_of, auto_assign, complete_topology
-from mango.simulation.communication import SimpleCommunicationSimulation
-from mango.simulation.environment import DefaultEnvironment
-from mango.simulation.world import (
-    create_world,
-    discrete_step_until,
-    record_agent_having,
-)
+from mango.simulation.world import discrete_step_until
 
 from energy_scheduling_benchmark import (
     LOAD,
-    RENEWABLE,
     STORAGE,
     THERMAL,
-    SchedulingBehavior,
-)
-from energy_scheduling_benchmark.plotting import (
-    agent_recording_as_plottable,
-    cost_over_time,
-    stacked_area,
-    visualize_results,
 )
 from energy_scheduling_benchmark.scenarios._common import (
     OptimizationFinishedInfo as ADMMFinishedInfo,
 )
 from energy_scheduling_benchmark.scenarios._common import (
-    PowerLoadAggregator as _BasePowerLoadAggregator,
-)
-from energy_scheduling_benchmark.scenarios._common import (
+    PowerLoadAggregator,
     PowerLoadMonitoring,
     ScenarioData,
+    StorageParams,
     _clip_scenario,
-    _keep_hourly,
-    _lookup_ts,
-    _write_agent_recordings_csv,
-    build_behavior,
-    build_scenario_argparser,
+    build_demand_horizon,
+    build_p_max_vec,
     build_toy_network,
-    compute_overall_cost,
-    filter_and_cache_statics,
+    build_world,
+    collect_generator_refs,
+    install_standard_recordings,
     require_lossless_transport,
-    resolve_scenario,
+    run_scenario_main,
+    write_scenario_outputs,
 )
 
 logger = logging.getLogger(__name__)
@@ -103,39 +88,6 @@ class ADMMGeneratorRole(DistributedOptimizationRole):
         self, message: OptimizationFinishedMessage, meta: dict
     ) -> None:
         self._finish_callback(self.algorithm, self, self.context.aid)
-
-
-class PowerLoadAggregator(_BasePowerLoadAggregator):
-    """Leader role: fires ADMM once at startup, then dispatches the schedule."""
-
-    def __init__(
-        self,
-        *,
-        behavior: SchedulingBehavior,
-        number_loads: int,
-        generator_aids: list[str],
-        admm_trigger: Any,
-        time_to_index: dict[float, int],
-        target_series: np.ndarray,
-        schedule_by_aid: dict[str, np.ndarray],
-    ) -> None:
-        def build_start_message() -> Any:
-            return StartCoordinatedDistributedOptimization(
-                input=create_admm_start_consensus(np.asarray(target_series, dtype=float))
-            )
-
-        super().__init__(
-            behavior=behavior,
-            number_loads=number_loads,
-            generator_aids=generator_aids,
-            trigger=admm_trigger,
-            time_to_index=time_to_index,
-            schedule_by_aid=schedule_by_aid,
-            finished_message_type=ADMMFinishedInfo,
-            build_start_message=build_start_message,
-            demand_target=target_series,
-            balance_label="ADMM",
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -183,8 +135,20 @@ async def execute_test_case(
     loss_percent: float = 0.0,
     name_base: str = "admm",
     simulate_days: int = 3,
+    rho: float = 1.0,
+    max_iter: int = 2000,
+    balance_tol: float = 0.01,
+    strict: bool = False,
 ) -> None:
-    """Run the ADMM benchmark once and write CSV + PDF outputs."""
+    """Run the ADMM benchmark once and write CSV + PDF outputs.
+
+    :param rho: ADMM penalty parameter.
+    :param max_iter: Maximum exchange-ADMM coordinator iterations.
+    :param balance_tol: Max allowed per-timestep |generation - demand| /
+        demand before the finished schedule is flagged as not converged.
+    :param strict: If true, raise instead of writing outputs when the
+        power-balance check fails.
+    """
     require_lossless_transport(loss_percent, "ADMM")
 
     # --- World setup ---
@@ -192,53 +156,24 @@ async def execute_test_case(
         scenario = build_toy_network(periods=simulate_days * 24)
 
     scenario = _clip_scenario(scenario, simulate_days)
-    behavior = build_behavior(scenario)
-    com_sim = SimpleCommunicationSimulation(
-        default_delay_s=delay_s, loss_percent=loss_percent
-    )
-    world = create_world(
-        start_time=0.0,
-        communication_sim=com_sim,
-        environment=DefaultEnvironment(behavior=behavior),
-    )
+    world, behavior = build_world(scenario, delay_s=delay_s, loss_percent=loss_percent)
 
     # --- Demand target and time index ---
     load_refs = behavior.get_components_by_type([LOAD])
     if not load_refs:
         raise RuntimeError("No loads found for ADMM scenario.")
 
-    load_series_0 = _lookup_ts(scenario, load_refs[0])
-    if load_series_0 is None:
-        raise RuntimeError("Load timeseries not found in scenario.timeseries.")
-
-    time_index = load_series_0.index[: simulate_days * 24]
-    horizon = len(time_index)
-
-    target_series = np.zeros(horizon, dtype=float)
-    for ref in load_refs:
-        s = _lookup_ts(scenario, ref)
-        if s is None:
-            raise RuntimeError(f"Load timeseries missing for {ref}.")
-        target_series += np.asarray(s.reindex(time_index), dtype=float)
-
-    start_dt = behavior.start_datetime
-    time_to_index: dict[float, int] = {}
-    for i, ts in enumerate(time_index):
-        dt = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
-        time_to_index[round(float((dt - start_dt).total_seconds()), 6)] = i
+    demand = build_demand_horizon(
+        behavior, scenario, load_refs, simulate_days=simulate_days
+    )
+    time_index, horizon = demand.time_index, demand.horizon
+    target_series = demand.target_series
+    time_to_index = demand.time_to_index
 
     # --- Generator agent creation ---
-    gen_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, STORAGE])
-    # Filter out hydro: its dispatch is driven by natural inflow, which the
-    # storage actor does not model (it assumes freely schedulable
-    # charge/discharge), so hydro units cannot participate meaningfully.
-    gen_refs = [g for g in gen_refs if "hydro" not in g.component_id]
-    # sort out devices with zero/non-finite max power/nominal power
-    gen_refs, statics_by_ref = filter_and_cache_statics(behavior, gen_refs)
+    gen_refs, statics_by_ref = collect_generator_refs(behavior)
 
     generator_aids = [ref.component_id for ref in gen_refs]
-    rho = 1.0
-    max_iters = 2000
 
     schedule_by_aid: dict[str, np.ndarray] = {}
     leader_addr_ref: dict[str, Any | None] = {"addr": None}
@@ -256,47 +191,22 @@ async def execute_test_case(
         cost_by_aid[ref.component_id] = cost
         p_nom = float(statics.get("p_nom", 0.0))
 
-        ts = _lookup_ts(scenario, ref)
-        if ts is None:
-            p_max_vec = np.full(horizon, p_nom, dtype=float)
-        else:
-            values = np.asarray(ts.reindex(time_index), dtype=float)
-            p_max_vec = values * p_nom if ref.element_type == RENEWABLE else values
-
         if ref.element_type == STORAGE:
-            p_min_pu = float(statics.get("p_min_pu", -1.0))
-            p_max_pu = float(statics.get("p_max_pu", 1.0))
-            p_charge_max = max(0.0, -p_min_pu * p_nom if p_min_pu < 0.0 else p_nom)
-            p_discharge_max = max(0.0, p_max_pu * p_nom)
-            e_max = max(1e-6, p_nom * float(statics.get("max_hours", 100.0)))
-            eta_charge = float(
-                statics.get("efficiency_store", statics.get("efficiency_charge", 0.95))
-            )
-            eta_discharge = float(
-                statics.get(
-                    "efficiency_dispatch", statics.get("efficiency_discharge", 0.95)
-                )
-            )
-            soc_initial_raw = statics.get("state_of_charge_initial", np.nan)
-            soc_initial_abs = (
-                float(soc_initial_raw)
-                if np.isfinite(soc_initial_raw) and float(soc_initial_raw) > 1e-9
-                else 0.5 * e_max
-            )
-            e_initial = float(np.clip(soc_initial_abs / e_max, 0.0, 1.0))
+            sp = StorageParams.from_statics(statics, p_nom)
             actor = create_admm_proximal_storage_actor(
                 horizon=horizon,
-                e_max=e_max,
-                p_charge_max=p_charge_max,
-                p_discharge_max=p_discharge_max,
-                eta_charge=max(1e-6, eta_charge),
-                eta_discharge=max(1e-6, eta_discharge),
-                e_initial=e_initial,
-                e_final=e_initial,
+                e_max=sp.e_max,
+                p_charge_max=sp.p_charge_max,
+                p_discharge_max=sp.p_discharge_max,
+                eta_charge=sp.eta_charge,
+                eta_discharge=sp.eta_discharge,
+                e_initial=sp.e_initial,
+                e_final=sp.e_initial,
                 charge_cost=max(0.0, cost),
                 discharge_cost=max(0.0, cost),
             )
         else:
+            p_max_vec = build_p_max_vec(scenario, ref, statics, time_index, horizon)
             lb_vec = np.zeros(horizon, dtype=float)
             if ref.element_type == THERMAL:
                 p_min_pu = float(statics.get("p_min_pu", 0.0))
@@ -323,20 +233,29 @@ async def execute_test_case(
     leader_addr_ref["addr"] = leader_addr
 
     coordinator = create_consensus_target_reach_admm_coordinator(
-        rho=rho, max_iters=max_iters, alpha=0.0
+        rho=rho, max_iters=max_iter, alpha=0.0
     )
     leader_agent.add_role(CoordinatorRole(coordinator))
-    leader_agent.add_role(
-        PowerLoadAggregator(
-            behavior=behavior,
-            number_loads=len(load_refs),
-            generator_aids=generator_aids,
-            admm_trigger=leader_addr,
-            time_to_index=time_to_index,
-            target_series=target_series,
-            schedule_by_aid=schedule_by_aid,
+
+    def build_start_message() -> Any:
+        return StartCoordinatedDistributedOptimization(
+            input=create_admm_start_consensus(np.asarray(target_series, dtype=float))
         )
+
+    aggregator = PowerLoadAggregator(
+        behavior=behavior,
+        number_loads=len(load_refs),
+        generator_aids=generator_aids,
+        trigger=leader_addr,
+        time_to_index=time_to_index,
+        schedule_by_aid=schedule_by_aid,
+        finished_message_type=ADMMFinishedInfo,
+        build_start_message=build_start_message,
+        demand_target=target_series,
+        balance_label="ADMM",
+        balance_tol=balance_tol,
     )
+    leader_agent.add_role(aggregator)
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
 
     for ref in load_refs[1:]:
@@ -350,67 +269,21 @@ async def execute_test_case(
     auto_assign(complete_topology(len(all_opt_agents)), all_opt_agents)
 
     # --- Recordings ---
-    record_agent_having(
-        world,
-        "target",
-        PowerLoadAggregator,
-        lambda a: next(
-            (r.target for r in a.roles if isinstance(r, PowerLoadAggregator)), 0.0
-        ),
-    )
-    # "P" is summed by compute_overall_cost (scenarios/_common.py), which clips
-    # negative values (storage charging) to 0 before costing — see its
-    # docstring for the sign convention this recording must follow.
-    record_agent_having(
-        world,
-        "P",
-        ADMMGeneratorRole,
-        lambda a: float(behavior.observe(a.aid, "active_power") or 0.0),
-    )
+    install_standard_recordings(world, behavior, role_cls=ADMMGeneratorRole)
 
     # --- Run simulation ---
     async with world:
         await discrete_step_until(world, simulate_days * 24 * 3600.0)
 
     # --- Write outputs ---
-    t_P, Y_P, labels_P = agent_recording_as_plottable(world, "P")
-    t_t, Y_t, _ = agent_recording_as_plottable(world, "target")
-
-    # Drop sub-second convergence-phase noise: keep the last recorded state
-    # per hourly snapshot so the CSV and plots show one row per PyPSA timestep.
-    t_P, Y_P = _keep_hourly(t_P, Y_P)
-    t_t, Y_t = _keep_hourly(t_t, Y_t)
-    target_recorded = Y_t[:, 0] if Y_t.size else np.zeros(len(t_P))
-    m = min(len(t_P), len(target_recorded))
-    t_P, Y_P, target_recorded = t_P[:m], Y_P[:m], target_recorded[:m]
-
-    total_cost, cost_series = compute_overall_cost(cost_by_aid, t_P, Y_P, labels_P)
-    logger.info("%s: overall cost = %.2f", name_base, total_cost)
-    annotation = f"Total cost: {total_cost:,.2f}"
-
-    _write_agent_recordings_csv(
-        world, f"{name_base}-df.csv", snapshot_step_s=3600.0, extra=cost_series
-    )
-    visualize_results(
-        world, write_to=f"{name_base}-observation.pdf", annotation=annotation
-    )
-    stacked_area(
-        np.asarray(t_P) / 3600.0,
-        Y_P,
-        labels_P,
-        target_recorded,
-        xlabel="Hour",
-        ylabel="P in MW",
-        title="Stacked power – ADMM",
-        annotation=annotation,
-        write_to=f"{name_base}-stacked.pdf",
-    )
-    cost_over_time(
-        np.asarray(cost_series.index, dtype=float) / 3600.0,
-        cost_series.to_numpy(),
-        title="Cost per timestep",
-        annotation=annotation,
-        write_to=f"{name_base}-cost.pdf",
+    write_scenario_outputs(
+        world,
+        name_base=name_base,
+        cost_by_aid=cost_by_aid,
+        stacked_title="Stacked power – ADMM",
+        aggregator=aggregator,
+        balance_tol=balance_tol,
+        strict=strict,
     )
 
 
@@ -419,21 +292,28 @@ async def execute_test_case(
 # ---------------------------------------------------------------------------
 
 
+def _add_admm_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--rho", type=float, default=1.0, help="ADMM penalty parameter."
+    )
+    parser.add_argument(
+        "--max-iter",
+        type=int,
+        default=2000,
+        help="Maximum exchange-ADMM coordinator iterations.",
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
-    parser = build_scenario_argparser(__doc__, default_name_base="admm_withlosses")
-    args = parser.parse_args(argv)
-
-    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
-
-    scenario = resolve_scenario(args.network, simulate_days=args.simulate_days)
-    asyncio.run(
-        execute_test_case(
-            scenario=scenario,
-            delay_s=args.delay_s,
-            loss_percent=args.loss_percent,
-            name_base=args.name_base,
-            simulate_days=args.simulate_days,
-        )
+    run_scenario_main(
+        execute_test_case,
+        doc=__doc__,
+        default_name_base="admm",
+        extra_args=_add_admm_args,
+        extra_kwargs=("rho", "max_iter"),
+        lossless_only=True,
+        with_balance_tol=True,
+        argv=argv,
     )
 
 

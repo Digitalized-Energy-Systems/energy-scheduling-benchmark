@@ -22,9 +22,18 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from distributed_resource_optimization.carrier.mango import DistributedOptimizationRole
 from mango import Role
+from mango.simulation.world import record_agent_having
 
-from energy_scheduling_benchmark import ComponentRef, PowerUpdateInfo, PyPSABehavior
+from energy_scheduling_benchmark import (
+    RENEWABLE,
+    STORAGE,
+    THERMAL,
+    ComponentRef,
+    PowerUpdateInfo,
+    PyPSABehavior,
+)
 from energy_scheduling_benchmark.networks import (
     ScenarioData,
     available_examples,
@@ -32,6 +41,12 @@ from energy_scheduling_benchmark.networks import (
     load_scenario,
 )
 from energy_scheduling_benchmark.plotting import _to_scalar as _scalar
+from energy_scheduling_benchmark.plotting import (
+    agent_recording_as_plottable,
+    cost_over_time,
+    stacked_area,
+    visualize_results,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,15 +55,27 @@ __all__ = [
     "load_scenario",
     "resolve_scenario",
     "build_behavior",
+    "build_world",
     "_clip_scenario",
     "_lookup_ts",
     "_scalar",
     "_keep_hourly",
     "_write_agent_recordings_csv",
     "compute_overall_cost",
+    "compute_linear_energy_cost",
     "build_scenario_argparser",
     "require_lossless_transport",
     "filter_and_cache_statics",
+    "collect_generator_refs",
+    "build_demand_horizon",
+    "DemandHorizon",
+    "build_p_max_vec",
+    "capacity_scaled_epsilon",
+    "EpsilonScaling",
+    "StorageParams",
+    "install_standard_recordings",
+    "write_scenario_outputs",
+    "run_scenario_main",
     "PowerLoadInfo",
     "OptimizationFinishedInfo",
     "PowerLoadMonitoring",
@@ -80,6 +107,35 @@ def build_behavior(scenario: ScenarioData) -> PyPSABehavior:
     return PyPSABehavior.from_scenario(scenario)
 
 
+def build_world(
+    scenario: ScenarioData, *, delay_s: float, loss_percent: float
+) -> tuple[Any, PyPSABehavior]:
+    """Build the mango simulation ``world`` + environment behavior for *scenario*.
+
+    Every scenario wires the same environment/communication-sim/world triple;
+    this is that wiring in one place.
+
+    :param scenario: Scenario bundle to drive, already clipped to the
+        simulated window (see :func:`_clip_scenario`).
+    :param delay_s: Comms delay (seconds) for :class:`SimpleCommunicationSimulation`.
+    :param loss_percent: Comms packet-loss percentage for the same.
+    """
+    from mango.simulation.communication import SimpleCommunicationSimulation
+    from mango.simulation.environment import DefaultEnvironment
+    from mango.simulation.world import create_world
+
+    behavior = build_behavior(scenario)
+    com_sim = SimpleCommunicationSimulation(
+        default_delay_s=delay_s, loss_percent=loss_percent
+    )
+    world = create_world(
+        start_time=0.0,
+        communication_sim=com_sim,
+        environment=DefaultEnvironment(behavior=behavior),
+    )
+    return world, behavior
+
+
 def filter_and_cache_statics(
     behavior: PyPSABehavior, refs: Sequence[ComponentRef]
 ) -> tuple[list[ComponentRef], dict[ComponentRef, dict]]:
@@ -103,6 +159,265 @@ def filter_and_cache_statics(
         statics_by_ref[ref] = statics
         kept.append(ref)
     return kept, statics_by_ref
+
+
+def collect_generator_refs(
+    behavior: PyPSABehavior, *, exclude_hydro: bool = True
+) -> tuple[list[ComponentRef], dict[ComponentRef, dict]]:
+    """Collect thermal/renewable/storage refs, filter, and cache their statics.
+
+    *exclude_hydro* drops any component whose id contains ``"hydro"`` — hydro
+    dispatch is driven by natural inflow, which none of the distributed
+    scenarios' storage/generator actors model (they assume freely schedulable
+    charge/discharge or a pure cost curve), so hydro units cannot participate
+    meaningfully. This is a substring match on ``component_id``, not a
+    carrier/type check, so a plant merely named e.g. ``"...hydrogen..."``
+    would also be excluded — a known sharp edge, not a deliberate rule.
+
+    Also drops zero/non-finite ``p_nom`` components via
+    :func:`filter_and_cache_statics`.
+
+    :param behavior: Environment behavior to query.
+    :param exclude_hydro: Whether to apply the hydro name filter.
+    """
+    gen_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, STORAGE])
+    if exclude_hydro:
+        kept = [ref for ref in gen_refs if "hydro" not in ref.component_id]
+        n_dropped = len(gen_refs) - len(kept)
+        if n_dropped:
+            logger.info(
+                "collect_generator_refs: excluded %d component(s) by hydro name match",
+                n_dropped,
+            )
+        gen_refs = kept
+    return filter_and_cache_statics(behavior, gen_refs)
+
+
+@dataclass
+class DemandHorizon:
+    """Aggregated demand vector + time bookkeeping shared by every scenario."""
+
+    time_index: pd.Index
+    #: Number of timesteps in the horizon (``len(time_index)``).
+    horizon: int
+    #: Aggregated (summed across loads) demand per timestep, MW.
+    target_series: np.ndarray
+    #: Maps rounded mango simulation seconds → index into ``target_series``.
+    time_to_index: dict[float, int]
+    start_dt: Any
+
+
+def build_demand_horizon(
+    behavior: PyPSABehavior,
+    scenario: ScenarioData,
+    load_refs: Sequence[ComponentRef],
+    *,
+    simulate_days: int | None,
+) -> DemandHorizon:
+    """Build the aggregated demand vector and simulation-time → index map.
+
+    Sums each load's timeseries (reindexed onto the first load's index) into
+    a single per-timestep demand vector, and maps mango's simulation-clock
+    seconds to an index into that vector (both keyed by
+    ``round(seconds, 6)`` — the two must agree on that rounding or a
+    timestep's dispatch is silently dropped, see
+    :meth:`PowerLoadAggregator._handle_load_info`).
+
+    :param load_refs: Load component refs, e.g. from
+        ``behavior.get_components_by_type([LOAD])``.
+    :param simulate_days: If given, ``time_index`` is truncated to
+        ``simulate_days * 24`` hours (matches the window ``_clip_scenario``
+        already trimmed the timeseries to). Pass ``None`` to use the full
+        length of the first load's timeseries as-is.
+    :raises RuntimeError: If the first load's timeseries, or any load's
+        timeseries, cannot be found in *scenario*.
+    """
+    load_series_0 = _lookup_ts(scenario, load_refs[0])
+    if load_series_0 is None:
+        raise RuntimeError("Load timeseries not found in scenario.timeseries.")
+
+    time_index = load_series_0.index
+    if simulate_days is not None:
+        time_index = time_index[: simulate_days * 24]
+    horizon = len(time_index)
+
+    target_series = np.zeros(horizon, dtype=float)
+    for ref in load_refs:
+        s = _lookup_ts(scenario, ref)
+        if s is None:
+            raise RuntimeError(f"Load timeseries missing for {ref}.")
+        target_series += np.asarray(s.reindex(time_index), dtype=float)
+
+    start_dt = behavior.start_datetime
+    time_to_index: dict[float, int] = {}
+    for i, ts in enumerate(time_index):
+        dt = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
+        sim_seconds = (dt - start_dt).total_seconds()
+        time_to_index[round(float(sim_seconds), 6)] = i
+
+    return DemandHorizon(time_index, horizon, target_series, time_to_index, start_dt)
+
+
+def build_p_max_vec(
+    scenario: ScenarioData,
+    ref: ComponentRef,
+    statics: dict,
+    time_index: pd.Index,
+    horizon: int,
+) -> np.ndarray:
+    """Build a per-timestep max-power vector for a generator, aligned to *time_index*.
+
+    Falls back to a constant ``p_nom`` vector when *ref* has no timeseries.
+    For :data:`RENEWABLE` refs, the timeseries is treated as a per-unit
+    availability (PyPSA convention) and scaled by ``p_nom``; other refs use
+    the raw timeseries values directly.
+    """
+    p_nom = float(statics.get("p_nom", 0.0))
+    ts = _lookup_ts(scenario, ref)
+    if ts is None:
+        return np.full(horizon, p_nom, dtype=float)
+    values = np.asarray(ts.reindex(time_index), dtype=float)
+    if ref.element_type == RENEWABLE:
+        return values * p_nom
+    return values
+
+
+@dataclass
+class EpsilonScaling:
+    """Result of :func:`capacity_scaled_epsilon`."""
+
+    #: Per-generator price-response epsilon, keyed by ``component_id``
+    #: (non-storage refs only).
+    eps_by_aid: dict[str, float]
+    #: The shared price-response band width (epsilon * p_nom) all epsilons
+    #: were derived from.
+    target_band: float
+    #: ``max(costs) - min(costs)`` across non-storage refs (``0.0`` if fewer
+    #: than 2).
+    cost_range: float
+    #: Marginal costs of the non-storage refs the band was computed from
+    #: (empty if fewer than 2).
+    costs_all: list[float]
+
+
+def capacity_scaled_epsilon(
+    gen_refs: Sequence[ComponentRef],
+    statics_by_ref: dict[ComponentRef, dict],
+    *,
+    default_epsilon: float = 0.1,
+    cost_fraction: float = 0.1,
+) -> EpsilonScaling:
+    """Per-generator epsilon (capacity-scaled), shared by consensus/diffusion.
+
+    A single shared epsilon gives every generator the same price-response
+    band width (epsilon * p_nom) above its own marginal cost. For merit
+    order to hold, that band must be small relative to the spread of
+    marginal costs across generators — otherwise many generators are still
+    in their partial "ramp" region at the clearing price simultaneously, so
+    power gets spread roughly by capacity rather than sorted by cost. On
+    real PyPSA-Eur networks generator capacities span orders of magnitude
+    (tens to tens-of-thousands of MW); scaling the band off typical/mean
+    capacity makes it far wider than the cost spread, breaking merit order.
+    Scale epsilon inversely with p_nom so every generator's band is a small,
+    fixed fraction of the cost spread, independent of its capacity.
+
+    :param gen_refs: Generator refs (storage refs are excluded from the
+        band computation and from the returned ``eps_by_aid``).
+    :param statics_by_ref: Cached statics, e.g. from
+        :func:`filter_and_cache_statics`/:func:`collect_generator_refs`.
+    :param default_epsilon: Floor on the price-response band width.
+    :param cost_fraction: Fraction of the cost spread the band should target.
+    """
+    nonstorage_refs = [ref for ref in gen_refs if ref.element_type != STORAGE]
+    eps_by_aid: dict[str, float] = {}
+    costs_all: list[float] = []
+    cost_range = 0.0
+    if len(nonstorage_refs) >= 2:
+        costs_all = [
+            float(statics_by_ref[r].get("marginal_cost", 0.0)) for r in nonstorage_refs
+        ]
+        cost_range = max(costs_all) - min(costs_all)
+        target_band = max(default_epsilon, cost_fraction * cost_range)
+    else:
+        target_band = default_epsilon
+    for ref in nonstorage_refs:
+        p_nom_ref = float(statics_by_ref[ref].get("p_nom", 0.0))
+        eps_by_aid[ref.component_id] = target_band / max(p_nom_ref, 1.0)
+    return EpsilonScaling(eps_by_aid, target_band, cost_range, costs_all)
+
+
+@dataclass
+class StorageParams:
+    """Storage actor parameters derived from PyPSA statics.
+
+    Shared by the scenarios whose storage-parameter extraction is otherwise
+    byte-for-byte identical (consensus, ADMM, diffusion, exact diffusion).
+    DEED-ADMM's inline extraction happens to use the same defaults as this
+    helper but is not yet wired to it. FDGDM uses materially *different*
+    defaults for some of these fields (``max_hours=6.0`` vs. this helper's
+    ``100.0``, SOC-initial fallback ``0.0`` vs. ``0.5 * e_max``, efficiency
+    fallback ``1.0`` vs. ``0.95`` — see ``fdgdm._schedule_storage_soc``);
+    that is tracked as a known cross-scenario inconsistency, not silently
+    reconciled here, since it would change FDGDM's dispatch numbers on any
+    network with under-specified storage statics.
+    """
+
+    e_max: float
+    p_charge_max: float
+    p_discharge_max: float
+    #: Floored to at least ``1e-6`` (never exactly 0, to keep it usable as a
+    #: divisor in the actor's dynamics).
+    eta_charge: float
+    eta_discharge: float
+    #: Initial state of charge, as a fraction of ``e_max`` in ``[0, 1]``.
+    e_initial: float
+
+    @classmethod
+    def from_statics(
+        cls,
+        statics: dict,
+        p_nom: float,
+        *,
+        default_max_hours: float = 100.0,
+        default_efficiency: float = 0.95,
+    ) -> StorageParams:
+        p_min_pu = float(statics.get("p_min_pu", -1.0))
+        p_max_pu = float(statics.get("p_max_pu", 1.0))
+        p_charge_max = max(0.0, (-p_min_pu * p_nom) if p_min_pu < 0.0 else p_nom)
+        p_discharge_max = max(0.0, p_max_pu * p_nom)
+
+        max_hours = float(statics.get("max_hours", default_max_hours))
+        e_max = max(1e-6, p_nom * max_hours)
+
+        eta_charge = float(
+            statics.get(
+                "efficiency_store", statics.get("efficiency_charge", default_efficiency)
+            )
+        )
+        eta_discharge = float(
+            statics.get(
+                "efficiency_dispatch",
+                statics.get("efficiency_discharge", default_efficiency),
+            )
+        )
+
+        soc_initial_raw = statics.get("state_of_charge_initial", np.nan)
+        if np.isfinite(soc_initial_raw) and float(soc_initial_raw) > 1e-9:
+            soc_initial_abs = float(soc_initial_raw)
+        else:
+            # PyPSA default is often 0.0; treat that as "unspecified" here so
+            # storage can participate in the benchmark without extra config.
+            soc_initial_abs = 0.5 * e_max
+        e_initial = float(np.clip(soc_initial_abs / e_max, 0.0, 1.0))
+
+        return cls(
+            e_max=e_max,
+            p_charge_max=p_charge_max,
+            p_discharge_max=p_discharge_max,
+            eta_charge=max(1e-6, eta_charge),
+            eta_discharge=max(1e-6, eta_discharge),
+            e_initial=e_initial,
+        )
 
 
 def require_lossless_transport(loss_percent: float, algorithm_name: str) -> None:
@@ -277,7 +592,17 @@ def compute_overall_cost(
     per_step = pd.Series(
         (np.maximum(Y_P, 0.0) * cost_vec).sum(axis=1), index=t_arr, name="cost:total"
     )
+    # NB: this is a linear energy cost (Σ marginal_cost * dispatched MW) only —
+    # no startup/no-load/commitment cost. "compute_overall_cost" oversells
+    # that; compute_linear_energy_cost (below) is the clearer name to use in
+    # new code, kept as an alias for now rather than a breaking rename.
     return float(per_step.sum()), per_step
+
+
+#: Clearer alias for :func:`compute_overall_cost` — same function, see its
+#: docstring for the "linear energy cost only" caveat. Prefer this name in
+#: new code; ``compute_overall_cost`` is kept for existing callers.
+compute_linear_energy_cost = compute_overall_cost
 
 
 def build_scenario_argparser(
@@ -285,11 +610,22 @@ def build_scenario_argparser(
     *,
     default_name_base: str,
     extra_args: Callable[[argparse.ArgumentParser], None] | None = None,
+    lossless_only: bool = False,
+    with_balance_tol: bool = False,
 ) -> argparse.ArgumentParser:
     """Build the CLI parser shared by all scenario entry points.
 
     *extra_args*, if given, is called with the parser to add algorithm-specific
     flags (e.g. DEED-ADMM's ``--gamma``/``--max-iter``).
+
+    :param lossless_only: If true, this scenario's algorithm advances a round
+        only once every neighbour has replied (no retry/partial-quorum
+        fallback — see :func:`require_lossless_transport`), so
+        ``--loss-percent`` only documents that constraint rather than
+        offering a working knob.
+    :param with_balance_tol: If true, add ``--balance-tol`` (the power-balance
+        tolerance passed to :class:`PowerLoadAggregator`) and ``--strict``
+        (fail the run instead of writing outputs when that check fails).
     """
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
@@ -303,11 +639,46 @@ def build_scenario_argparser(
             ".nc/.h5/.xlsx file or CSV folder."
         ),
     )
-    parser.add_argument("--delay-s", type=float, default=0.02)
-    parser.add_argument("--loss-percent", type=float, default=0.0)
+    parser.add_argument("--delay-s", type=float, default=0.02, help="Comms delay (s).")
+    parser.add_argument(
+        "--loss-percent",
+        type=float,
+        default=0.0,
+        help=(
+            "Comms packet-loss percentage. This scenario waits for every "
+            "neighbour's reply each round with no retry, so any non-zero "
+            "value raises ValueError instead of running (use 0, or omit "
+            "the flag)."
+            if lossless_only
+            else "Comms packet-loss percentage."
+        ),
+    )
     parser.add_argument("--name-base", type=str, default=default_name_base)
     parser.add_argument("--simulate-days", type=int, default=3)
     parser.add_argument("--log-level", type=str, default="INFO")
+    if with_balance_tol:
+        # Dests "balance_tol"/"strict" — keep in sync with the matching
+        # names hardcoded into run_scenario_main's `with_balance_tol` branch
+        # below, which forwards them to execute_test_case.
+        parser.add_argument(
+            "--balance-tol",
+            type=float,
+            default=0.01,
+            help=(
+                "Max allowed per-timestep |generation - demand| / demand "
+                "before a finished run is flagged as not converged (default: "
+                "0.01, i.e. 1%%)."
+            ),
+        )
+        parser.add_argument(
+            "--strict",
+            action="store_true",
+            help=(
+                "Exit with an error instead of writing CSV/PDF outputs if "
+                "the power-balance check fails (default: log a warning and "
+                "write the outputs anyway)."
+            ),
+        )
     if extra_args is not None:
         extra_args(parser)
     return parser
@@ -429,8 +800,15 @@ class PowerLoadAggregator(Role):
 
     def on_ready(self) -> None:
         if self._trigger is None or self._n_finished_required == 0:
-            # All schedules are pre-filled; nothing to run.
+            # All schedules are pre-filled; nothing to run. Still verify the
+            # balance here — schedule_by_aid was already populated by the
+            # scenario's own pre-scheduling before the world started, so the
+            # check is meaningful even though no distributed round ever ran.
+            # Skipping this left balance_max_rel_gap permanently None on this
+            # path (e.g. FDGDM with 0-1 thermal generators), which silently
+            # defeated the --strict CLI flag.
             self._ready = True
+            self._verify_balance()
             return
         asyncio.create_task(
             self.context.send_message(self._build_start_message(), self._trigger)
@@ -531,13 +909,34 @@ def make_finish_callback(
     """
 
     def handle_finished(algorithm: Any, carrier: Any) -> None:
+        # `carrier._parent` is a distributed_resource_optimization-internal
+        # attribute (the mango Role wrapping this carrier); there is no
+        # public accessor for it today.
         role = carrier._parent
         aid = role.context.aid
 
         obj = algorithm
-        for part in schedule_attr.split("."):
-            obj = getattr(obj, part)
+        try:
+            for part in schedule_attr.split("."):
+                obj = getattr(obj, part)
+        except AttributeError as exc:
+            raise AttributeError(
+                f"{algorithm_label}: finished algorithm for {aid!r} has no "
+                f"attribute path {schedule_attr!r} ({exc}); the run may have "
+                "aborted before producing a schedule."
+            ) from exc
         schedule_by_aid[aid] = np.asarray(obj, dtype=float).copy()
+
+        converged = getattr(algorithm, "converged", None)
+        iterations = getattr(algorithm, "iterations", None)
+        if converged is False:
+            logger.warning(
+                "%s did not converge for %s after %s iteration(s); schedule may "
+                "be suboptimal.",
+                algorithm_label,
+                aid,
+                iterations if iterations is not None else "an unknown number of",
+            )
 
         leader_addr = leader_addr_ref.get("addr")
         if leader_addr is not None:
@@ -545,10 +944,202 @@ def make_finish_callback(
                 role.context.send_message(finished_message_type(aid=aid), leader_addr)
             )
         logger.info(
-            "%s finished for %s (schedule len=%s)",
+            "%s finished for %s (schedule len=%s%s)",
             algorithm_label,
             aid,
             schedule_by_aid[aid].size,
+            f", iterations={iterations}" if iterations is not None else "",
         )
 
     return handle_finished
+
+
+# ---------------------------------------------------------------------------
+# Recordings + output
+# ---------------------------------------------------------------------------
+
+
+def install_standard_recordings(
+    world: Any,
+    behavior: PyPSABehavior,
+    *,
+    role_cls: type = DistributedOptimizationRole,
+    clip_negative: bool = False,
+) -> None:
+    """Record the leader's ``"target"`` and each generator's ``"P"`` per timestep.
+
+    ``"target"`` is summed by :func:`write_scenario_outputs`; ``"P"`` is
+    summed by :func:`compute_overall_cost`, which itself clips negative
+    values (storage charging) to 0 before costing. *clip_negative* additionally
+    clips at recording time (FDGDM's convention), so a negative set-point
+    never shows as a downward bar in the stacked generation plot either.
+
+    :param role_cls: Role class each generator's "P" is recorded from —
+        must be (a subclass of) :class:`DistributedOptimizationRole`.
+    """
+    record_agent_having(
+        world,
+        "target",
+        PowerLoadAggregator,
+        lambda a: next(
+            (r.target for r in a.roles if isinstance(r, PowerLoadAggregator)), 0.0
+        ),
+    )
+    if clip_negative:
+
+        def _extract(a: Any) -> float:
+            return max(0.0, float(behavior.observe(a.aid, "active_power") or 0.0))
+    else:
+
+        def _extract(a: Any) -> float:
+            return float(behavior.observe(a.aid, "active_power") or 0.0)
+
+    record_agent_having(world, "P", role_cls, _extract)
+
+
+def write_scenario_outputs(
+    world: Any,
+    *,
+    name_base: str,
+    cost_by_aid: dict[str, float],
+    stacked_title: str = "Stacked power",
+    cost_title: str = "Cost per timestep",
+    clip_target_to_p: bool = True,
+    aggregator: PowerLoadAggregator | None = None,
+    balance_tol: float | None = None,
+    strict: bool = False,
+) -> float:
+    """Write the ``-df.csv``/``-observation.pdf``/``-stacked.pdf``/``-cost.pdf`` outputs.
+
+    Shared by every scenario: read back the "P"/"target" recordings
+    installed by :func:`install_standard_recordings`, collapse them to one
+    sample per hour, compute the overall cost, then write the CSV and the
+    three plots.
+
+    :param clip_target_to_p: Truncate ``P``/``target`` to the shorter of the
+        two lengths before costing/plotting (every scenario except FDGDM
+        does this; FDGDM's simulation window already ends exactly on its
+        last snapshot, so the two recordings are never mismatched there).
+    :param aggregator: When given together with *strict*, raise instead of
+        writing outputs if ``aggregator.balance_max_rel_gap`` exceeds
+        *balance_tol* -- or was never computed at all (the schedule never
+        finished), which is just as much a failure as an out-of-tolerance
+        gap. Callers with a ``PowerLoadAggregator``-based balance check
+        should pass this instead of hand-rolling the same raise.
+    :param balance_tol: Tolerance to compare *aggregator*'s gap against;
+        required (and otherwise ignored) when *aggregator* and *strict* are
+        both given.
+    :raises RuntimeError: If *strict* is set and the balance check failed or
+        never ran.
+    :returns: The total cost (same value logged and used in the annotation).
+    """
+    if aggregator is not None and strict:
+        gap = aggregator.balance_max_rel_gap
+        if gap is None:
+            raise RuntimeError(
+                f"{name_base}: power balance was never verified (the "
+                "distributed schedule never finished); refusing to write "
+                "outputs because --strict was given."
+            )
+        if gap > balance_tol:
+            raise RuntimeError(
+                f"{name_base}: power balance check failed (max relative gap "
+                f"{gap:.4f} > tolerance {balance_tol}); refusing to write "
+                "outputs because --strict was given."
+            )
+
+    t_P, Y_P, labels_P = agent_recording_as_plottable(world, "P")
+    t_t, Y_t, _ = agent_recording_as_plottable(world, "target")
+
+    # Drop sub-second convergence-phase noise (iterative algorithms tick
+    # multiple times per hour): keep the last recorded state per hourly
+    # snapshot so the CSV and plots show one row per PyPSA timestep.
+    t_P, Y_P = _keep_hourly(t_P, Y_P)
+    t_t, Y_t = _keep_hourly(t_t, Y_t)
+    target_series = Y_t[:, 0] if Y_t.size else np.zeros(len(t_P))
+    if clip_target_to_p:
+        m = min(len(t_P), len(target_series))
+        t_P, Y_P, target_series = t_P[:m], Y_P[:m], target_series[:m]
+
+    total_cost, cost_series = compute_overall_cost(cost_by_aid, t_P, Y_P, labels_P)
+    logger.info("%s: overall cost = %.2f", name_base, total_cost)
+    annotation = f"Total cost: {total_cost:,.2f}"
+
+    _write_agent_recordings_csv(
+        world, f"{name_base}-df.csv", snapshot_step_s=3600.0, extra=cost_series
+    )
+
+    visualize_results(
+        world, write_to=f"{name_base}-observation.pdf", annotation=annotation
+    )
+
+    stacked_area(
+        np.asarray(t_P) / 3600.0,
+        Y_P,
+        labels_P,
+        target_series,
+        xlabel="Hour",
+        ylabel="P in MW",
+        title=stacked_title,
+        annotation=annotation,
+        write_to=f"{name_base}-stacked.pdf",
+    )
+
+    cost_over_time(
+        np.asarray(cost_series.index, dtype=float) / 3600.0,
+        cost_series.to_numpy(),
+        title=cost_title,
+        annotation=annotation,
+        write_to=f"{name_base}-cost.pdf",
+    )
+
+    return total_cost
+
+
+def run_scenario_main(
+    execute_test_case: Callable[..., Any],
+    *,
+    doc: str | None,
+    default_name_base: str,
+    extra_args: Callable[[argparse.ArgumentParser], None] | None = None,
+    extra_kwargs: Sequence[str] = (),
+    lossless_only: bool = False,
+    with_balance_tol: bool = False,
+    argv: list[str] | None = None,
+) -> None:
+    """Shared ``main()`` body: parse CLI args, resolve the scenario, run it.
+
+    *extra_kwargs* names CLI args (added via *extra_args*, or ``"balance_tol"``/
+    ``"strict"`` when *with_balance_tol* is set) to forward to
+    *execute_test_case* verbatim, e.g. ``("gamma", "max_iter")`` for
+    DEED-ADMM's ``--gamma``/``--max-iter``.
+    """
+    parser = build_scenario_argparser(
+        doc,
+        default_name_base=default_name_base,
+        extra_args=extra_args,
+        lossless_only=lossless_only,
+        with_balance_tol=with_balance_tol,
+    )
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
+
+    scenario = resolve_scenario(args.network, simulate_days=args.simulate_days)
+
+    # "balance_tol"/"strict" here must match the --balance-tol/--strict
+    # `dest`s added in build_scenario_argparser's with_balance_tol branch.
+    names = (
+        (*extra_kwargs, "balance_tol", "strict") if with_balance_tol else extra_kwargs
+    )
+    kwargs = {name: getattr(args, name) for name in names}
+    asyncio.run(
+        execute_test_case(
+            scenario=scenario,
+            delay_s=args.delay_s,
+            loss_percent=args.loss_percent,
+            name_base=args.name_base,
+            simulate_days=args.simulate_days,
+            **kwargs,
+        )
+    )

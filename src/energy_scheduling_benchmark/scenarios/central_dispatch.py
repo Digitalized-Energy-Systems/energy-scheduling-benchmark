@@ -1,7 +1,5 @@
 """Central (single-agent) economic dispatch scenario.
 
-Python port of ``EnergySchedulingBenchmark.jl/scenario/central_dispatch_scenario.jl``.
-
 Flow
 ----
 1. Thermal generators are *static*: they publish their cost and nominal
@@ -26,20 +24,13 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
 from mango import (
     AgentAddress,
     Role,
     RoleAgent,
     agent_composed_of,
 )
-from mango.simulation.communication import SimpleCommunicationSimulation
-from mango.simulation.environment import DefaultEnvironment
-from mango.simulation.world import (
-    create_world,
-    discrete_step_until,
-    record_agent_having,
-)
+from mango.simulation.world import discrete_step_until, record_agent_having
 
 from energy_scheduling_benchmark import (
     LOAD,
@@ -49,23 +40,15 @@ from energy_scheduling_benchmark import (
     PyPSABehavior,
 )
 from energy_scheduling_benchmark.dispatch import solve_central_dispatch
-from energy_scheduling_benchmark.plotting import (
-    agent_recording_as_plottable,
-    cost_over_time,
-    stacked_area,
-    visualize_results,
-)
 from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadInfo,
     PowerLoadMonitoring,
     ScenarioData,
     _clip_scenario,
-    _keep_hourly,
-    _write_agent_recordings_csv,
-    build_scenario_argparser,
     build_toy_network,
-    compute_overall_cost,
-    resolve_scenario,
+    build_world,
+    run_scenario_main,
+    write_scenario_outputs,
 )
 
 logger = logging.getLogger(__name__)
@@ -299,18 +282,12 @@ async def execute_test_case(
     name_base: str = "central_dispatch",
     simulate_days: int = 3,
 ) -> None:
+    """Run the central-dispatch benchmark once and write out CSV + plots."""
     if scenario is None:
         scenario = build_toy_network(periods=simulate_days * 24)
 
     scenario = _clip_scenario(scenario, simulate_days)
-    behavior = PyPSABehavior.from_scenario(scenario)
-    environment = DefaultEnvironment(behavior=behavior)
-    com_sim = SimpleCommunicationSimulation(
-        default_delay_s=delay_s, loss_percent=loss_percent
-    )
-    world = create_world(
-        start_time=0.0, communication_sim=com_sim, environment=environment
-    )
+    world, behavior = build_world(scenario, delay_s=delay_s, loss_percent=loss_percent)
 
     all_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, LOAD])
     cost_by_aid: dict[str, float] = {
@@ -355,49 +332,7 @@ async def execute_test_case(
     async with world:
         await discrete_step_until(world, simulate_days * 24 * 3600.0)
 
-    t_P, Y_P, labels_P = agent_recording_as_plottable(world, "P")
-    t_t, Y_t, _ = agent_recording_as_plottable(world, "target")
-
-    # Drop sub-second convergence-phase noise (report/solve/dispatch round-
-    # trips tick multiple times per hour): keep the last recorded state per
-    # hourly snapshot so the CSV and plots show one row per PyPSA timestep.
-    t_P, Y_P = _keep_hourly(t_P, Y_P)
-    t_t, Y_t = _keep_hourly(t_t, Y_t)
-    target_series = Y_t[:, 0] if Y_t.size else np.zeros(len(t_P))
-    m = min(len(t_P), len(target_series))
-    t_P, Y_P, target_series = t_P[:m], Y_P[:m], target_series[:m]
-
-    total_cost, cost_series = compute_overall_cost(cost_by_aid, t_P, Y_P, labels_P)
-    logger.info("%s: overall cost = %.2f", name_base, total_cost)
-    annotation = f"Total cost: {total_cost:,.2f}"
-
-    visualize_results(
-        world, write_to=f"{name_base}-observation.pdf", annotation=annotation
-    )
-
-    _write_agent_recordings_csv(
-        world, f"{name_base}-df.csv", snapshot_step_s=3600.0, extra=cost_series
-    )
-
-    stacked_area(
-        np.asarray(t_P) / 3600.0,
-        Y_P,
-        labels_P,
-        target_series,
-        xlabel="Hour",
-        ylabel="P in MW",
-        title="Stacked power",
-        annotation=annotation,
-        write_to=f"{name_base}-stacked.pdf",
-    )
-
-    cost_over_time(
-        np.asarray(cost_series.index, dtype=float) / 3600.0,
-        cost_series.to_numpy(),
-        title="Cost per timestep",
-        annotation=annotation,
-        write_to=f"{name_base}-cost.pdf",
-    )
+    write_scenario_outputs(world, name_base=name_base, cost_by_aid=cost_by_aid)
 
 
 def _install_component_role(ref, behavior, leader_addr, agent) -> None:
@@ -432,23 +367,11 @@ def _install_component_role(ref, behavior, leader_addr, agent) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = build_scenario_argparser(
-        __doc__, default_name_base="central_dispatch_withlosses"
-    )
-    args = parser.parse_args(argv)
-
-    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
-
-    scenario = resolve_scenario(args.network, simulate_days=args.simulate_days)
-
-    asyncio.run(
-        execute_test_case(
-            scenario=scenario,
-            delay_s=args.delay_s,
-            loss_percent=args.loss_percent,
-            name_base=args.name_base,
-            simulate_days=args.simulate_days,
-        )
+    run_scenario_main(
+        execute_test_case,
+        doc=__doc__,
+        default_name_base="central_dispatch",
+        argv=argv,
     )
 
 

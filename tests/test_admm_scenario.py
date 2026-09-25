@@ -16,9 +16,8 @@ import pytest
 from mango_energy_environments import ComponentRef
 
 from energy_scheduling_benchmark.networks import ScenarioData, build_toy_network
-from energy_scheduling_benchmark.scenarios._common import _scalar
+from energy_scheduling_benchmark.scenarios._common import _lookup_ts, _scalar
 from energy_scheduling_benchmark.scenarios.admm import (
-    _lookup_ts,
     _make_finish_callback,
     execute_test_case,
 )

@@ -1,6 +1,6 @@
 """Tests for the FDGDM scenario.
 
-Covers unit-level helpers (_scalar, _make_finish_callback) and an
+Covers unit-level helpers (_scalar, make_finish_callback) and an
 end-to-end integration smoke test of execute_test_case on the built-in toy network.
 """
 
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from functools import partial
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -15,14 +16,26 @@ import pandas as pd
 import pytest
 
 from energy_scheduling_benchmark.networks import ScenarioData, build_toy_network
-from energy_scheduling_benchmark.scenarios._common import _scalar
+from energy_scheduling_benchmark.scenarios._common import (
+    _keep_hourly,
+    _scalar,
+    make_finish_callback,
+)
 from energy_scheduling_benchmark.scenarios.fdgdm import (
     FDGDMFinishedInfo,
     _capacity_proportional_allocation,
-    _keep_hourly,
-    _make_finish_callback,
     _schedule_storage_soc,
     execute_test_case,
+)
+
+# fdgdm.py calls _common.make_finish_callback inline with these fixed kwargs
+# rather than through its own wrapper; pin them here so the tests below still
+# exercise exactly FDGDM's finish-callback shape.
+_make_finish_callback = partial(
+    make_finish_callback,
+    finished_message_type=FDGDMFinishedInfo,
+    algorithm_label="FDGDM",
+    schedule_attr="actor.P",
 )
 
 

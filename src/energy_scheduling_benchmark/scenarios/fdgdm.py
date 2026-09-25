@@ -21,7 +21,7 @@ Flow
 
 from __future__ import annotations
 
-import asyncio
+import argparse
 import logging
 from typing import Any
 
@@ -41,25 +41,13 @@ from mango import (
     auto_assign,
     complete_topology,
 )
-from mango.simulation.communication import SimpleCommunicationSimulation
-from mango.simulation.environment import DefaultEnvironment
-from mango.simulation.world import (
-    create_world,
-    discrete_step_until,
-    record_agent_having,
-)
+from mango.simulation.world import discrete_step_until
 
 from energy_scheduling_benchmark import (
     LOAD,
     RENEWABLE,
     STORAGE,
     THERMAL,
-)
-from energy_scheduling_benchmark.plotting import (
-    agent_recording_as_plottable,
-    cost_over_time,
-    stacked_area,
-    visualize_results,
 )
 from energy_scheduling_benchmark.scenarios._common import (
     OptimizationFinishedInfo as FDGDMFinishedInfo,
@@ -69,44 +57,23 @@ from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadMonitoring,
     ScenarioData,
     _clip_scenario,
-    _keep_hourly,
     _lookup_ts,
-    _write_agent_recordings_csv,
-    build_behavior,
-    build_scenario_argparser,
+    build_demand_horizon,
     build_toy_network,
-    compute_overall_cost,
-    filter_and_cache_statics,
+    build_world,
+    collect_generator_refs,
+    install_standard_recordings,
     make_finish_callback,
     require_lossless_transport,
-    resolve_scenario,
+    run_scenario_main,
+    write_scenario_outputs,
 )
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# FDGDM-finished callback
-# ---------------------------------------------------------------------------
-
-
-def _make_finish_callback(
-    *,
-    leader_addr_ref: dict[str, Any | None],
-    schedule_by_aid: dict[str, np.ndarray],
-):
-    """Build the ``(algorithm, carrier) -> None`` hook that stores the schedule."""
-    return make_finish_callback(
-        leader_addr_ref=leader_addr_ref,
-        schedule_by_aid=schedule_by_aid,
-        finished_message_type=FDGDMFinishedInfo,
-        algorithm_label="FDGDM",
-        schedule_attr="actor.P",
-    )
-
-
-# ---------------------------------------------------------------------------
-# Scenario entry point
+# FDGDM-specific pre-scheduling helpers
 # ---------------------------------------------------------------------------
 
 
@@ -209,6 +176,11 @@ def _schedule_storage_soc(
     return net
 
 
+# ---------------------------------------------------------------------------
+# Scenario entry point
+# ---------------------------------------------------------------------------
+
+
 async def execute_test_case(
     *,
     scenario: ScenarioData | None = None,
@@ -216,6 +188,9 @@ async def execute_test_case(
     loss_percent: float = 0.0,
     name_base: str = "fdgdm",
     simulate_days: int = 3,
+    max_iter: int = 300,
+    balance_tol: float = 0.01,
+    strict: bool = False,
 ) -> None:
     """Run the FDGDM benchmark once and write out CSV + plots.
 
@@ -223,6 +198,17 @@ async def execute_test_case(
     ----------
     scenario:
         Pre-built :class:`ScenarioData`.  Defaults to the toy 5-bus network.
+    max_iter:
+        Maximum FDGDM iterations per thermal generator.
+    balance_tol:
+        Max allowed per-timestep |generation - demand| / demand before the
+        finished schedule is flagged as not converged. Note FDGDM's weight
+        matrix conserves the pre-schedule power balance by construction, so
+        this check is a weaker signal here than for the other algorithms —
+        see the module-level review notes.
+    strict:
+        If true, raise instead of writing outputs when the power-balance
+        check fails.
     """
     require_lossless_transport(loss_percent, "FDGDM")
 
@@ -230,14 +216,7 @@ async def execute_test_case(
         scenario = build_toy_network(periods=simulate_days * 24)
 
     scenario = _clip_scenario(scenario, simulate_days)
-    behavior = build_behavior(scenario)
-    environment = DefaultEnvironment(behavior=behavior)
-    com_sim = SimpleCommunicationSimulation(
-        default_delay_s=delay_s, loss_percent=loss_percent
-    )
-    world = create_world(
-        start_time=0.0, communication_sim=com_sim, environment=environment
-    )
+    world, behavior = build_world(scenario, delay_s=delay_s, loss_percent=loss_percent)
 
     # ------------------------------------------------------------------
     # Vectorise across the full load horizon
@@ -246,38 +225,25 @@ async def execute_test_case(
     if not load_refs:
         raise RuntimeError("No loads found for FDGDM scenario.")
 
-    load_series_0 = _lookup_ts(scenario, load_refs[0])
-    if load_series_0 is None:
-        raise RuntimeError("Load timeseries not found in scenario.timeseries.")
-
-    time_index = load_series_0.index[: simulate_days * 24]
-    horizon = len(time_index)
-
-    target_series = np.zeros(horizon, dtype=float)
-    for ref in load_refs:
-        s = _lookup_ts(scenario, ref)
-        if s is None:
-            raise RuntimeError(f"Load timeseries missing for {ref}.")
-        target_series += np.asarray(s.reindex(time_index), dtype=float)
-
-    start_dt = behavior.start_datetime
-    time_to_index: dict[float, int] = {}
-    for i, ts in enumerate(time_index):
-        dt = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
-        sim_seconds = (dt - start_dt).total_seconds()
-        time_to_index[round(float(sim_seconds), 6)] = i
+    demand = build_demand_horizon(
+        behavior, scenario, load_refs, simulate_days=simulate_days
+    )
+    time_index, horizon = demand.time_index, demand.horizon
+    target_series = demand.target_series
+    time_to_index = demand.time_to_index
 
     schedule_by_aid: dict[str, np.ndarray] = {}
     leader_addr_ref: dict[str, Any | None] = {"addr": None}
-    finish_callback = _make_finish_callback(
-        leader_addr_ref=leader_addr_ref, schedule_by_aid=schedule_by_aid
+    finish_callback = make_finish_callback(
+        leader_addr_ref=leader_addr_ref,
+        schedule_by_aid=schedule_by_aid,
+        finished_message_type=FDGDMFinishedInfo,
+        algorithm_label="FDGDM",
+        schedule_attr="actor.P",
     )
 
     # -- Generator classification --
-    gen_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, STORAGE])
-    gen_refs = [gen for gen in gen_refs if "hydro" not in gen.component_id]
-    # sort out devices with zero/non-finite max power/nominal power
-    gen_refs, statics_by_ref = filter_and_cache_statics(behavior, gen_refs)
+    gen_refs, statics_by_ref = collect_generator_refs(behavior)
 
     thermal_refs = [r for r in gen_refs if r.element_type == THERMAL]
     nonthermal_refs = [r for r in gen_refs if r.element_type != THERMAL]
@@ -456,7 +422,7 @@ async def execute_test_case(
         participant = create_fdgdm_participant(
             finish_callback=finish_callback,
             fdgdm_actor=actor,
-            max_iter=300,
+            max_iter=max_iter,
             horizon=horizon,
         )
         opt_role = DistributedOptimizationRole(participant)
@@ -496,21 +462,21 @@ async def execute_test_case(
         # it with its own pre-computed initial_schedule on the first project().
         return create_fdgdm_start(data=fdgdm_initial_p)
 
-    leader_agent.add_role(
-        PowerLoadAggregator(
-            behavior=behavior,
-            number_loads=len(load_refs),
-            generator_aids=generator_aids,
-            trigger=gen_agents[0].addr if gen_agents else None,
-            time_to_index=time_to_index,
-            schedule_by_aid=schedule_by_aid,
-            finished_message_type=FDGDMFinishedInfo,
-            build_start_message=build_start_message,
-            n_finished_required=len(thermal_refs),
-            demand_target=target_series,
-            balance_label="FDGDM",
-        )
+    aggregator = PowerLoadAggregator(
+        behavior=behavior,
+        number_loads=len(load_refs),
+        generator_aids=generator_aids,
+        trigger=gen_agents[0].addr if gen_agents else None,
+        time_to_index=time_to_index,
+        schedule_by_aid=schedule_by_aid,
+        finished_message_type=FDGDMFinishedInfo,
+        build_start_message=build_start_message,
+        n_finished_required=len(thermal_refs),
+        demand_target=target_series,
+        balance_label="FDGDM",
+        balance_tol=balance_tol,
     )
+    leader_agent.add_role(aggregator)
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
 
     for ref in load_refs[1:]:
@@ -525,25 +491,10 @@ async def execute_test_case(
         auto_assign(topology, gen_agents)
 
     # -- Recordings --
-    record_agent_having(
-        world,
-        "target",
-        PowerLoadAggregator,
-        lambda a: next(
-            (r.target for r in a.roles if isinstance(r, PowerLoadAggregator)), 0.0
-        ),
-    )
-    # "P" is summed by compute_overall_cost (scenarios/_common.py), which clips
-    # negative values to 0 before costing — see its docstring for the sign
-    # convention. FDGDM already clips here (below) rather than relying on that.
-    record_agent_having(
-        world,
-        "P",
-        DistributedOptimizationRole,
-        # max(0, ...) so storage in charging mode (negative p_set) does not
-        # appear as a downward bar in the stacked generation plot.
-        lambda a: max(0.0, float(behavior.observe(a.aid, "active_power") or 0.0)),
-    )
+    # "P" is clipped at recording time (max(0, ...)) so storage in charging
+    # mode (negative p_set) does not appear as a downward bar in the stacked
+    # generation plot; compute_overall_cost also clips before costing.
+    install_standard_recordings(world, behavior, clip_negative=True)
 
     # -- Simulate --
     # Run until just past the LAST snapshot inside the window (index
@@ -555,46 +506,16 @@ async def execute_test_case(
         await discrete_step_until(world, sim_end_s)
 
     # -- Output --
-    t_P, Y_P, labels_P = agent_recording_as_plottable(world, "P")
-    t_t, Y_t, _ = agent_recording_as_plottable(world, "target")
-
-    # Drop sub-second convergence-phase noise: keep the last recorded state
-    # per hourly snapshot so the CSV and plots show one row per PyPSA timestep.
-    t_P, Y_P = _keep_hourly(t_P, Y_P)
-    t_t, Y_t = _keep_hourly(t_t, Y_t)
-
-    target_series_plot = Y_t[:, 0] if Y_t.size else np.zeros(len(t_P))
-
-    total_cost, cost_series = compute_overall_cost(cost_by_aid, t_P, Y_P, labels_P)
-    logger.info("%s: overall cost = %.2f", name_base, total_cost)
-    annotation = f"Total cost: {total_cost:,.2f}"
-
-    _write_agent_recordings_csv(
-        world, f"{name_base}-df.csv", snapshot_step_s=3600.0, extra=cost_series
-    )
-
-    visualize_results(
-        world, write_to=f"{name_base}-observation.pdf", annotation=annotation
-    )
-
-    stacked_area(
-        np.asarray(t_P) / 3600.0,
-        Y_P,
-        labels_P,
-        target_series_plot,
-        xlabel="Hour",
-        ylabel="P in MW",
-        title="Stacked power",
-        annotation=annotation,
-        write_to=f"{name_base}-stacked.pdf",
-    )
-
-    cost_over_time(
-        np.asarray(cost_series.index, dtype=float) / 3600.0,
-        cost_series.to_numpy(),
-        title="Cost per timestep",
-        annotation=annotation,
-        write_to=f"{name_base}-cost.pdf",
+    # No clip_target_to_p: the simulation window already ends exactly on the
+    # last snapshot, so "P" and "target" are never mismatched in length here.
+    write_scenario_outputs(
+        world,
+        name_base=name_base,
+        cost_by_aid=cost_by_aid,
+        clip_target_to_p=False,
+        aggregator=aggregator,
+        balance_tol=balance_tol,
+        strict=strict,
     )
 
 
@@ -603,22 +524,25 @@ async def execute_test_case(
 # ---------------------------------------------------------------------------
 
 
+def _add_fdgdm_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--max-iter",
+        type=int,
+        default=300,
+        help="Maximum FDGDM iterations per thermal generator.",
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
-    parser = build_scenario_argparser(__doc__, default_name_base="fdgdm_withlosses")
-    args = parser.parse_args(argv)
-
-    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
-
-    scenario = resolve_scenario(args.network, simulate_days=args.simulate_days)
-
-    asyncio.run(
-        execute_test_case(
-            scenario=scenario,
-            delay_s=args.delay_s,
-            loss_percent=args.loss_percent,
-            name_base=args.name_base,
-            simulate_days=args.simulate_days,
-        )
+    run_scenario_main(
+        execute_test_case,
+        doc=__doc__,
+        default_name_base="fdgdm",
+        extra_args=_add_fdgdm_args,
+        extra_kwargs=("max_iter",),
+        lossless_only=True,
+        with_balance_tol=True,
+        argv=argv,
     )
 
 
