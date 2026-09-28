@@ -102,6 +102,9 @@ To run all seven scenarios against the PyPSA-Eur extracts and compare total
 costs, use `../run_all_scenarios.sh` from the repo root (writes
 `results/cost_comparison.csv` via `compare_costs.py`).
 
+To run the same batch on the University of Oldenburg HPC cluster (ROSA) as SLURM
+job arrays, follow [`hpc/README.md`](hpc/README.md).
+
 ## Package layout
 
 ```
