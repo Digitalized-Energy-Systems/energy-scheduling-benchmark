@@ -12,8 +12,10 @@ This package is the Python re-implementation of
 * :func:`load_scenario` and friends — load PyPSA built-in examples,
   NetCDF/HDF5/Excel files, CSV folders, or IEEE PYPOWER cases into a
   :class:`ScenarioData` bundle ready for the benchmark.
-* :func:`solve_central_dispatch` — Pyomo LP economic dispatch used by
-  the central-dispatch scenario.
+* :func:`solve_central_dispatch` — Pyomo LP for single-timestep copper-plate
+  economic dispatch.
+* :func:`solve_multiperiod_dispatch` — full-horizon LP with SOC-constrained
+  storage, used by the central-dispatch scenario.
 * :func:`stacked_area`, :func:`visualize_results` — matplotlib plotting
   utilities (replace CairoMakie).
 * Runnable scenarios in :mod:`energy_scheduling_benchmark.scenarios`.
@@ -30,7 +32,7 @@ from mango_energy_environments import (
     SchedulingBehavior,
 )
 
-from .dispatch import solve_central_dispatch
+from .dispatch import solve_central_dispatch, solve_multiperiod_dispatch
 from .networks import (
     ScenarioData,
     available_examples,
@@ -58,6 +60,7 @@ __all__ = [
     "LOAD",
     "STORAGE",
     "solve_central_dispatch",
+    "solve_multiperiod_dispatch",
     "stacked_area",
     "per_unit_small_multiples",
     "generation_vs_demand",

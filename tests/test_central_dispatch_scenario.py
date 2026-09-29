@@ -1,28 +1,31 @@
 """Tests for the central dispatch scenario.
 
 End-to-end smoke tests of execute_test_case on the built-in toy network:
-every hourly timestep must be dispatched and total generation must match
-the aggregated demand (the LP's hard balance constraint).
+every hourly timestep must be dispatched, total generation (including net
+storage discharge) must match the aggregated demand, and the toy battery
+must take part unless ``include_storage=False``.
 """
 
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from energy_scheduling_benchmark.networks import build_toy_network
 from energy_scheduling_benchmark.scenarios.central_dispatch import execute_test_case
 
 
 class TestExecuteTestCase:
-    async def _run(self, tmp_path) -> pd.DataFrame:
+    async def _run(self, tmp_path, **kwargs) -> pd.DataFrame:
         scenario = build_toy_network(periods=24)
         name_base = str(tmp_path / "central")
         await execute_test_case(
             scenario=scenario,
             delay_s=0.0,
-            loss_percent=0.0,
+            loss_percent=kwargs.pop("loss_percent", 0.0),
             name_base=name_base,
             simulate_days=1,
+            **kwargs,
         )
         return pd.read_csv(f"{name_base}-df.csv", index_col=0)
 
@@ -58,3 +61,31 @@ class TestExecuteTestCase:
         assert renewable_cols and thermal_cols
         assert df[renewable_cols].to_numpy().max() > 1e-3
         assert df[thermal_cols].to_numpy().max() > 1e-3
+
+    async def test_storage_participates(self, tmp_path):
+        """The toy battery is dispatched within its power rating (20 MW)."""
+        df = await self._run(tmp_path)
+        assert "P:batt0" in df.columns
+        assert df["P:batt0"].abs().max() <= 20.0 + 1e-6
+
+    async def test_no_storage_excludes_battery(self, tmp_path):
+        df = await self._run(tmp_path, include_storage=False)
+        assert "P:batt0" not in df.columns
+        power_cols = [c for c in df.columns if c.startswith("P:")]
+        target_cols = [c for c in df.columns if c.startswith("target:")]
+        gap = (df[target_cols[0]] - df[power_cols].sum(axis=1)).abs()
+        assert float(gap.max()) < 1.0
+
+    async def test_storage_never_raises_cost(self, tmp_path):
+        """Storage only adds flexibility, so the optimum can only get cheaper."""
+        (tmp_path / "with").mkdir()
+        (tmp_path / "without").mkdir()
+        with_storage = await self._run(tmp_path / "with")
+        without = await self._run(tmp_path / "without", include_storage=False)
+        assert with_storage["cost:total"].sum() <= without["cost:total"].sum() + 1e-3
+
+    async def test_raises_on_lossy_transport(self, tmp_path):
+        """Every unit reports exactly once; a dropped report would stall the
+        solve, so the scenario must refuse to start under packet loss."""
+        with pytest.raises(ValueError, match="lossless"):
+            await self._run(tmp_path, loss_percent=5.0)

@@ -65,7 +65,7 @@ Seven scenario entry points are installed:
 
 | Entry point            | Algorithm                                                          |
 |------------------------|--------------------------------------------------------------------|
-| `esb-central-dispatch` | Centralised Pyomo/HiGHS LP dispatch (baseline)                     |
+| `esb-central-dispatch` | Centralised full-horizon Pyomo/HiGHS LP incl. storage (lower bound)|
 | `esb-consensus`        | Averaging consensus with gradient (Jian et al. 2020)               |
 | `esb-admm`             | Exchange ADMM with proximal actors (Boyd et al. 2011)              |
 | `esb-diffusion`        | Adapt-then-combine diffusion (Ces et al. 2025)                     |
@@ -76,8 +76,15 @@ Seven scenario entry points are installed:
 All seven share the same CLI flags: `--network`, `--name-base`,
 `--simulate-days`, `--delay-s` (comms delay), `--loss-percent` (packet loss,
 given as a fraction from 0 to 1, e.g. `0.05` for 5 % — despite the name, not
-0–100), `--log-level`.  Every distributed algorithm except averaging consensus
-requires lossless transport and refuses to run with `--loss-percent != 0`.
+0–100), `--log-level`.  Every scenario except averaging consensus requires
+lossless transport and refuses to run with `--loss-percent != 0`.
+
+`esb-central-dispatch` solves one LP over the whole simulated horizon, with
+perfect foresight of demand and renewable availability (the same information
+the distributed leaders get) and SOC-constrained storage using the same model
+and cyclic terminal condition as the distributed storage actors. Its cost is
+therefore a lower bound for every balanced distributed run.  Pass
+`--no-storage` to get the older storage-free merit-order baseline.
 
 ```bash
 # Toy 5-bus fixture (default network)
@@ -110,12 +117,12 @@ job arrays, follow [`hpc/README.md`](hpc/README.md).
 ```
 src/energy_scheduling_benchmark/
 ├── networks.py         # PyPSA network loaders (examples, files, PYPOWER, toy fixture)
-├── dispatch/           # Pyomo economic dispatch (central LP)
+├── dispatch/           # Pyomo economic dispatch (single-step + full-horizon LP)
 ├── plotting.py         # matplotlib plotting (replacement for CairoMakie)
 └── scenarios/
     ├── _common.py              # shared scenario skeleton (argparser, roles,
     │                           #  balance verification, cost computation)
-    ├── central_dispatch.py     # central LP baseline
+    ├── central_dispatch.py     # central full-horizon LP (lower bound)
     ├── consensus.py            # averaging consensus
     ├── admm.py                 # exchange ADMM
     ├── diffusion.py            # classical diffusion

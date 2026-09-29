@@ -573,8 +573,8 @@ def compute_overall_cost(
     """Total linear cost of a "P" recording: sum_t sum_i cost_by_aid[aid_i] * P_i(t).
 
     A "P" recording ticks on every discrete-event step, not just once per
-    snapshot — e.g. central_dispatch's report/solve/dispatch round-trip
-    records the same settled dispatch 3 times per hour. Summing those raw
+    snapshot — e.g. an iterative algorithm's message rounds record the same
+    settled dispatch several times per hour. Summing those raw
     ticks would multiply-count the same dispatch decision, so *t_P*/*Y_P* are
     first collapsed to one (the last) sample per *step_s* bucket, same as
     FDGDM's own de-duplication for its plots.

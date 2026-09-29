@@ -1,53 +1,56 @@
-"""Central (single-agent) economic dispatch scenario.
+"""Central (single-agent) economic dispatch scenario — perfect-foresight baseline.
 
 Flow
 ----
-1. Thermal generators are *static*: they publish their cost and nominal
-   capacity once on ``on_ready``.
-2. Renewable generators and loads are *dynamic*: they publish their
-   current ``max_active_power`` whenever the PyPSA timeseries ticks.
-3. The aggregator collects these reports per timestamp.  When the total
-   matches the total number of components it solves a Pyomo LP that
-   dispatches generation cost-optimally and meets the aggregated load,
-   and ships ``PowerInfo`` messages back with each generator's share.
+1. Every generator and storage unit sends the leader one :class:`UnitReport`
+   on ``on_ready``: its marginal cost plus its full-horizon power bounds
+   (generators) or its SOC parameters (storage).
+2. Once all units have reported, the leader solves a single multi-period
+   Pyomo LP over the whole horizon
+   (:func:`~energy_scheduling_benchmark.dispatch.solve_multiperiod_dispatch`)
+   that meets the aggregated demand at every timestep and co-optimises
+   storage charge/discharge timing.
+3. Loads stream their demand each hour; the leader applies that hour's
+   set-points via ``regulate`` (the shared :class:`PowerLoadAggregator`
+   machinery, including its post-solve power-balance check).
 
-Storage units are deliberately excluded: only thermal/renewable generators
-and loads participate, so on networks with storage this scenario's cost is
-a storage-less merit-order baseline rather than a like-for-like comparison
-with the distributed scenarios (which pre-schedule storage).
+Participants, bounds and storage parameters are built with the same helpers
+the distributed scenarios use (``collect_generator_refs``, ``build_p_max_vec``,
+``StorageParams.from_statics``), and storage uses the same SOC model and
+cyclic terminal condition as their storage actors. The leader sees the same
+full-horizon information as the distributed leaders, so this scenario's cost
+is a lower bound for theirs. ``--no-storage`` reproduces the old storage-free
+merit-order baseline.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
 
-from mango import (
-    AgentAddress,
-    Role,
-    RoleAgent,
-    agent_composed_of,
-)
-from mango.simulation.world import discrete_step_until, record_agent_having
+import numpy as np
+from mango import AgentAddress, Role, RoleAgent, agent_composed_of
+from mango.simulation.world import discrete_step_until
 
-from energy_scheduling_benchmark import (
-    LOAD,
-    RENEWABLE,
-    THERMAL,
-    PowerUpdateInfo,
-    PyPSABehavior,
-)
-from energy_scheduling_benchmark.dispatch import solve_central_dispatch
+from energy_scheduling_benchmark import LOAD, STORAGE, THERMAL
+from energy_scheduling_benchmark.dispatch import StorageSpec, solve_multiperiod_dispatch
 from energy_scheduling_benchmark.scenarios._common import (
-    PowerLoadInfo,
+    PowerLoadAggregator,
     PowerLoadMonitoring,
     ScenarioData,
+    StorageParams,
     _clip_scenario,
+    build_demand_horizon,
     build_group_map,
+    build_p_max_vec,
     build_toy_network,
     build_world,
+    collect_generator_refs,
+    install_standard_recordings,
+    require_lossless_transport,
     run_scenario_main,
     write_scenario_outputs,
 )
@@ -61,23 +64,18 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class PowerInfo:
-    """Power set-point / observation exchanged with the aggregator."""
+class UnitReport:
+    """One-shot report of a unit's horizon parameters to the leader.
 
-    power_load: float
-    time: float  # simulation seconds (``context.current_timestamp``)
+    Generators fill ``p_min``/``p_max`` (per-timestep bounds, MW); storage
+    units fill ``storage`` instead.
+    """
 
-
-@dataclass
-class GeneratorInfo:
-    """Generator-side report to the aggregator."""
-
-    max_power: float
+    aid: str
     cost: float
-    time: float  # simulation seconds (``context.current_timestamp``)
-    addr: AgentAddress
-    static: bool
-    min_power: float = 0.0
+    p_min: np.ndarray | None = None
+    p_max: np.ndarray | None = None
+    storage: StorageParams | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -85,189 +83,93 @@ class GeneratorInfo:
 # ---------------------------------------------------------------------------
 
 
-def _role_addr(role: Role) -> AgentAddress:
-    return AgentAddress(role.context.addr, role.context.aid)
+class UnitReporter(Role):
+    """Sends the unit's :class:`UnitReport` to the leader once on ``on_ready``.
 
-
-class StaticHandler(Role):
-    """Reports a generator's static parameters once on ``on_ready``.
-
-    The report is sent exactly once with no retry: under simulated packet
-    loss a dropped static report means the aggregator's component count
-    stays incomplete for *every* timestep, so the whole run produces zero
-    dispatches (surfaced only by the ``Aggregator.on_stop`` warning).
-    Dropped *dynamic* reports merely skip the affected timestep.
+    Set-points are applied by the leader through the environment's
+    ``regulate`` action, so this role has nothing else to do; it also marks
+    the agent for the ``"P"`` recording.
     """
 
-    def __init__(
-        self,
-        behavior: PyPSABehavior,
-        target: AgentAddress,
-        min_power: float = 0.0,
-    ) -> None:
+    def __init__(self, report: UnitReport, leader: AgentAddress) -> None:
         super().__init__()
-        self._behavior = behavior
-        self._target = target
-        self._min_power = min_power
+        self._report = report
+        self._leader = leader
 
     def on_ready(self) -> None:
-        aid = self.context.aid
-        power = self._behavior.observe(aid, "max_active_power")
-        cost = self._behavior.observe(aid, "cost")
-        t = self.context.current_timestamp
-
-        asyncio.create_task(
-            self.context.send_message(
-                GeneratorInfo(
-                    max_power=float(power),
-                    cost=float(cost),
-                    time=t,
-                    addr=_role_addr(self),
-                    static=True,
-                    min_power=self._min_power,
-                ),
-                self._target,
-            )
-        )
+        asyncio.create_task(self.context.send_message(self._report, self._leader))
 
 
-class GeneratorMonitoring(Role):
-    """Handles dynamic generator updates *and* applies dispatch set-points.
-
-    On ``PowerUpdateInfo`` events → publish the new max power + cost to the
-    aggregator.  On incoming :class:`PowerInfo` → call the ``regulate``
-    action to set the generator to the commanded value.
+class CentralDispatchAggregator(PowerLoadAggregator):
+    """Leader: collects all :class:`UnitReport`\\ s, solves the horizon LP once,
+    then dispatches it hour by hour like the distributed scenarios' leader.
     """
 
-    def __init__(
-        self,
-        behavior: PyPSABehavior,
-        target: AgentAddress,
-        min_power: float = 0.0,
-    ) -> None:
-        super().__init__()
-        self._behavior = behavior
-        self._target = target
-        self._min_power = min_power
-        self.P: float = 0.0
-
-    def setup(self) -> None:
-        self.context.subscribe_message(
-            self,
-            self._handle_power_info,
-            lambda c, m: isinstance(c, PowerInfo),
+    def __init__(self, *, demand_target: np.ndarray, **kwargs: Any) -> None:
+        super().__init__(
+            trigger=None,
+            finished_message_type=UnitReport,
+            build_start_message=lambda: None,
+            demand_target=demand_target,
+            **kwargs,
         )
+        self._reports: dict[str, UnitReport] = {}
+        self.solver_status: str | None = None
+        self.objective: float | None = None
 
-    def on_agent_event(self, event: Any) -> None:
-        if not isinstance(event, PowerUpdateInfo):
-            return
-        aid = self.context.aid
-        power = self._behavior.observe(aid, "max_active_power")
-        cost = self._behavior.observe(aid, "cost")
-        t = self.context.current_timestamp
-        asyncio.create_task(
-            self.context.send_message(
-                GeneratorInfo(
-                    max_power=float(power),
-                    cost=float(cost),
-                    time=t,
-                    addr=_role_addr(self),
-                    static=False,
-                    min_power=self._min_power,
-                ),
-                self._target,
-            )
+    def on_ready(self) -> None:
+        # Nothing to trigger: units report on their own.
+        pass
+
+    def _handle_finished(self, message: UnitReport, meta: dict) -> None:
+        self._reports[message.aid] = message
+        if len(self._reports) == self._n_finished_required:
+            self._solve()
+        super()._handle_finished(message, meta)
+
+    def _solve(self) -> None:
+        demand = np.asarray(self._demand_target, dtype=float)
+        gens = [r for r in self._reports.values() if r.storage is None]
+        stores = [r for r in self._reports.values() if r.storage is not None]
+        result = solve_multiperiod_dispatch(
+            costs=[r.cost for r in gens],
+            p_max=np.array([r.p_max for r in gens]).reshape(len(gens), demand.size),
+            p_min=np.array([r.p_min for r in gens]).reshape(len(gens), demand.size),
+            demand=demand,
+            storage=[
+                StorageSpec(
+                    e_max=r.storage.e_max,
+                    p_charge_max=r.storage.p_charge_max,
+                    p_discharge_max=r.storage.p_discharge_max,
+                    eta_charge=r.storage.eta_charge,
+                    eta_discharge=r.storage.eta_discharge,
+                    e_initial=r.storage.e_initial,
+                    discharge_cost=max(0.0, r.cost),
+                )
+                for r in stores
+            ],
         )
-
-    def _handle_power_info(self, message: PowerInfo, meta: dict) -> None:
-        self.P = float(message.power_load)
-        self._behavior.act(self.context.aid, "regulate", self.P)
-
-
-class Aggregator(Role):
-    """Central LP dispatcher — collects reports and emits set-points."""
-
-    def __init__(self, num_components: int) -> None:
-        super().__init__()
-        self.num = num_components
-        self.demand_map: dict[Any, list[float]] = {}
-        self.generator_map: dict[Any, list[GeneratorInfo]] = {}
-        self.static_generators: list[GeneratorInfo] = []
-        self.target: float = 0.0
-        self.dispatch_count: int = 0
-
-    def setup(self) -> None:
-        self.context.subscribe_message(
-            self,
-            self._handle_generator_info,
-            lambda c, m: isinstance(c, GeneratorInfo),
-        )
-        self.context.subscribe_message(
-            self,
-            self._handle_load_info,
-            lambda c, m: isinstance(c, PowerLoadInfo),
-        )
-
-    def _handle_generator_info(self, message: GeneratorInfo, meta: dict) -> None:
-        if message.static:
-            self.static_generators.append(message)
-        else:
-            self.generator_map.setdefault(message.time, []).append(message)
-        self._check_start(message.time)
-
-    def _handle_load_info(self, message: PowerLoadInfo, meta: dict) -> None:
-        self.demand_map.setdefault(message.time, []).append(float(message.power_load))
-        self._check_start(message.time)
-
-    def _check_start(self, time: Any) -> None:
-        gen_list = self.generator_map.get(time, [])
-        load_list = self.demand_map.get(time, [])
-        total = len(load_list) + len(gen_list) + len(self.static_generators)
-        if total != self.num:
-            return
-
-        self.target = float(sum(load_list))
-        all_gen = list(self.static_generators) + list(gen_list)
-
-        result = solve_central_dispatch(
-            costs=[g.cost for g in all_gen],
-            p_max=[g.max_power for g in all_gen],
-            demand=self.target,
-            p_min=[g.min_power for g in all_gen],
-        )
-
+        self.solver_status = result.solver_status
         if not result.success:
-            logger.warning(
-                "Central dispatch failed at %s: status=%s",
-                time,
+            # Leave the schedules empty: the balance check then flags the run.
+            logger.error(
+                "Central dispatch LP failed (status=%s); no schedule applied.",
                 result.solver_status,
             )
             return
-
+        self.objective = result.objective
+        for r, row in zip(gens, result.generation):
+            self._schedule_by_aid[r.aid] = row
+        for r, row in zip(stores, result.storage):
+            self._schedule_by_aid[r.aid] = row
         logger.info(
-            "Central dispatch @ %s: demand=%.2f MW, cost=%.2f",
-            time,
-            self.target,
+            "Central dispatch LP solved: %d generators, %d storage units, "
+            "%d timesteps, objective=%.2f",
+            len(gens),
+            len(stores),
+            demand.size,
             result.objective,
         )
-        self.dispatch_count += 1
-        for gen, p in zip(all_gen, result.dispatch):
-            asyncio.create_task(
-                self.context.send_message(
-                    PowerInfo(power_load=float(p), time=time), gen.addr
-                )
-            )
-
-    async def on_stop(self) -> None:
-        total_ticks = len(self.demand_map)
-        if self.dispatch_count < total_ticks:
-            logger.warning(
-                "Central dispatch only solved %d/%d timestamps — some "
-                "components likely never reported (check has_timeseries "
-                "classification for all generators).",
-                self.dispatch_count,
-                total_ticks,
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -282,54 +184,102 @@ async def execute_test_case(
     loss_percent: float = 0.0,
     name_base: str = "central_dispatch",
     simulate_days: int = 3,
+    include_storage: bool = True,
+    balance_tol: float = 0.01,
+    strict: bool = False,
 ) -> None:
-    """Run the central-dispatch benchmark once and write out CSV + plots."""
+    """Run the central-dispatch benchmark once and write out CSV + plots.
+
+    :param include_storage: Co-optimise storage units over the horizon. If
+        false, storage is left out entirely (the old merit-order baseline).
+    :param balance_tol: Max allowed per-timestep |generation - demand| /
+        demand before the schedule is flagged as infeasible.
+    :param strict: If true, raise instead of writing outputs when the
+        power-balance check fails.
+    """
+    # Each unit reports exactly once, so a dropped report would stall the solve.
+    require_lossless_transport(loss_percent, "Central dispatch")
+
     if scenario is None:
         scenario = build_toy_network(periods=simulate_days * 24)
 
     scenario = _clip_scenario(scenario, simulate_days)
     world, behavior = build_world(scenario, delay_s=delay_s, loss_percent=loss_percent)
 
-    all_refs = behavior.get_components_by_type([THERMAL, RENEWABLE, LOAD])
-    cost_by_aid: dict[str, float] = {
-        ref.component_id: float(behavior.get_statics(ref).get("marginal_cost", 0.0))
-        for ref in all_refs
-        if ref.element_type != LOAD
-    }
-    group_map = build_group_map(all_refs, behavior=behavior)
-    leader_agent: RoleAgent | None = None
+    load_refs = behavior.get_components_by_type([LOAD])
+    if not load_refs:
+        raise RuntimeError("No loads found for central-dispatch scenario.")
+    demand = build_demand_horizon(
+        behavior, scenario, load_refs, simulate_days=simulate_days
+    )
 
-    for ref in all_refs:
-        # The first agent carries the Aggregator role (acts as leader).
-        if leader_agent is None:
-            aggregator = Aggregator(num_components=len(all_refs))
-            agent = agent_composed_of(aggregator)
-            world.register(agent, suggested_aid=ref.component_id)
-            world.environment.install(agent, id=ref)
-            leader_agent = agent
-            # The leader itself may also be e.g. a thermal gen → add monitoring.
-            _install_component_role(ref, behavior, leader_agent.addr, agent)
-            continue
+    gen_refs, statics_by_ref = collect_generator_refs(behavior)
+    if not include_storage:
+        gen_refs = [ref for ref in gen_refs if ref.element_type != STORAGE]
+    if not gen_refs:
+        raise RuntimeError("No generators found for central-dispatch scenario.")
+    group_map = build_group_map(gen_refs, statics_by_ref=statics_by_ref)
 
-        agent = RoleAgent()
+    # --- Leader agent (sits on the first load, like the distributed scenarios) ---
+    leader_agent = RoleAgent()
+    world.register(leader_agent, suggested_aid=load_refs[0].component_id)
+    world.environment.install(leader_agent, id=load_refs[0])
+    leader_addr = leader_agent.addr
+
+    aggregator = CentralDispatchAggregator(
+        behavior=behavior,
+        number_loads=len(load_refs),
+        generator_aids=[ref.component_id for ref in gen_refs],
+        time_to_index=demand.time_to_index,
+        schedule_by_aid={},
+        demand_target=demand.target_series,
+        balance_label="central dispatch",
+        balance_tol=balance_tol,
+    )
+    leader_agent.add_role(aggregator)
+    leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
+
+    for ref in load_refs[1:]:
+        agent = agent_composed_of(
+            PowerLoadMonitoring(behavior=behavior, target=leader_addr)
+        )
         world.register(agent, suggested_aid=ref.component_id)
         world.environment.install(agent, id=ref)
-        _install_component_role(ref, behavior, leader_agent.addr, agent)
 
-    record_agent_having(
-        world,
-        "target",
-        Aggregator,
-        lambda a: next((r.target for r in a.roles if isinstance(r, Aggregator)), 0.0),
-    )
-    record_agent_having(
-        world,
-        "P",
-        GeneratorMonitoring,
-        lambda a: next(
-            (r.P for r in a.roles if isinstance(r, GeneratorMonitoring)), 0.0
-        ),
-    )
+    # --- One reporting agent per generator / storage unit ---
+    cost_by_aid: dict[str, float] = {}
+    for ref in gen_refs:
+        statics = statics_by_ref[ref]
+        cost = float(statics.get("marginal_cost", 0.0))
+        cost_by_aid[ref.component_id] = cost
+        p_nom = float(statics.get("p_nom", 0.0))
+
+        if ref.element_type == STORAGE:
+            report = UnitReport(
+                aid=ref.component_id,
+                cost=cost,
+                storage=StorageParams.from_statics(statics, p_nom),
+            )
+        else:
+            p_max = build_p_max_vec(
+                scenario, ref, statics, demand.time_index, demand.horizon
+            )
+            p_min = np.zeros(demand.horizon, dtype=float)
+            if ref.element_type == THERMAL:
+                p_min_pu = float(statics.get("p_min_pu", 0.0))
+                p_min[:] = max(0.0, p_min_pu * p_nom)
+            report = UnitReport(
+                aid=ref.component_id,
+                cost=cost,
+                p_min=p_min,
+                p_max=np.nan_to_num(np.asarray(p_max, dtype=float)),
+            )
+
+        agent = agent_composed_of(UnitReporter(report, leader_addr))
+        world.register(agent, suggested_aid=ref.component_id)
+        world.environment.install(agent, id=ref)
+
+    install_standard_recordings(world, behavior, role_cls=UnitReporter)
 
     async with world:
         await discrete_step_until(world, simulate_days * 24 * 3600.0)
@@ -338,36 +288,14 @@ async def execute_test_case(
         world,
         name_base=name_base,
         cost_by_aid=cost_by_aid,
+        stacked_title="Stacked power – central dispatch",
+        aggregator=aggregator,
+        balance_tol=balance_tol,
+        strict=strict,
         group_map=group_map,
         net=scenario.net,
         label="central dispatch",
     )
-
-
-def _install_component_role(ref, behavior, leader_addr, agent) -> None:
-    """Attach the role mix appropriate for the component type.
-
-    Generators without timeseries data (e.g. must-run "renewable-carrier"
-    plants like biomass/geothermal that PyPSA never varies hourly) need a
-    one-shot :class:`StaticHandler` report — otherwise they never report to
-    the aggregator at all, since they'd get neither an on_ready static
-    report (RENEWABLE-only used to skip it) nor a ``PowerUpdateInfo`` event
-    (no timeseries entry to drive one). ``GeneratorMonitoring`` is attached
-    to every generator regardless, since it's also what applies the
-    aggregator's dispatch set-point via ``regulate``.
-    """
-    if ref.element_type == LOAD:
-        agent.add_role(PowerLoadMonitoring(behavior, leader_addr))
-        return
-
-    statics = behavior.get_statics(ref)
-    p_min_pu = float(statics.get("p_min_pu", 0.0))
-    p_nom = float(statics.get("p_nom", 0.0))
-    min_power = max(0.0, p_min_pu * p_nom)
-
-    if not behavior.has_timeseries(ref):
-        agent.add_role(StaticHandler(behavior, leader_addr, min_power=min_power))
-    agent.add_role(GeneratorMonitoring(behavior, leader_addr, min_power=min_power))
 
 
 # ---------------------------------------------------------------------------
@@ -375,11 +303,24 @@ def _install_component_role(ref, behavior, leader_addr, agent) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _add_central_dispatch_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--no-storage",
+        dest="include_storage",
+        action="store_false",
+        help="Leave storage units out (storage-free merit-order baseline).",
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     run_scenario_main(
         execute_test_case,
         doc=__doc__,
         default_name_base="central_dispatch",
+        extra_args=_add_central_dispatch_args,
+        extra_kwargs=("include_storage",),
+        lossless_only=True,
+        with_balance_tol=True,
         argv=argv,
     )
 

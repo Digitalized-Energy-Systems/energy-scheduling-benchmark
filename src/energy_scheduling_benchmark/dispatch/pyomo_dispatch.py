@@ -1,7 +1,9 @@
 """Centralised economic dispatch via Pyomo.
 
 Minimises generation cost subject to a hard demand-balance constraint and
-per-generator capacity bounds.  The Julia original used JuMP + HiGHS; this
+per-generator capacity bounds. :func:`solve_central_dispatch` clears a
+single timestep; :func:`solve_multiperiod_dispatch` clears a whole horizon at
+once so storage units can shift energy between timesteps.  The Julia original used JuMP + HiGHS; this
 module uses Pyomo and defaults to the HiGHS appsi backend, with a fallback
 to GLPK when HiGHS is not available.
 
@@ -23,9 +25,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+import numpy as np
 import pyomo.environ as pyo
 
-__all__ = ["solve_central_dispatch", "DispatchResult"]
+__all__ = [
+    "solve_central_dispatch",
+    "solve_multiperiod_dispatch",
+    "DispatchResult",
+    "MultiPeriodDispatchResult",
+    "StorageSpec",
+]
 
 
 @dataclass(frozen=True)
@@ -139,4 +148,190 @@ def solve_central_dispatch(
     objective = float(pyo.value(model.cost))
     return DispatchResult(
         success=True, dispatch=dispatch, objective=objective, solver_status=status
+    )
+
+
+#: Cost per MWh charged (€/MWh); negligible, only a tie-breaker.
+_CYCLING_PENALTY = 1e-6
+
+
+@dataclass(frozen=True)
+class StorageSpec:
+    """SOC-constrained storage unit for :func:`solve_multiperiod_dispatch`.
+
+    Same model as the distributed scenarios' storage actors (see
+    ``ProximalStorageADMMActor`` in ``distributed_resource_optimization``):
+    ``E[t+1] = E[t] - p_d[t] / eta_discharge + p_c[t] * eta_charge`` with
+    ``0 <= E <= e_max`` and a cyclic terminal condition ``E[T] = E[0]``.
+    """
+
+    e_max: float
+    p_charge_max: float
+    p_discharge_max: float
+    eta_charge: float
+    eta_discharge: float
+    #: Initial (and final) state of charge as a fraction of ``e_max``.
+    e_initial: float
+    #: Cost per MWh discharged. Charging is free, matching the benchmark's
+    #: reported cost metric (``compute_overall_cost`` clips charging to 0).
+    discharge_cost: float = 0.0
+
+
+@dataclass(frozen=True)
+class MultiPeriodDispatchResult:
+    """Outcome of a multi-period economic-dispatch solve."""
+
+    success: bool
+    #: Generator dispatch, shape ``(n_generators, T)``.
+    generation: np.ndarray
+    #: Net storage power (discharge − charge), shape ``(n_storage, T)``.
+    storage: np.ndarray
+    #: Storage energy level, shape ``(n_storage, T + 1)``.
+    energy: np.ndarray
+    objective: float
+    solver_status: str
+
+
+def solve_multiperiod_dispatch(
+    costs: Sequence[float],
+    p_max: Sequence[Sequence[float]] | np.ndarray,
+    demand: Sequence[float] | np.ndarray,
+    p_min: Sequence[Sequence[float]] | np.ndarray | None = None,
+    storage: Sequence[StorageSpec] = (),
+) -> MultiPeriodDispatchResult:
+    """Solve a copper-plate economic dispatch over a horizon as one LP.
+
+    Parameters
+    ----------
+    costs:
+        Marginal cost per generator (length *N*).
+    p_max:
+        Per-timestep upper bound per generator, shape ``(N, T)``.
+    demand:
+        Aggregate load per timestep (length *T*), met exactly by generation
+        plus net storage discharge.
+    p_min:
+        Optional per-timestep lower bounds, shape ``(N, T)`` (default zero).
+    storage:
+        Storage units co-optimised over the horizon (see :class:`StorageSpec`).
+
+    Returns
+    -------
+    MultiPeriodDispatchResult
+        ``success`` is ``True`` when the LP returns an optimal solution;
+        otherwise the arrays are zero-filled and ``objective`` is NaN.
+    """
+    demand_arr = np.asarray(demand, dtype=float).ravel()
+    T = demand_arr.size
+    n = len(costs)
+    p_max_arr = np.asarray(p_max, dtype=float).reshape(n, T)
+    p_min_arr = (
+        np.zeros((n, T))
+        if p_min is None
+        else np.asarray(p_min, dtype=float).reshape(n, T)
+    )
+    storage = list(storage)
+    k = len(storage)
+
+    def _failure(status: str) -> MultiPeriodDispatchResult:
+        return MultiPeriodDispatchResult(
+            success=False,
+            generation=np.zeros((n, T)),
+            storage=np.zeros((k, T)),
+            energy=np.zeros((k, T + 1)),
+            objective=float("nan"),
+            solver_status=status,
+        )
+
+    if (n == 0 and k == 0) or T == 0:
+        return _failure("no_units")
+
+    model = pyo.ConcreteModel()
+    model.G = pyo.RangeSet(0, n - 1) if n else pyo.Set(initialize=[])
+    model.S = pyo.RangeSet(0, k - 1) if k else pyo.Set(initialize=[])
+    model.T = pyo.RangeSet(0, T - 1)
+    model.T1 = pyo.RangeSet(0, T)
+
+    model.p = pyo.Var(
+        model.G,
+        model.T,
+        bounds=lambda _m, i, t: (p_min_arr[i, t], p_max_arr[i, t]),
+    )
+    model.p_c = pyo.Var(
+        model.S,
+        model.T,
+        bounds=lambda _m, s, t: (0.0, storage[s].p_charge_max),
+    )
+    model.p_d = pyo.Var(
+        model.S,
+        model.T,
+        bounds=lambda _m, s, t: (0.0, storage[s].p_discharge_max),
+    )
+    model.E = pyo.Var(
+        model.S, model.T1, bounds=lambda _m, s, t: (0.0, storage[s].e_max)
+    )
+
+    def _e0(s: int) -> float:
+        return float(np.clip(storage[s].e_initial, 0.0, 1.0)) * storage[s].e_max
+
+    model.soc_initial = pyo.Constraint(model.S, rule=lambda m, s: m.E[s, 0] == _e0(s))
+    model.soc_final = pyo.Constraint(model.S, rule=lambda m, s: m.E[s, T] == _e0(s))
+    model.soc_dynamics = pyo.Constraint(
+        model.S,
+        model.T,
+        rule=lambda m, s, t: (
+            m.E[s, t + 1]
+            == m.E[s, t]
+            - m.p_d[s, t] / storage[s].eta_discharge
+            + m.p_c[s, t] * storage[s].eta_charge
+        ),
+    )
+    model.balance = pyo.Constraint(
+        model.T,
+        rule=lambda m, t: (
+            sum(m.p[i, t] for i in m.G) + sum(m.p_d[s, t] - m.p_c[s, t] for s in m.S)
+            == demand_arr[t]
+        ),
+    )
+    # _CYCLING_PENALTY breaks ties against pointless charge/discharge cycling
+    # when storage is lossless and prices are flat (e.g. the toy network).
+    model.cost = pyo.Objective(
+        expr=sum(costs[i] * model.p[i, t] for i in model.G for t in model.T)
+        + sum(
+            storage[s].discharge_cost * model.p_d[s, t]
+            + _CYCLING_PENALTY * model.p_c[s, t]
+            for s in model.S
+            for t in model.T
+        ),
+        sense=pyo.minimize,
+    )
+
+    solver = _pick_solver()
+    results = solver.solve(model, load_solutions=False, tee=False)
+    status = str(results.solver.termination_condition)
+    if status not in {"optimal", "locallyOptimal"}:
+        return _failure(status)
+
+    model.solutions.load_from(results)
+    generation = np.array(
+        [[pyo.value(model.p[i, t]) for t in range(T)] for i in range(n)], dtype=float
+    ).reshape(n, T)
+    net_storage = np.array(
+        [
+            [pyo.value(model.p_d[s, t]) - pyo.value(model.p_c[s, t]) for t in range(T)]
+            for s in range(k)
+        ],
+        dtype=float,
+    ).reshape(k, T)
+    energy = np.array(
+        [[pyo.value(model.E[s, t]) for t in range(T + 1)] for s in range(k)],
+        dtype=float,
+    ).reshape(k, T + 1)
+    return MultiPeriodDispatchResult(
+        success=True,
+        generation=generation,
+        storage=net_storage,
+        energy=energy,
+        objective=float(pyo.value(model.cost)),
+        solver_status=status,
     )
