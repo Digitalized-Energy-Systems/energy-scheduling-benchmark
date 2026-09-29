@@ -3,7 +3,7 @@
 End-to-end smoke tests of execute_test_case on the built-in toy network:
 every hourly timestep must be dispatched, total generation (including net
 storage discharge) must match the aggregated demand, and the toy battery
-must take part unless ``include_storage=False``.
+must take part.
 """
 
 from __future__ import annotations
@@ -67,22 +67,6 @@ class TestExecuteTestCase:
         df = await self._run(tmp_path)
         assert "P:batt0" in df.columns
         assert df["P:batt0"].abs().max() <= 20.0 + 1e-6
-
-    async def test_no_storage_excludes_battery(self, tmp_path):
-        df = await self._run(tmp_path, include_storage=False)
-        assert "P:batt0" not in df.columns
-        power_cols = [c for c in df.columns if c.startswith("P:")]
-        target_cols = [c for c in df.columns if c.startswith("target:")]
-        gap = (df[target_cols[0]] - df[power_cols].sum(axis=1)).abs()
-        assert float(gap.max()) < 1.0
-
-    async def test_storage_never_raises_cost(self, tmp_path):
-        """Storage only adds flexibility, so the optimum can only get cheaper."""
-        (tmp_path / "with").mkdir()
-        (tmp_path / "without").mkdir()
-        with_storage = await self._run(tmp_path / "with")
-        without = await self._run(tmp_path / "without", include_storage=False)
-        assert with_storage["cost:total"].sum() <= without["cost:total"].sum() + 1e-3
 
     async def test_raises_on_lossy_transport(self, tmp_path):
         """Every unit reports exactly once; a dropped report would stall the

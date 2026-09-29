@@ -83,8 +83,7 @@ lossless transport and refuses to run with `--loss-percent != 0`.
 perfect foresight of demand and renewable availability (the same information
 the distributed leaders get) and SOC-constrained storage using the same model
 and cyclic terminal condition as the distributed storage actors. Its cost is
-therefore a lower bound for every balanced distributed run.  Pass
-`--no-storage` to get the older storage-free merit-order baseline.
+therefore a lower bound for every balanced distributed run.
 
 ```bash
 # Toy 5-bus fixture (default network)

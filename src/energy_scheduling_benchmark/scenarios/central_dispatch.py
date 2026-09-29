@@ -19,13 +19,11 @@ the distributed scenarios use (``collect_generator_refs``, ``build_p_max_vec``,
 ``StorageParams.from_statics``), and storage uses the same SOC model and
 cyclic terminal condition as their storage actors. The leader sees the same
 full-horizon information as the distributed leaders, so this scenario's cost
-is a lower bound for theirs. ``--no-storage`` reproduces the old storage-free
-merit-order baseline.
+is a lower bound for theirs.
 """
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import logging
 from dataclasses import dataclass
@@ -184,14 +182,11 @@ async def execute_test_case(
     loss_percent: float = 0.0,
     name_base: str = "central_dispatch",
     simulate_days: int = 3,
-    include_storage: bool = True,
     balance_tol: float = 0.01,
     strict: bool = False,
 ) -> None:
     """Run the central-dispatch benchmark once and write out CSV + plots.
 
-    :param include_storage: Co-optimise storage units over the horizon. If
-        false, storage is left out entirely (the old merit-order baseline).
     :param balance_tol: Max allowed per-timestep |generation - demand| /
         demand before the schedule is flagged as infeasible.
     :param strict: If true, raise instead of writing outputs when the
@@ -214,8 +209,6 @@ async def execute_test_case(
     )
 
     gen_refs, statics_by_ref = collect_generator_refs(behavior)
-    if not include_storage:
-        gen_refs = [ref for ref in gen_refs if ref.element_type != STORAGE]
     if not gen_refs:
         raise RuntimeError("No generators found for central-dispatch scenario.")
     group_map = build_group_map(gen_refs, statics_by_ref=statics_by_ref)
@@ -303,22 +296,11 @@ async def execute_test_case(
 # ---------------------------------------------------------------------------
 
 
-def _add_central_dispatch_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--no-storage",
-        dest="include_storage",
-        action="store_false",
-        help="Leave storage units out (storage-free merit-order baseline).",
-    )
-
-
 def main(argv: list[str] | None = None) -> None:
     run_scenario_main(
         execute_test_case,
         doc=__doc__,
         default_name_base="central_dispatch",
-        extra_args=_add_central_dispatch_args,
-        extra_kwargs=("include_storage",),
         lossless_only=True,
         with_balance_tol=True,
         argv=argv,
