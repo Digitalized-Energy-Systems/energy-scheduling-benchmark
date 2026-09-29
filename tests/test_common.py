@@ -8,10 +8,12 @@ import pytest
 from energy_scheduling_benchmark import ComponentRef
 from energy_scheduling_benchmark.networks import build_toy_network
 from energy_scheduling_benchmark.scenarios._common import (
+    PowerLoadAggregator,
     _clip_scenario,
     build_group_map,
     carrier_style,
     compute_overall_cost,
+    compute_slack,
     require_lossless_transport,
 )
 
@@ -61,6 +63,41 @@ class TestComputeOverallCost:
         Y = np.array([[10.0]])
         total, _ = compute_overall_cost({}, t, Y, ["mystery"])
         assert total == pytest.approx(0.0)
+
+
+class TestComputeSlack:
+    def test_splits_residual_into_import_and_export(self):
+        imp, exp = compute_slack(np.array([5.0, -3.0, 0.0]))
+        assert imp.tolist() == [5.0, 0.0, 0.0]
+        assert exp.tolist() == [0.0, 3.0, 0.0]
+
+
+class TestAggregatorSlack:
+    def _aggregator(self, schedules: dict[str, list[float]]) -> PowerLoadAggregator:
+        return PowerLoadAggregator(
+            behavior=None,
+            number_loads=1,
+            generator_aids=list(schedules),
+            trigger=None,
+            time_to_index={0.0: 0, 3600.0: 1, 7200.0: 2},
+            schedule_by_aid={k: np.array(v) for k, v in schedules.items()},
+            finished_message_type=object,
+            build_start_message=lambda: None,
+            demand_target=np.array([10.0, 10.0, 10.0]),
+        )
+
+    def test_residual_is_demand_minus_schedules(self):
+        agg = self._aggregator({"a": [4.0, 8.0, 10.0], "b": [2.0, 4.0, 0.0]})
+        np.testing.assert_allclose(agg.schedule_residual(), [4.0, -2.0, 0.0])
+
+    def test_slack_by_bucket_keys_hours(self):
+        agg = self._aggregator({"a": [4.0, 12.0, 10.0]})
+        assert agg.slack_by_bucket() == {0: (6.0, 0.0), 1: (0.0, 2.0), 2: (0.0, 0.0)}
+
+    def test_missing_schedule_counts_as_zero(self):
+        agg = self._aggregator({"a": [4.0, 4.0, 4.0]})
+        agg._generator_aids.append("never-finished")
+        np.testing.assert_allclose(agg.schedule_residual(), [6.0, 6.0, 6.0])
 
 
 class TestBuildGroupMap:

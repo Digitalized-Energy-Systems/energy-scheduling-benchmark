@@ -79,6 +79,21 @@ given as a fraction from 0 to 1, e.g. `0.05` for 5 % — despite the name, not
 0–100), `--log-level`.  Every scenario except averaging consensus requires
 lossless transport and refuses to run with `--loss-percent != 0`.
 
+### Optional slack node
+
+The networks are islanded, so by default every scenario must match demand with its
+own units, and runs that miss by more than 1 % are excluded from the cost
+comparison. `--slack` adds a slack node (the point of common coupling of Bai et
+al. 2022) to all seven scenarios: it imports any shortfall at
+`--slack-import-price` (default 3000 €/MWh) and exports any surplus at
+`--slack-export-price` (default 0 €/MWh). Both are added to `cost:total` and
+written as `slack:import`/`slack:export` columns; central dispatch gets the same
+slack inside its LP. Off by default. See [`docs/slack-node.md`](docs/slack-node.md).
+
+```bash
+esb-fdgdm --network resources/networks/lower_saxony_2030.nc --name-base fdgdm --slack
+```
+
 `esb-central-dispatch` solves one LP over the whole simulated horizon, with
 perfect foresight of demand and renewable availability (the same information
 the distributed leaders get) and SOC-constrained storage using the same model
@@ -103,6 +118,7 @@ Each run produces:
 * `<name>-stacked.pdf`     — stacked-area dispatch plot with demand target
 * `<name>-cost.pdf`        — cost per timestep
 * `<name>-df.csv`          — per-agent timeseries incl. a `cost:total` column
+  (plus `slack:import`/`slack:export` with `--slack`)
 
 To run all seven scenarios against the PyPSA-Eur extracts and compare total
 costs, use `../run_all_scenarios.sh` from the repo root (writes
@@ -120,7 +136,7 @@ src/energy_scheduling_benchmark/
 ├── plotting.py         # matplotlib plotting (replacement for CairoMakie)
 └── scenarios/
     ├── _common.py              # shared scenario skeleton (argparser, roles,
-    │                           #  balance verification, cost computation)
+    │                           #  balance verification, slack, cost computation)
     ├── central_dispatch.py     # central full-horizon LP (lower bound)
     ├── consensus.py            # averaging consensus
     ├── admm.py                 # exchange ADMM

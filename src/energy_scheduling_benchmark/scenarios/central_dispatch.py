@@ -39,6 +39,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadAggregator,
     PowerLoadMonitoring,
     ScenarioData,
+    SlackSpec,
     StorageParams,
     _clip_scenario,
     build_demand_horizon,
@@ -146,6 +147,9 @@ class CentralDispatchAggregator(PowerLoadAggregator):
                 )
                 for r in stores
             ],
+            # Same slack as the distributed scenarios get, so the LP stays the
+            # true optimum of the problem they solve.
+            slack=self._slack,
         )
         self.solver_status = result.solver_status
         if not result.success:
@@ -168,6 +172,12 @@ class CentralDispatchAggregator(PowerLoadAggregator):
             demand.size,
             result.objective,
         )
+        if result.slack_import is not None:
+            logger.info(
+                "Central dispatch LP slack: import %.1f MWh, export %.1f MWh",
+                float(result.slack_import.sum()),
+                float(result.slack_export.sum()),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +194,7 @@ async def execute_test_case(
     simulate_days: int = 3,
     balance_tol: float = 0.01,
     strict: bool = False,
+    slack: SlackSpec | None = None,
 ) -> None:
     """Run the central-dispatch benchmark once and write out CSV + plots.
 
@@ -191,6 +202,8 @@ async def execute_test_case(
         demand before the schedule is flagged as infeasible.
     :param strict: If true, raise instead of writing outputs when the
         power-balance check fails.
+    :param slack: Optional slack node (see :class:`SlackSpec`) that imports
+        any shortfall and exports any surplus; off when ``None``.
     """
     # Each unit reports exactly once, so a dropped report would stall the solve.
     require_lossless_transport(loss_percent, "Central dispatch")
@@ -228,6 +241,7 @@ async def execute_test_case(
         demand_target=demand.target_series,
         balance_label="central dispatch",
         balance_tol=balance_tol,
+        slack=slack,
     )
     leader_agent.add_role(aggregator)
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
@@ -285,6 +299,7 @@ async def execute_test_case(
         aggregator=aggregator,
         balance_tol=balance_tol,
         strict=strict,
+        slack=slack,
         group_map=group_map,
         net=scenario.net,
         label="central dispatch",

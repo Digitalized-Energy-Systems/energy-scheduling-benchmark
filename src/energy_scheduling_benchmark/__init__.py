@@ -32,7 +32,7 @@ from mango_energy_environments import (
     SchedulingBehavior,
 )
 
-from .dispatch import solve_central_dispatch, solve_multiperiod_dispatch
+from .dispatch import SlackSpec, solve_central_dispatch, solve_multiperiod_dispatch
 from .networks import (
     ScenarioData,
     available_examples,
@@ -61,6 +61,7 @@ __all__ = [
     "STORAGE",
     "solve_central_dispatch",
     "solve_multiperiod_dispatch",
+    "SlackSpec",
     "stacked_area",
     "per_unit_small_multiples",
     "generation_vs_demand",

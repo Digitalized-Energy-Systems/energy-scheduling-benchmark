@@ -50,6 +50,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadAggregator,
     PowerLoadMonitoring,
     ScenarioData,
+    SlackSpec,
     _clip_scenario,
     _lookup_ts,
     build_demand_horizon,
@@ -80,6 +81,7 @@ async def execute_test_case(
     max_iter: int = 500,
     balance_tol: float = 0.01,
     strict: bool = False,
+    slack: SlackSpec | None = None,
 ) -> None:
     """Run the DEED-ADMM benchmark once and write out CSV + plots.
 
@@ -97,6 +99,9 @@ async def execute_test_case(
     strict:
         If true, raise instead of writing outputs when the power-balance
         check fails.
+    slack:
+        Optional slack node (see :class:`SlackSpec`) that imports any
+        shortfall and exports any surplus; off when ``None``.
     """
     require_lossless_transport(loss_percent, "DEED-ADMM")
 
@@ -263,6 +268,7 @@ async def execute_test_case(
         demand_target=target_series,
         balance_label="DEED-ADMM",
         balance_tol=balance_tol,
+        slack=slack,
     )
     leader_agent.add_role(aggregator)
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
@@ -301,6 +307,7 @@ async def execute_test_case(
         aggregator=aggregator,
         balance_tol=balance_tol,
         strict=strict,
+        slack=slack,
         group_map=group_map,
         net=scenario.net,
         label="DEED-ADMM",

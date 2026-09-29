@@ -35,6 +35,7 @@ from energy_scheduling_benchmark import (
     PowerUpdateInfo,
     PyPSABehavior,
 )
+from energy_scheduling_benchmark.dispatch import SlackSpec
 from energy_scheduling_benchmark.networks import (
     ScenarioData,
     available_examples,
@@ -67,6 +68,8 @@ __all__ = [
     "_write_agent_recordings_csv",
     "compute_overall_cost",
     "compute_linear_energy_cost",
+    "compute_slack",
+    "SlackSpec",
     "build_group_map",
     "carrier_style",
     "build_scenario_argparser",
@@ -512,7 +515,7 @@ def _write_agent_recordings_csv(
     world: Any,
     path: str,
     snapshot_step_s: float = 0.0,
-    extra: pd.Series | None = None,
+    extra: pd.Series | pd.DataFrame | None = None,
 ) -> None:
     """Write all per-agent recordings to a single wide CSV.
 
@@ -520,8 +523,9 @@ def _write_agent_recordings_csv(
     kept (e.g. one row per hour), dropping sub-second convergence-phase noise
     from algorithms that iterate on the simulation clock (see FDGDM).
 
-    *extra*, if given, is an additional column (e.g. the per-timestep total
-    cost from :func:`compute_overall_cost`) merged in on the time index.
+    *extra*, if given, is one or more additional columns (e.g. the per-timestep
+    total cost from :func:`compute_overall_cost`, plus the slack columns)
+    merged in on the time index.
     """
     frames: list[pd.DataFrame] = []
     for key, rec in world.data_agent_collections.items():
@@ -560,7 +564,7 @@ def _write_agent_recordings_csv(
             # the same way so it lines up with df's now-bucketed integer index
             # instead of joining on raw timestamps that no longer appear there.
             bucket = (extra.index.to_series() // snapshot_step_s).astype(int)
-            extra = pd.Series(extra.values, index=bucket.values, name=extra.name)
+            extra = extra.set_axis(bucket.values)
         df = df.join(extra, how="outer")
 
     df.to_csv(path)
@@ -612,6 +616,40 @@ def compute_overall_cost(
 #: docstring for the "linear energy cost only" caveat. Prefer this name in
 #: new code; ``compute_overall_cost`` is kept for existing callers.
 compute_linear_energy_cost = compute_overall_cost
+
+
+def compute_slack(residual: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Split a balance residual (demand − Σ dispatch, MW) into slack flows.
+
+    Returns ``(import, export)``, both non-negative: a positive residual is a
+    shortfall the slack supplies, a negative one a surplus it absorbs.
+    """
+    r = np.asarray(residual, dtype=float)
+    return np.maximum(r, 0.0), np.maximum(-r, 0.0)
+
+
+def _slack_columns(
+    aggregator: PowerLoadAggregator,
+    t_index: pd.Index,
+    slack: SlackSpec,
+    step_s: float = 3600.0,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Slack import/export and their cost on the hourly rows *t_index*.
+
+    Uses the aggregator's applied schedules, not the "P" recordings: FDGDM
+    clips its recording at zero, which would hide storage charging.
+    """
+    by_bucket = aggregator.slack_by_bucket(step_s)
+    rows = [by_bucket.get(int(t // step_s), (0.0, 0.0)) for t in t_index]
+    imp = np.array([r[0] for r in rows], dtype=float)
+    exp = np.array([r[1] for r in rows], dtype=float)
+    frame = pd.DataFrame({"slack:import": imp, "slack:export": exp}, index=t_index)
+    cost = pd.Series(
+        imp * slack.import_price + exp * slack.export_price,
+        index=t_index,
+        name="cost:total",
+    )
+    return frame, cost
 
 
 # ---------------------------------------------------------------------------
@@ -725,6 +763,28 @@ def build_scenario_argparser(
     parser.add_argument("--name-base", type=str, default=default_name_base)
     parser.add_argument("--simulate-days", type=int, default=3)
     parser.add_argument("--log-level", type=str, default="INFO")
+    parser.add_argument(
+        "--slack",
+        action="store_true",
+        help=(
+            "Add a slack node (the paper's point of common coupling) that "
+            "imports any shortfall and exports any surplus, priced into "
+            "cost:total and written as slack:import/slack:export columns. "
+            "Off by default."
+        ),
+    )
+    parser.add_argument(
+        "--slack-import-price",
+        type=float,
+        default=SlackSpec().import_price,
+        help="Price per MWh the slack supplies, €/MWh (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--slack-export-price",
+        type=float,
+        default=SlackSpec().export_price,
+        help="Price per MWh the slack absorbs, €/MWh (default: %(default)s).",
+    )
     if with_balance_tol:
         # Dests "balance_tol"/"strict" — keep in sync with the matching
         # names hardcoded into run_scenario_main's `with_balance_tol` branch
@@ -825,8 +885,10 @@ class PowerLoadAggregator(Role):
         demand_target: np.ndarray | None = None,
         balance_label: str = "",
         balance_tol: float = 0.01,
+        slack: SlackSpec | None = None,
     ) -> None:
         super().__init__()
+        self._slack = slack
         self._behavior = behavior
         self.number_loads = number_loads
         self._generator_aids = generator_aids
@@ -910,22 +972,25 @@ class PowerLoadAggregator(Role):
         infeasible schedule whose "cost" is meaningless (unserved demand looks
         cheap, over-generation looks expensive).
         """
-        if self._demand_target is None:
+        gap = self.schedule_residual()
+        if gap is None:
             return
-        m = len(self._demand_target)
-        total = np.zeros(m, dtype=float)
-        for aid in self._generator_aids:
-            schedule = self._schedule_by_aid.get(aid)
-            if schedule is None:
-                continue
-            arr = np.asarray(schedule, dtype=float).ravel()
-            n = min(m, arr.size)
-            total[:n] += arr[:n]
-        gap = self._demand_target - total
         rel = np.abs(gap) / np.maximum(np.abs(self._demand_target), 1e-9)
         self.balance_max_rel_gap = float(rel.max()) if rel.size else 0.0
         label = self._balance_label or type(self).__name__
-        if self.balance_max_rel_gap > self._balance_tol:
+        if self._slack is not None:
+            imp, exp = compute_slack(gap)
+            demand_total = max(float(np.sum(self._demand_target)), 1e-9)
+            logger.info(
+                "%s: slack closes the balance — import %.1f MWh (%.2f%% of "
+                "demand), export %.1f MWh (%.2f%%).",
+                label,
+                float(imp.sum()),
+                100.0 * float(imp.sum()) / demand_total,
+                float(exp.sum()),
+                100.0 * float(exp.sum()) / demand_total,
+            )
+        elif self.balance_max_rel_gap > self._balance_tol:
             logger.error(
                 "%s: schedules violate power balance — max per-timestep "
                 "|generation − demand| is %.1f%% of demand (tolerance %.1f%%). "
@@ -941,6 +1006,40 @@ class PowerLoadAggregator(Role):
                 label,
                 100.0 * self.balance_max_rel_gap,
             )
+
+    def schedule_residual(self) -> np.ndarray | None:
+        """Per-timestep ``demand − Σ schedules`` (MW) of the current schedules.
+
+        ``None`` without a demand target. Missing or short schedules count as
+        zero output.
+        """
+        if self._demand_target is None:
+            return None
+        m = len(self._demand_target)
+        total = np.zeros(m, dtype=float)
+        for aid in self._generator_aids:
+            schedule = self._schedule_by_aid.get(aid)
+            if schedule is None:
+                continue
+            arr = np.asarray(schedule, dtype=float).ravel()
+            n = min(m, arr.size)
+            total[:n] += arr[:n]
+        return self._demand_target - total
+
+    def slack_by_bucket(self, step_s: float = 3600.0) -> dict[int, tuple[float, float]]:
+        """Slack ``(import, export)`` MW per simulation-time bucket.
+
+        Keyed like the hourly CSV rows (``int(sim_seconds // step_s)``).
+        """
+        gap = self.schedule_residual()
+        if gap is None:
+            return {}
+        imp, exp = compute_slack(gap)
+        return {
+            int(seconds // step_s): (float(imp[idx]), float(exp[idx]))
+            for seconds, idx in self._time_to_index.items()
+            if idx < gap.size
+        }
 
     def _handle_load_info(self, message: PowerLoadInfo, meta: dict) -> None:
         bucket = self.demand_map.setdefault(message.time, [])
@@ -1080,6 +1179,7 @@ def write_scenario_outputs(
     group_map: dict[str, str] | None = None,
     net: Any | None = None,
     label: str = "",
+    slack: SlackSpec | None = None,
 ) -> float:
     """Write the standard scenario result files and return the total cost.
 
@@ -1114,10 +1214,23 @@ def write_scenario_outputs(
     :param net: PyPSA network whose ``carriers`` table supplies band colours
         and display names (see :func:`carrier_style`); optional.
     :param label: Appended to the per-unit and balance plot titles.
+    :param slack: If given, a slack node closes the balance: per hour it imports
+        ``max(0, demand − Σ schedules)`` and exports ``max(0, Σ schedules −
+        demand)`` (from *aggregator*'s applied schedules), adds both at their
+        prices to ``cost:total`` and writes ``slack:import``/``slack:export``
+        (MW) to the CSV. Requires *aggregator*; cannot be combined with
+        *strict*.
     :raises RuntimeError: If *strict* is set and the balance check failed or
         never ran.
+    :raises ValueError: If *slack* is given without *aggregator*, or with
+        *strict*.
     :returns: The total cost (same value logged and used in the annotation).
     """
+    if slack is not None:
+        if aggregator is None:
+            raise ValueError("slack requires the scenario's aggregator.")
+        if strict:
+            raise ValueError("slack cannot be combined with strict.")
     if aggregator is not None and strict:
         gap = aggregator.balance_max_rel_gap
         if gap is None:
@@ -1147,12 +1260,30 @@ def write_scenario_outputs(
         t_P, Y_P, target_series = t_P[:m], Y_P[:m], target_series[:m]
 
     total_cost, cost_series = compute_overall_cost(cost_by_aid, t_P, Y_P, labels_P)
+    extra: pd.Series | pd.DataFrame = cost_series
+    slack_note = ""
+    if slack is not None:
+        slack_frame, slack_cost = _slack_columns(aggregator, cost_series.index, slack)
+        cost_series = cost_series + slack_cost
+        total_cost = float(cost_series.sum())
+        extra = pd.concat([cost_series, slack_frame], axis=1)
+        imp_mwh = float(slack_frame["slack:import"].sum())
+        exp_mwh = float(slack_frame["slack:export"].sum())
+        logger.info(
+            "%s: slack import %.1f MWh (%.2f €), export %.1f MWh (%.2f €)",
+            name_base,
+            imp_mwh,
+            imp_mwh * slack.import_price,
+            exp_mwh,
+            exp_mwh * slack.export_price,
+        )
+        slack_note = f"\nSlack: import {imp_mwh:,.0f} MWh, export {exp_mwh:,.0f} MWh"
     logger.info("%s: overall cost = %.2f", name_base, total_cost)
-    annotation = f"Total cost: {total_cost:,.2f}"
+    annotation = f"Total cost: {total_cost:,.2f}{slack_note}"
     suffix = f" – {label}" if label else ""
 
     _write_agent_recordings_csv(
-        world, f"{name_base}-df.csv", snapshot_step_s=3600.0, extra=cost_series
+        world, f"{name_base}-df.csv", snapshot_step_s=3600.0, extra=extra
     )
 
     if group_map is None:
@@ -1240,6 +1371,18 @@ def run_scenario_main(
     )
     args = parser.parse_args(argv)
 
+    slack = None
+    if args.slack:
+        if getattr(args, "strict", False):
+            parser.error(
+                "--strict cannot be combined with --slack: the slack closes "
+                "every power-balance gap, so there is nothing left to enforce."
+            )
+        slack = SlackSpec(
+            import_price=args.slack_import_price,
+            export_price=args.slack_export_price,
+        )
+
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
     scenario = resolve_scenario(args.network, simulate_days=args.simulate_days)
@@ -1257,6 +1400,7 @@ def run_scenario_main(
             loss_percent=args.loss_percent,
             name_base=args.name_base,
             simulate_days=args.simulate_days,
+            slack=slack,
             **kwargs,
         )
     )
