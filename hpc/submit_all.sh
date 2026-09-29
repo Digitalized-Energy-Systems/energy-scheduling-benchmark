@@ -25,12 +25,12 @@ LOG_DIR="$ESB_ROOT/hpc-logs"
 
 # Per-scenario resource requests: "memory walltime". These are deliberately generous
 # first guesses — after the first sweep, tighten them with `seff <jobid>_<task>`.
-# esb-admm is large because mango retains every message's content: it grows by
-# ~35 MB per ADMM iteration (~70 GB at --max-iter 2000 on lower_saxony_2030).
+# Scenarios run with mango's message log off (record_messages=False); with it on,
+# every scenario grew until OOM on lower_saxony_2030 (32 GB, and 96 GB for admm).
 declare -A RESOURCES=(
     [esb-central-dispatch]="4G 01:00:00"
     [esb-consensus]="32G 24:00:00"
-    [esb-admm]="96G 24:00:00"
+    [esb-admm]="32G 24:00:00"
     [esb-diffusion]="32G 24:00:00"
     [esb-exact-diffusion]="32G 24:00:00"
     [esb-fdgdm]="32G 24:00:00"

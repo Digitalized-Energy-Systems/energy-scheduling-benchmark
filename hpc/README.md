@@ -257,12 +257,16 @@ with `seff` after the first sweep; smaller requests start sooner.
 * Every run is **one single-threaded process**, so each task asks for 1 CPU. Never
   request a whole node for one run.
 * `esb-central-dispatch` needs < 1 GB and seconds to minutes.
-* **`esb-admm` is memory-hungry**: mango keeps the full content of every delivered
-  message, and ADMM messages carry an `(n, m)` matrix, so memory grows ~35 MB per ADMM
-  iteration — about 70 GB at the default `--max-iter 2000` on `lower_saxony_2030`
-  (measured locally; details and a proposed fix in `docs/hpc-oldenburg-plan.md` §3.1).
-  Hence the 96 GB default. `--max-iter` lowers memory proportionally.
-* The other iterative scenarios have not been profiled yet; 32 GB / 24 h is a guess.
+* **Message log is off.** mango used to keep every delivered message (content included)
+  for the whole run. On `lower_saxony_2030` that ran consensus, diffusion,
+  exact-diffusion and deed-admm out of 32 GB and admm out of 96 GB. The scenarios now
+  create their world with `record_messages=False`: on `base_s_5_elec_2019` (1 day) peak
+  memory dropped from 2.5 GB to 0.36 GB (consensus) and 1.8 GB to 0.36 GB (diffusion),
+  with byte-identical results. This needs a mango version that has `record_messages`
+  (branch `record-messages-opt-out`); an older mango fails with
+  `create_world() got an unexpected keyword argument 'record_messages'`.
+* The 32 GB / 24 h for the iterative scenarios is still a generous guess — tighten
+  it with `seff` after the next sweep.
 * Default limits on ROSA if you do not set them: **2 h walltime** and **6000 MB per CPU**.
   Maximum walltime on `rosa.p`/`mpcs.p`/`mpcb.p` is 7 days; `rosa_express.p` is 2 h.
 

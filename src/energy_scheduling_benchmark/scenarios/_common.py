@@ -134,10 +134,13 @@ def build_world(
     com_sim = SimpleCommunicationSimulation(
         default_delay_s=delay_s, loss_percent=loss_percent
     )
+    # No scenario reads world.recorded_messages, and keeping every message's
+    # content for the whole run dominates memory (OOM on lower_saxony_2030).
     world = create_world(
         start_time=0.0,
         communication_sim=com_sim,
         environment=DefaultEnvironment(behavior=behavior),
+        record_messages=False,
     )
     return world, behavior
 
