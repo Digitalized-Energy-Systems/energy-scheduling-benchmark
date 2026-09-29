@@ -229,6 +229,11 @@ tail -f hpc-logs/esb-admm-<jobid>_1.out
 States to look out for in `sacct`: `OUT_OF_MEMORY` → raise `mem` for that scenario;
 `TIMEOUT` → raise `time`. Edit the `RESOURCES` table in `submit_all.sh`.
 
+`slurmstepd: error: execve(): esb-...: No such file or directory` in a log means the
+`srun` step did not get the venv on its `PATH`. `run_scenario.sbatch` therefore calls
+`srun --export=ALL`; keep that flag if you write your own job scripts with
+`--export=NONE`.
+
 **Re-run only the failed tasks** of one scenario (task numbers = lines in the
 network list of that submission), from `$WORK/esb`:
 

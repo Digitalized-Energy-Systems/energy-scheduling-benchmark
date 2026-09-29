@@ -58,5 +58,12 @@ cd "$OUT_DIR"
 echo "job=${SLURM_JOB_ID:-local} task=$TASK_ID node=$(hostname) scenario=$SCENARIO network=$NETWORK_ARG"
 echo "out=$OUT_DIR/$NAME-* python=$(python --version 2>&1) extra=$*"
 
+if ! command -v "$SCENARIO" >/dev/null; then
+    echo "$SCENARIO not found in the venv ($VIRTUAL_ENV) — re-run hpc/setup_env.sh on the login node" >&2
+    exit 1
+fi
+
 # `srun` makes SLURM account memory/CPU per step, so `seff`/`sacct` report it.
-srun "$SCENARIO" --network "$NETWORK_ARG" --loss-percent 0 --name-base "$NAME" "$@"
+# --export=ALL is required: sbatch --export=NONE sets SLURM_EXPORT_ENV=NONE, which srun
+# inherits, so without it the step would start without the venv/env.sh environment.
+srun --export=ALL "$SCENARIO" --network "$NETWORK_ARG" --loss-percent 0 --name-base "$NAME" "$@"
