@@ -27,8 +27,8 @@ from typing import Any
 
 import numpy as np
 from distributed_resource_optimization import (
+    FDGDMActor,
     LinearCostEconomicDispatchFDGDMActor,
-    NoFDGDMActor,
     create_fdgdm_participant,
     create_fdgdm_start,
 )
@@ -425,7 +425,6 @@ async def execute_test_case(
             finish_callback=finish_callback,
             fdgdm_actor=actor,
             max_iter=max_iter,
-            horizon=horizon,
         )
         opt_role = DistributedOptimizationRole(participant)
         agent = agent_composed_of(opt_role)
@@ -437,9 +436,8 @@ async def execute_test_case(
     for ref in nonthermal_refs:
         noop_participant = create_fdgdm_participant(
             finish_callback=lambda _a, _c: None,
-            fdgdm_actor=NoFDGDMActor(),
+            fdgdm_actor=FDGDMActor(),
             max_iter=0,
-            horizon=horizon,
         )
         opt_role = DistributedOptimizationRole(noop_participant)
         agent = agent_composed_of(opt_role)

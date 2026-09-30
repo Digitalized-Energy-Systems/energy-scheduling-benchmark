@@ -221,7 +221,6 @@ async def execute_test_case(
             max_iter=max_iter,
             epsilon=grad_step,
             tol=tol,
-            horizon=horizon,
             weight_rule=weight_rule,
         )
 
