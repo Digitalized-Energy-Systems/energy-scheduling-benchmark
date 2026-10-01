@@ -136,14 +136,18 @@ async def execute_test_case(
     loss_percent: float = 0.0,
     name_base: str = "admm",
     simulate_days: int = 3,
-    rho: float = 1.0,
+    rho: float = 0.1,
     max_iter: int = 2000,
     balance_tol: float = 0.01,
     strict: bool = False,
 ) -> None:
     """Run the ADMM benchmark once and write CSV + PDF outputs.
 
-    :param rho: ADMM penalty parameter.
+    :param rho: ADMM penalty parameter. Each unit's x-update moves by roughly
+        marginal_cost / rho per iteration, so with linear €/MWh costs over
+        GW-scale fleets rho = 1 converges far too slowly to separate close
+        merit-order prices (hits max_iter, up to +7 % cost on the PyPSA-Eur
+        extracts); 0.1 reaches the central-dispatch optimum.
     :param max_iter: Maximum exchange-ADMM coordinator iterations.
     :param balance_tol: Max allowed per-timestep |generation - demand| /
         demand before the finished schedule is flagged as not converged.
@@ -299,7 +303,7 @@ async def execute_test_case(
 
 def _add_admm_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--rho", type=float, default=1.0, help="ADMM penalty parameter."
+        "--rho", type=float, default=0.1, help="ADMM penalty parameter."
     )
     parser.add_argument(
         "--max-iter",
