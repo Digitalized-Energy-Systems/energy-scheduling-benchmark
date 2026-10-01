@@ -360,9 +360,8 @@ class StorageParams:
     """Storage actor parameters derived from PyPSA statics.
 
     Shared by the scenarios whose storage-parameter extraction is otherwise
-    byte-for-byte identical (consensus, ADMM, diffusion, exact diffusion).
-    DEED-ADMM's inline extraction happens to use the same defaults as this
-    helper but is not yet wired to it. FDGDM uses materially *different*
+    byte-for-byte identical (consensus, ADMM, diffusion, exact diffusion,
+    DEED-ADMM, central dispatch). FDGDM uses materially *different*
     defaults for some of these fields (``max_hours=6.0`` vs. this helper's
     ``100.0``, SOC-initial fallback ``0.0`` vs. ``0.5 * e_max``, efficiency
     fallback ``1.0`` vs. ``0.95`` — see ``fdgdm._schedule_storage_soc``);
