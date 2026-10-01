@@ -50,10 +50,11 @@ from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadAggregator,
     PowerLoadMonitoring,
     ScenarioData,
+    StorageParams,
     _clip_scenario,
-    _lookup_ts,
     build_demand_horizon,
     build_group_map,
+    build_p_max_vec,
     build_toy_network,
     build_world,
     collect_generator_refs,
@@ -156,66 +157,41 @@ async def execute_test_case(
         p_nom = float(statics.get("p_nom", 0.0))
 
         if ref.element_type == STORAGE:
-            p_min_pu = float(statics.get("p_min_pu", -1.0))
-            p_max_pu = float(statics.get("p_max_pu", 1.0))
-            p_disch = max(0.0, p_max_pu * p_nom)
-            p_chg = max(0.0, (-p_min_pu * p_nom) if p_min_pu < 0.0 else p_nom)
-            max_hours = float(statics.get("max_hours", 100.0))
-            e_max_val = max(1e-6, p_nom * max_hours)
-            eta_c = float(
-                statics.get("efficiency_store", statics.get("efficiency_charge", 0.95))
-            )
-            eta_d = float(
-                statics.get(
-                    "efficiency_dispatch", statics.get("efficiency_discharge", 0.95)
-                )
-            )
-            soc0_raw = statics.get("state_of_charge_initial", np.nan)
-            soc0_raw_f = (
-                float(soc0_raw) if np.isfinite(float(soc0_raw)) else float("nan")
-            )
-            if not np.isnan(soc0_raw_f) and soc0_raw_f > 1e-9:
-                soc0_abs = soc0_raw_f
-            else:
-                # PyPSA default is 0.0 MWh (empty); treat as "unspecified"
-                # and start at 50 % SOC so the battery can participate.
-                soc0_abs = 0.5 * e_max_val
-            soc0 = float(np.clip(soc0_abs / e_max_val, 0.0, 1.0))
+            sp = StorageParams.from_statics(statics, p_nom)
             participant = create_deed_admm_storage_participant(
                 finish_callback,
-                e_max=e_max_val,
-                p_charge_max=p_chg,
-                p_discharge_max=p_disch,
-                eta_charge=max(1e-6, eta_c),
-                eta_discharge=max(1e-6, eta_d),
-                e_initial=soc0,
+                e_max=sp.e_max,
+                p_charge_max=sp.p_charge_max,
+                p_discharge_max=sp.p_discharge_max,
+                eta_charge=sp.eta_charge,
+                eta_discharge=sp.eta_discharge,
+                e_initial=sp.e_initial,
+                marginal_cost=cost,
                 tau=horizon,
                 gamma=gamma,
                 max_iter=max_iter,
                 n_agents=n_gens,
             )
         elif ref.element_type == RENEWABLE:
-            # Availability timeseries is per-unit in PyPSA; scale by p_nom.
-            ts = _lookup_ts(scenario, ref)
-            if ts is None:
-                p_max_vec = np.full(horizon, p_nom, dtype=float)
-            else:
-                p_max_vec = np.asarray(ts.reindex(time_index), dtype=float) * p_nom
             participant = create_deed_admm_renewable_participant(
                 finish_callback,
-                p_max_timeseries=p_max_vec,
+                p_max_timeseries=build_p_max_vec(
+                    scenario, ref, statics, time_index, horizon
+                ),
                 d_i=d_i_gen,
+                marginal_cost=cost,
                 gamma=gamma,
                 max_iter=max_iter,
                 n_agents=n_gens,
             )
         else:
+            p_max_vec = build_p_max_vec(scenario, ref, statics, time_index, horizon)
             p_min_pu = float(statics.get("p_min_pu", 0.0))
-            p_min = max(0.0, p_min_pu * p_nom)
+            p_min_vec = np.minimum(max(0.0, p_min_pu * p_nom), p_max_vec)
             participant = create_deed_admm_thermal_participant(
                 finish_callback,
-                p_min=p_min,
-                p_max=max(p_min, p_nom),
+                p_min=p_min_vec,
+                p_max=p_max_vec,
                 marginal_cost=cost,
                 d_i=d_i_gen,
                 gamma=gamma,
