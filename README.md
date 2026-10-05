@@ -57,7 +57,9 @@ PyPSA `carrier` attribute.
 
 PyPSA-Eur extracts for benchmarking live in `resources/networks/` (see
 `resources/networks/print_network.py` for how to regenerate them from the
-sibling `pypsa-eur/` workflow).
+sibling `pypsa-eur/` workflow; `resources/networks/extract_lower_saxony.py`
+builds the `lower_saxony_2030.nc` regional extract — see
+`docs/lower-saxony-2030-workflow.md` in the monorepo root).
 
 ## Running the scenarios
 
@@ -73,11 +75,27 @@ Seven scenario entry points are installed:
 | `esb-fdgdm`            | Fast distributed gradient descent (Bai et al. 2022)                |
 | `esb-deed-admm`        | DEED-ADMM (Zhu et al. 2025)                                        |
 
-All seven share the same CLI flags: `--network`, `--name-base`,
-`--simulate-days`, `--delay-s` (comms delay), `--loss-percent` (packet loss,
-given as a fraction from 0 to 1, e.g. `0.05` for 5 % — despite the name, not
-0–100), `--log-level`.  Every scenario except averaging consensus requires
-lossless transport and refuses to run with `--loss-percent != 0`.
+All seven share the same CLI flags: `--network` (default `toy`),
+`--name-base`, `--simulate-days` (default `3`), `--delay-s` (comms delay,
+default `0.02`), `--loss-percent` (packet loss, given as a fraction from 0 to
+1, e.g. `0.05` for 5 % — despite the name, not 0–100; default `0.0`),
+`--log-level`, plus `--balance-tol` (max per-timestep |generation − demand| /
+demand before a finished run is flagged as not converged, default `0.01`) and
+`--strict` (exit with an error instead of writing outputs when that check
+fails).  Every scenario except averaging consensus — including central
+dispatch — requires lossless transport and refuses to run with
+`--loss-percent != 0`.
+
+Algorithm-specific flags (see `<entry-point> --help`):
+
+| Entry point           | Extra flags (defaults)                                                         |
+|-----------------------|--------------------------------------------------------------------------------|
+| `esb-consensus`       | `--max-iter 500`, `--alpha 0.2`                                                |
+| `esb-admm`            | `--rho 0.1`, `--max-iter 2000`                                                 |
+| `esb-diffusion`       | `--max-iter 2000`, `--tol 1e-3`                                                |
+| `esb-exact-diffusion` | `--weight-rule averaging`, `--max-iter 6000`, `--tol 1e-3`                     |
+| `esb-fdgdm`           | `--max-iter 300`                                                               |
+| `esb-deed-admm`       | `--gamma 0.05`, `--max-iter 500`                                               |
 
 `esb-central-dispatch` solves one LP over the whole simulated horizon, with
 perfect foresight of demand and renewable availability (the same information
@@ -99,10 +117,11 @@ python -m energy_scheduling_benchmark.scenarios.diffusion \
 
 Each run produces:
 
-* `<name>-observation.pdf` — grid of mango recordings
-* `<name>-stacked.pdf`     — stacked-area dispatch plot with demand target
-* `<name>-cost.pdf`        — cost per timestep
-* `<name>-df.csv`          — per-agent timeseries incl. a `cost:total` column
+* `<name>-df.csv`          — per-agent timeseries (one row per hourly snapshot) incl. a `cost:total` column
+* `<name>-stacked.pdf`     — generation stacked by carrier, with the demand target
+* `<name>-observation.pdf` — per-unit power as a grid of per-carrier subplots
+* `<name>-balance.pdf`     — total generation vs demand, plus the residual
+* `<name>-cost.pdf`        — dispatch cost per timestep
 
 To run all seven scenarios against the PyPSA-Eur extracts and compare total
 costs, use `../run_all_scenarios.sh` from the repo root (writes
@@ -130,7 +149,7 @@ src/energy_scheduling_benchmark/
     └── deed_admm.py            # DEED-ADMM
 ```
 
-`PyPSABehavior`, `SchedulingBehavior`, `ComponentRef`, and the component-type
+`PyPSABehavior`, `SchedulingBehavior`, `ComponentRef`, `PowerUpdateInfo`, and the component-type
 constants are defined in `mango-energy-environments` and re-exported here for
 convenience.
 
