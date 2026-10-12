@@ -83,9 +83,31 @@ the loss draws, default `0`, so lossy runs are reproducible), `--log-level`,
 plus `--balance-tol` (max per-timestep |generation − demand| / demand before a
 finished run is flagged as not converged, default `0.01`) and `--strict` (exit
 with an error instead of writing outputs when that check fails, or when the
-distributed schedule never finished).  Every scenario except averaging
-consensus — including central dispatch — requires lossless transport and
-refuses to run with `--loss-rate != 0`.
+distributed schedule never finished).
+
+### Message loss
+
+Every scenario runs under message loss (`--loss-rate`). A value that was not
+updated in time keeps its last received value, or a default if it was never
+received:
+
+* **Algorithm rounds** (consensus, diffusion, exact diffusion, FDGDM,
+  DEED-ADMM) advance when all neighbours reported *or* after `--round-timeout`
+  seconds of simulation time (default 3 × `--delay-s`); a missing neighbour
+  contributes its last value. Pairwise exchanges whose sum must be conserved
+  (FDGDM's power transfers, DEED-ADMM's ξ tracker, exact diffusion's mixing)
+  use running sums, so a lost message delays a transfer instead of losing it.
+* **ADMM** collects each round's answers with mango's `gather` and a timeout;
+  a participant that did not answer keeps its previous value.
+* **Leader**: the kick-off is acknowledged and retried; the hourly set-points
+  are applied at a deadline even if load reports are missing; lost results
+  (schedules, central dispatch's unit reports) are requested again with
+  mango's `gather` every `--result-poll-s` seconds. After `--result-retries`
+  requests a missing result is given up, the run is logged as degraded and
+  the balance check decides whether it is valid.
+
+Without loss none of this changes a run: rounds and requests complete before
+their deadlines, and results match the lossless implementation.
 
 `--loss-percent` is deprecated. It now means a real percentage (0–100, so `5`
 is 5 %) and logs a warning; earlier versions passed its value through as a

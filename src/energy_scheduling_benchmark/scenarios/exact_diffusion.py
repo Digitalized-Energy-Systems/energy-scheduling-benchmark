@@ -60,10 +60,11 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_world,
     capacity_scaled_epsilon,
     collect_generator_refs,
+    generator_agent,
     install_standard_recordings,
+    loss_tolerance,
     make_finish_callback,
     register_component_agent,
-    require_lossless_transport,
     resolve_loss_rate,
     run_scenario_main,
     write_scenario_outputs,
@@ -80,6 +81,9 @@ async def execute_test_case(
     delay_s: float = 0.02,
     loss_rate: float = 0.0,
     seed: int = 0,
+    round_timeout: float | None = None,
+    result_poll_s: float = 300.0,
+    result_retries: int = 12,
     loss_percent: float | None = None,
     name_base: str = "exact_diffusion",
     simulate_days: int = 3,
@@ -113,7 +117,12 @@ async def execute_test_case(
         check fails.
     """
     loss_rate = resolve_loss_rate(loss_rate, loss_percent)
-    require_lossless_transport(loss_rate, "Exact Diffusion")
+    lt = loss_tolerance(
+        delay_s,
+        round_timeout=round_timeout,
+        result_poll_s=result_poll_s,
+        result_retries=result_retries,
+    )
 
     if scenario is None:
         scenario = build_toy_network(periods=simulate_days * 24)
@@ -226,6 +235,7 @@ async def execute_test_case(
             diffusion_actor=actor,
             initial_lam=initial_lam,
             max_iter=max_iter,
+            round_timeout=lt.round_timeout,
             epsilon=grad_step,
             tol=tol,
             weight_rule=weight_rule,
@@ -233,7 +243,7 @@ async def execute_test_case(
 
         opt_role = DistributedOptimizationRole(participant)
 
-        agent = agent_composed_of(opt_role)
+        agent = generator_agent(opt_role)
         register_component_agent(world, agent, ref)
         gen_agents.append(agent)
 
@@ -266,6 +276,11 @@ async def execute_test_case(
         schedule_by_aid=schedule_by_aid,
         finished_message_type=ExactDiffusionFinishedInfo,
         build_start_message=build_start_message,
+        generator_addrs={a.aid: a.addr for a in gen_agents},
+        load_timeout=lt.load_timeout,
+        request_timeout=lt.request_timeout,
+        result_poll_s=lt.result_poll_s,
+        result_retries=lt.result_retries,
         demand_target=target_series,
         balance_label="Exact Diffusion",
         balance_tol=balance_tol,
@@ -342,7 +357,6 @@ def main(argv: list[str] | None = None) -> None:
         default_name_base="exact_diffusion",
         extra_args=_add_exact_diffusion_args,
         extra_kwargs=("weight_rule", "max_iter", "tol"),
-        lossless_only=True,
         with_balance_tol=True,
         argv=argv,
     )

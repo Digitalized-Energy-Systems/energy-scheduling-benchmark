@@ -72,13 +72,17 @@ class TestExecuteTestCase:
                 simulate_days=1,
             )
 
-    async def test_raises_on_lossy_transport(self, tmp_path):
-        """Diffusion's fixed-round message accounting requires lossless comms."""
-        scenario = build_toy_network(periods=24)
-        with pytest.raises(ValueError, match="lossless"):
-            await execute_test_case(
-                scenario=scenario,
-                loss_rate=0.05,
-                name_base=str(tmp_path / "diffusion"),
-                simulate_days=1,
-            )
+    async def test_runs_under_message_loss(self, tmp_path):
+        """With 5% of messages lost the run still finishes and passes the
+        power-balance check (strict): missing values are replaced by the last
+        received ones and lost results are requested again."""
+        name_base = str(tmp_path / "diffusion")
+        await execute_test_case(
+            scenario=build_toy_network(periods=24),
+            loss_rate=0.05,
+            seed=1,
+            name_base=name_base,
+            simulate_days=1,
+            strict=True,
+        )
+        assert os.path.exists(f"{name_base}-df.csv")

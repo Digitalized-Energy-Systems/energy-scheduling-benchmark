@@ -6,7 +6,6 @@ end-to-end integration smoke test of execute_test_case on the built-in toy netwo
 
 from __future__ import annotations
 
-import asyncio
 import os
 from functools import partial
 from unittest.mock import MagicMock
@@ -17,6 +16,7 @@ import pytest
 
 from energy_scheduling_benchmark.networks import ScenarioData, build_toy_network
 from energy_scheduling_benchmark.scenarios._common import (
+    GeneratorResultRole,
     _keep_hourly,
     _scalar,
     make_finish_callback,
@@ -59,20 +59,24 @@ class TestScalar:
 
 
 class TestMakeFinishCallback:
-    """_make_finish_callback stores actor.P in schedule_by_aid and notifies the leader.
+    """make_finish_callback sends actor.P to the leader and keeps it on the
+    agent's GeneratorResultRole (no shared dict between agents).
 
     The callback signature is ``(algorithm, carrier)`` where ``carrier._parent``
     is the mango Role and ``carrier._parent.context`` is the agent context.
     """
 
-    def _make_fake_carrier(self, aid: str, sends: list | None = None):
+    def _make_fake_carrier(self, aid: str, sends: list | None = None, result_role=None):
         class FakeContext:
             def __init__(self) -> None:
                 self.aid = aid
 
-            async def send_message(self, msg, addr):
+            def schedule_instant_message(self, msg, addr):
                 if sends is not None:
                     sends.append((msg, addr))
+
+            def get_role(self, cls):
+                return result_role
 
         class FakeRole:
             context = FakeContext()
@@ -82,64 +86,46 @@ class TestMakeFinishCallback:
 
         return FakeCarrier()
 
-    async def test_stores_schedule_keyed_by_aid(self):
-        schedule_by_aid: dict = {}
+    @staticmethod
+    def _algorithm(p):
         actor = MagicMock()
-        actor.P = np.array([1.0, 2.0, 3.0])
+        actor.P = p
         algorithm = MagicMock()
         algorithm.actor = actor
+        return algorithm
 
-        cb = _make_finish_callback(
-            leader_addr_ref={"addr": None}, schedule_by_aid=schedule_by_aid
-        )
-        cb(algorithm, self._make_fake_carrier("gen0"))
-
-        assert "gen0" in schedule_by_aid
-        assert np.allclose(schedule_by_aid["gen0"], [1.0, 2.0, 3.0])
-
-    async def test_stored_schedule_is_a_copy(self):
-        schedule_by_aid: dict = {}
-        original = np.array([1.0, 2.0])
-        actor = MagicMock()
-        actor.P = original
-        algorithm = MagicMock()
-        algorithm.actor = actor
-
-        cb = _make_finish_callback(
-            leader_addr_ref={"addr": None}, schedule_by_aid=schedule_by_aid
-        )
-        cb(algorithm, self._make_fake_carrier("gen0"))
-        original[0] = 99.0
-        assert schedule_by_aid["gen0"][0] == pytest.approx(1.0)
-
-    async def test_notifies_leader_when_addr_is_set(self):
+    async def test_schedule_is_sent_to_the_leader(self):
         sends: list = []
-        actor = MagicMock()
-        actor.P = np.array([0.0])
-        algorithm = MagicMock()
-        algorithm.actor = actor
         leader_addr = ("localhost", 5555)
-
-        cb = _make_finish_callback(
-            leader_addr_ref={"addr": leader_addr}, schedule_by_aid={}
-        )
-        cb(algorithm, self._make_fake_carrier("gen0", sends=sends))
-        await asyncio.sleep(0)
+        cb = _make_finish_callback(leader_addr_ref={"addr": leader_addr})
+        cb(self._algorithm(np.array([1.0, 2.0, 3.0])), self._make_fake_carrier("gen0", sends))
 
         assert len(sends) == 1
-        assert isinstance(sends[0][0], FDGDMFinishedInfo)
-        assert sends[0][1] == leader_addr
+        msg, addr = sends[0]
+        assert isinstance(msg, FDGDMFinishedInfo)
+        assert msg.aid == "gen0"
+        assert np.allclose(msg.schedule, [1.0, 2.0, 3.0])
+        assert addr == leader_addr
+
+    async def test_sent_schedule_is_a_copy(self):
+        sends: list = []
+        original = np.array([1.0, 2.0])
+        cb = _make_finish_callback(leader_addr_ref={"addr": ("localhost", 5555)})
+        cb(self._algorithm(original), self._make_fake_carrier("gen0", sends))
+        original[0] = 99.0
+        assert sends[0][0].schedule[0] == pytest.approx(1.0)
+
+    async def test_schedule_is_kept_on_the_result_role(self):
+        result_role = GeneratorResultRole()
+        cb = _make_finish_callback(leader_addr_ref={"addr": None})
+        cb(self._algorithm(np.array([4.0])), self._make_fake_carrier("gen0", result_role=result_role))
+        assert np.allclose(result_role.schedule, [4.0])
 
     async def test_no_notification_when_leader_addr_is_none(self):
-        actor = MagicMock()
-        actor.P = np.array([1.0])
-        algorithm = MagicMock()
-        algorithm.actor = actor
-
-        cb = _make_finish_callback(
-            leader_addr_ref={"addr": None}, schedule_by_aid={}
-        )
-        cb(algorithm, self._make_fake_carrier("gen0"))
+        sends: list = []
+        cb = _make_finish_callback(leader_addr_ref={"addr": None})
+        cb(self._algorithm(np.array([1.0])), self._make_fake_carrier("gen0", sends))
+        assert sends == []
 
 
 class TestFDGDMScenarioIntegration:
@@ -272,17 +258,20 @@ class TestFDGDMScenarioIntegration:
             f"Mean generation-demand gap {gap.mean():.1f} MW is too large"
         )
 
-    async def test_raises_on_lossy_transport(self, tmp_path):
-        """FDGDM advances a round only when every neighbour replied; packet
-        loss would deadlock the run, so the scenario must refuse to start."""
-        scenario = build_toy_network(periods=24)
-        with pytest.raises(ValueError, match="lossless"):
-            await execute_test_case(
-                scenario=scenario,
-                loss_rate=0.05,
-                name_base=str(tmp_path / "fdgdm"),
-                simulate_days=1,
-            )
+    async def test_runs_under_message_loss(self, tmp_path):
+        """With 5% of messages lost the run still finishes and passes the
+        power-balance check (strict): missing values are replaced by the last
+        received ones and lost results are requested again."""
+        name_base = str(tmp_path / "fdgdm")
+        await execute_test_case(
+            scenario=build_toy_network(periods=24),
+            loss_rate=0.05,
+            seed=1,
+            name_base=name_base,
+            simulate_days=1,
+            strict=True,
+        )
+        assert os.path.exists(f"{name_base}-df.csv")
 
 
 # ---------------------------------------------------------------------------

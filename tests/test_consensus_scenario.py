@@ -75,15 +75,19 @@ class TestConsensusUnderLoss:
         b = await self._run(tmp_path, "b", loss_rate=0.05, seed=1)
         pd.testing.assert_frame_equal(a, b)
 
-    async def test_unfinished_run_is_reported(self, tmp_path, caplog):
-        # With every message lost the kick-off never arrives, so no generator
-        # finishes; this used to write outputs without any error.
+    async def test_dead_run_is_reported_as_degraded(self, tmp_path, caplog):
+        # With every message lost the kick-off is never acknowledged and no
+        # generator ever answers; the leader gives up after its polls, marks
+        # the run degraded and the balance check fails (this used to write
+        # outputs without any error).
         await self._run(tmp_path, "lost", loss_rate=1.0)
-        assert "never finished" in caplog.text
+        assert "kick-off was never acknowledged" in caplog.text
+        assert "degraded" in caplog.text
         assert "thermal0" in caplog.text
+        assert "violate power balance" in caplog.text
 
-    async def test_unfinished_run_raises_under_strict(self, tmp_path):
-        with pytest.raises(RuntimeError, match="never verified"):
+    async def test_dead_run_raises_under_strict(self, tmp_path):
+        with pytest.raises(RuntimeError, match="power balance check failed"):
             await self._run(tmp_path, "strict", loss_rate=1.0, strict=True)
 
     async def test_deprecated_loss_percent_keyword(self, tmp_path):

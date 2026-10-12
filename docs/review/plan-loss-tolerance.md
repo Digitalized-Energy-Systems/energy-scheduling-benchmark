@@ -13,6 +13,58 @@ Background and per-algorithm analysis: [`mango-utilisation-review.md`](mango-uti
 Repos: `distributed-resource-optimization` (Phases 1–3), `energy-scheduling-benchmark`
 (Phases 4–5). One branch per repo; no pushes.
 
+## Implementation status (2026-10-12)
+
+Implemented on branch `loss-tolerance` of `distributed-resource-optimization`
+and this branch of `energy-scheduling-benchmark`.
+
+* **Phase 1, carrier:** `Carrier.request_all/schedule_after/now/sender_of/address`
+  with defaults for existing carriers. `MangoCarrier.request_all` is mango's
+  `open_gather` with per-receiver content and a scheduler-clock timeout;
+  replies use `reply_to`; all work runs as mango scheduler tasks; orphaned
+  late replies are dropped. `SimpleCarrier` has loss injection.
+  `RoleLocalMessage` marks messages for other roles of a generator agent.
+* **Phase 2, round helpers** (`algorithm/_rounds.py`): `RoundBuffer`,
+  `RoundDeadline`, and `EdgeFlows` (the running-sum protocol). EdgeFlows
+  turned out to be needed for **exact diffusion** too, not only FDGDM and
+  DEED-ADMM: replacing a missing value with a stale one broke its sum
+  invariant and biased the result (generation 23.5 MW for 20 MW demand in a
+  test); with running sums it matches the lossless dispatch.
+* **Phase 3:** ADMM (3.1), consensus (3.2), diffusion and exact diffusion
+  (3.3/3.4, sharing one `_DiffusionRounds` base), FDGDM (3.5), DEED-ADMM
+  (3.6). Additions found during implementation: a participant that stops on
+  diffusion's all-converged criterion notifies its neighbours; a finished
+  DEED-ADMM agent ignores late messages of its run; a firing deadline must not
+  cancel itself (it dropped `SimpleCarrier`'s in-flight count to zero).
+  Single-step end-of-run confirmation of the running sums (3.5, step 5) is
+  not implemented; flows in flight at the end are lost (tiny once converged).
+* **Phase 4:** `GeneratorResultRole`, schedule carried in the finished
+  message, acknowledged kick-off (`KickOff`), hourly deadlines armed for every
+  hour, leader polls missing results with `gather`, `--round-timeout`,
+  `--result-poll-s`, `--result-retries`; ADMM's coordinator is started locally
+  and its results go to the aggregator directly; central dispatch requests
+  missing unit reports. All `require_lossless_transport` guards are removed.
+  Open questions answered with the proposals: a load never heard of counts
+  with the hour's forecast total; silent participants keep counting with
+  their stale value; the leader still applies the set-points.
+* **Not done:** `--load-timeout` / `--max-missing-rounds` as CLI flags (both
+  exist as parameters), per-run output metadata and the `compare_costs.py`
+  loss column (4.6), the benchmark sweep on a PyPSA-Eur network (5.5).
+
+Verification (toy network, mango `fix-log-messages-opt-out`):
+
+* Without loss, all seven scenarios give the same costs and balance gaps as
+  before; CSVs are bit-identical for central dispatch, FDGDM and ADMM, and
+  within 6e-10 MW for the others (reordered float additions).
+* With `--loss-rate 0.05` and `0.2` (seeds 1, 2) every scenario finishes;
+  all except consensus pass the 1 % balance check (gaps ≤ 0.18 %) at costs
+  within 0.1 % of lossless; central dispatch and FDGDM reach exactly the
+  lossless result. Consensus still fails its balance check with or without
+  loss (the separate tuning bug from the review).
+* Tests: 260 in `distributed-resource-optimization` (incl. new loss tests on
+  `SimpleCarrier` and in a stepped mango world), 144 in the benchmark (each
+  scenario has a strict 5 %-loss test).
+
 ## Design in one page
 
 There are two message patterns, and they need different tools:

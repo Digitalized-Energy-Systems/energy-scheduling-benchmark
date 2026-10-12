@@ -57,7 +57,9 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_world,
     capacity_scaled_epsilon,
     collect_generator_refs,
+    generator_agent,
     install_standard_recordings,
+    loss_tolerance,
     make_finish_callback,
     register_component_agent,
     resolve_loss_rate,
@@ -79,6 +81,9 @@ async def execute_test_case(
     delay_s: float = 0.02,
     loss_rate: float = 0.0,
     seed: int = 0,
+    round_timeout: float | None = None,
+    result_poll_s: float = 300.0,
+    result_retries: int = 12,
     loss_percent: float | None = None,
     name_base: str = "consensus",
     simulate_days: int = 3,
@@ -109,6 +114,12 @@ async def execute_test_case(
 
     scenario = _clip_scenario(scenario, simulate_days)
     loss_rate = resolve_loss_rate(loss_rate, loss_percent)
+    lt = loss_tolerance(
+        delay_s,
+        round_timeout=round_timeout,
+        result_poll_s=result_poll_s,
+        result_retries=result_retries,
+    )
     world, behavior = build_world(
         scenario, delay_s=delay_s, loss_rate=loss_rate, seed=seed
     )
@@ -206,6 +217,7 @@ async def execute_test_case(
             finish_callback=finish_callback,
             consensus_actor=actor,
             max_iter=max_iter,
+            round_timeout=lt.round_timeout,
             alpha=alpha,
             is_leader=(gen_idx == 0),
             leader_gain=leader_gain,
@@ -213,7 +225,7 @@ async def execute_test_case(
 
         opt_role = DistributedOptimizationRole(participant)
 
-        agent = agent_composed_of(opt_role)
+        agent = generator_agent(opt_role)
         register_component_agent(world, agent, ref)
         gen_agents.append(agent)
 
@@ -246,6 +258,11 @@ async def execute_test_case(
         schedule_by_aid=schedule_by_aid,
         finished_message_type=ConsensusFinishedInfo,
         build_start_message=build_start_message,
+        generator_addrs={a.aid: a.addr for a in gen_agents},
+        load_timeout=lt.load_timeout,
+        request_timeout=lt.request_timeout,
+        result_poll_s=lt.result_poll_s,
+        result_retries=lt.result_retries,
         demand_target=target_series,
         balance_label="Consensus",
         balance_tol=balance_tol,

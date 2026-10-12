@@ -9,7 +9,6 @@ must take part.
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from energy_scheduling_benchmark.networks import build_toy_network
 from energy_scheduling_benchmark.scenarios.central_dispatch import execute_test_case
@@ -21,7 +20,7 @@ class TestExecuteTestCase:
         name_base = str(tmp_path / "central")
         await execute_test_case(
             scenario=scenario,
-            delay_s=0.0,
+            delay_s=kwargs.pop("delay_s", 0.0),
             loss_rate=kwargs.pop("loss_rate", 0.0),
             name_base=name_base,
             simulate_days=1,
@@ -68,8 +67,8 @@ class TestExecuteTestCase:
         assert "P:batt0" in df.columns
         assert df["P:batt0"].abs().max() <= 20.0 + 1e-6
 
-    async def test_raises_on_lossy_transport(self, tmp_path):
-        """Every unit reports exactly once; a dropped report would stall the
-        solve, so the scenario must refuse to start under packet loss."""
-        with pytest.raises(ValueError, match="lossless"):
-            await self._run(tmp_path, loss_rate=0.05)
+    async def test_runs_under_message_loss(self, tmp_path):
+        """A lost unit report is requested again (mango gather), so with 5%
+        message loss the LP still solves with every unit and balances."""
+        df = await self._run(tmp_path, delay_s=0.02, loss_rate=0.05, seed=1, strict=True)
+        assert len(df) == 24

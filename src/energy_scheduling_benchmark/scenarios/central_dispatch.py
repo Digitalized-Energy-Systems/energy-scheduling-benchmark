@@ -24,12 +24,12 @@ is a lower bound for theirs.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+from distributed_resource_optimization.carrier.mango import RoleLocalMessage
 from mango import AgentAddress, Role, RoleAgent, agent_composed_of
 from mango.simulation.world import discrete_step_until
 
@@ -48,8 +48,8 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_world,
     collect_generator_refs,
     install_standard_recordings,
+    loss_tolerance,
     register_component_agent,
-    require_lossless_transport,
     resolve_loss_rate,
     run_scenario_main,
     write_scenario_outputs,
@@ -83,8 +83,13 @@ class UnitReport:
 # ---------------------------------------------------------------------------
 
 
+class ReportRequest(RoleLocalMessage):
+    """Leader → unit: send your :class:`UnitReport` (its first one was lost)."""
+
+
 class UnitReporter(Role):
-    """Sends the unit's :class:`UnitReport` to the leader once on ``on_ready``.
+    """Sends the unit's :class:`UnitReport` to the leader once on ``on_ready``,
+    and again whenever the leader asks for it (:class:`ReportRequest`).
 
     Set-points are applied by the leader through the environment's
     ``regulate`` action, so this role has nothing else to do; it also marks
@@ -96,8 +101,16 @@ class UnitReporter(Role):
         self._report = report
         self._leader = leader
 
+    def setup(self) -> None:
+        self.context.subscribe_message(
+            self, self._on_request, lambda c, m: isinstance(c, ReportRequest)
+        )
+
     def on_ready(self) -> None:
-        asyncio.create_task(self.context.send_message(self._report, self._leader))
+        self.context.schedule_instant_message(self._report, self._leader)
+
+    def _on_request(self, content: ReportRequest, meta: dict) -> None:
+        self.context.schedule_instant_task(self.context.reply_to(self._report, meta))
 
 
 class CentralDispatchAggregator(PowerLoadAggregator):
@@ -118,8 +131,21 @@ class CentralDispatchAggregator(PowerLoadAggregator):
         self.objective: float | None = None
 
     def on_ready(self) -> None:
-        # Nothing to trigger: units report on their own.
-        pass
+        # Nothing to trigger: units report on their own.  Ask the ones whose
+        # report has not arrived after the poll interval (lost message).
+        self._arm_hour_deadlines()
+        self._schedule_result_poll(1)
+
+    def _result_request(self) -> ReportRequest:
+        return ReportRequest()
+
+    def _give_up(self, missing: list[str]) -> None:
+        """Solve without the units that never reported (degraded run)."""
+        self._solve()
+        for aid in missing:
+            PowerLoadAggregator._handle_finished(
+                self, UnitReport(aid=aid, cost=0.0), {}
+            )
 
     def _handle_finished(self, message: UnitReport, meta: dict) -> None:
         self._reports[message.aid] = message
@@ -183,6 +209,9 @@ async def execute_test_case(
     delay_s: float = 0.02,
     loss_rate: float = 0.0,
     seed: int = 0,
+    round_timeout: float | None = None,
+    result_poll_s: float = 300.0,
+    result_retries: int = 12,
     loss_percent: float | None = None,
     name_base: str = "central_dispatch",
     simulate_days: int = 3,
@@ -196,9 +225,13 @@ async def execute_test_case(
     :param strict: If true, raise instead of writing outputs when the
         power-balance check fails.
     """
-    # Each unit reports exactly once, so a dropped report would stall the solve.
     loss_rate = resolve_loss_rate(loss_rate, loss_percent)
-    require_lossless_transport(loss_rate, "Central dispatch")
+    lt = loss_tolerance(
+        delay_s,
+        round_timeout=round_timeout,
+        result_poll_s=result_poll_s,
+        result_retries=result_retries,
+    )
 
     if scenario is None:
         scenario = build_toy_network(periods=simulate_days * 24)
@@ -225,6 +258,7 @@ async def execute_test_case(
     register_component_agent(world, leader_agent, load_refs[0])
     leader_addr = leader_agent.addr
 
+    unit_addrs: dict[str, AgentAddress] = {}  # filled as the units register
     aggregator = CentralDispatchAggregator(
         behavior=behavior,
         number_loads=len(load_refs),
@@ -234,6 +268,11 @@ async def execute_test_case(
         demand_target=demand.target_series,
         balance_label="central dispatch",
         balance_tol=balance_tol,
+        generator_addrs=unit_addrs,
+        load_timeout=lt.load_timeout,
+        request_timeout=lt.request_timeout,
+        result_poll_s=lt.result_poll_s,
+        result_retries=lt.result_retries,
     )
     leader_agent.add_role(aggregator)
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
@@ -275,6 +314,7 @@ async def execute_test_case(
 
         agent = agent_composed_of(UnitReporter(report, leader_addr))
         register_component_agent(world, agent, ref)
+        unit_addrs[ref.component_id] = agent.addr
 
     install_standard_recordings(world, behavior, role_cls=UnitReporter)
 
@@ -305,7 +345,6 @@ def main(argv: list[str] | None = None) -> None:
         execute_test_case,
         doc=__doc__,
         default_name_base="central_dispatch",
-        lossless_only=True,
         with_balance_tol=True,
         argv=argv,
     )
