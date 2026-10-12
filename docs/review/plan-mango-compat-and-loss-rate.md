@@ -5,30 +5,39 @@ Scope: the two blocking findings of
 §2.2 loss configuration). The broader loss-tolerance redesign (§2.5–2.6) is out of scope
 here; it builds on this plan.
 
+**This plan does not use mango's `gather`.** It only makes the benchmark run on the target
+mango branch and makes the loss setting correct and reproducible; with it, lossy runs are
+*configurable*, but the algorithms still cannot *survive* lost messages. `gather` belongs
+to the follow-up loss-tolerance plan (review §2.6): coordinator-style steps (ADMM
+x-update, end-of-run schedule collection, load polling) via `gather`/`open_gather` with
+"keep last value, else default"; peer-to-peer rounds via per-neighbour last values plus
+scheduler-clock round deadlines, because `gather` (request/reply) does not fit symmetric
+broadcast rounds.
+
 Baseline (this branch, `b6da45d`, installed mango checkout): `pytest tests` →
 **98 passed, 27 failed**, all 27 with
 `TypeError: create_world() got an unexpected keyword argument 'record_messages'`. Once
-that is fixed, the same tests hit `KeyError: 'id'` (§2.1 of the review).
+mango is on the target branch (A0), the same tests hit `KeyError: 'id'` (§2.1 of the review).
 
 Repos touched: `mango-energy-environments` (A1), `energy-scheduling-benchmark` (A2–A5,
-B1–B6), optionally `mango` (A0). One branch per repo; no pushes.
+B1–B6); `mango` only switches its checkout to `fix-log-messages-opt-out` (A0). One
+branch per repo; no pushes.
 
 ---
 
 ## Part A: mango compatibility
 
-### A0. Decide the mango target (decision, no code)
+### A0. Mango target (decided)
 
-* Target mango `development` (`a8bff6e` or later). It has `gather`/conversations (needed
-  for the later loss-tolerance work) and the auto-install behaviour of
-  `world.register`.
-* `record_messages` exists only on the unmerged mango branch `fix-log-messages-opt-out`.
-  Recommended: get it merged upstream; until then, A3 makes the benchmark work with and
-  without it.
-* **Open question for you:** is the mango checkout in this workspace meant to track
-  `development`, or a local integration branch? The installed one is on
-  `fix-log-messages-opt-out-old`, which has neither `record_messages` nor a stable
-  relationship to `development`.
+* **Target: mango branch `fix-log-messages-opt-out`.** Verified on that branch:
+  `create_world(..., record_messages=True, record_message_content=False)`,
+  `gather`/`open_gather`/conversations (needed for the later loss-tolerance work), and
+  the auto-install of `world.register` into the environment (so A1/A2 are still
+  required).
+* Switch the workspace's mango checkout from `fix-log-messages-opt-out-old` to
+  `fix-log-messages-opt-out` (the editable install in `.venv` follows the checkout; no
+  reinstall needed). Done by you or explicitly in the implementation step, since it changes
+  the shared mango working copy.
 
 ### A1. `mango-energy-environments`: make `install` tolerate auto-install
 
@@ -75,34 +84,19 @@ mango now calls `environment.install(agent, agent_id=aid, **install_kwargs)` for
 4. Check that nothing relies on the install happening *after* `register` returns (e.g.
    `leader_agent.addr` is read right after `register`, which is unaffected).
 
-### A3. Benchmark: `record_messages` with and without upstream support
+### A3. Benchmark: `record_messages`
 
-In `build_world`:
-
-```python
-import inspect
-kwargs = {}
-if "record_messages" in inspect.signature(create_world).parameters:
-    kwargs["record_messages"] = False
-world = create_world(start_time=0.0, communication_sim=com_sim,
-                     environment=DefaultEnvironment(behavior=behavior), **kwargs)
-if not kwargs:
-    world.recorded_messages = _DiscardingList()   # list whose append() is a no-op
-```
-
-* `world.recorded_messages` has a setter in current mango and is the list
-  `SimulationContainer` appends to, so the fallback keeps memory flat (hpc/README:
-  2.5 GB → 0.36 GB on `base_s_5_elec_2019`).
-* No scenario reads `recorded_messages`; add a comment saying so, since mango's
-  `msg_count` recorders would read 0.
-* Remove the fallback once the opt-out is merged and pinned (A4).
+No code change: `build_world` already calls `create_world(..., record_messages=False)`,
+which the target branch supports. (A version-detecting fallback is unnecessary now that
+the branch is fixed; revisit only if older mango versions must stay supported.)
 
 ### A4. Pin the dependency
 
-* `pyproject.toml`: raise `mango-agents>=2.1` to the first release with auto-install (and
-  later `record_messages`). Until a release exists, keep the editable path source and add a
-  short note on the required mango commit/branch to `README.md` and `hpc/README.md` (fix the
-  branch name there: `record-messages-opt-out` → whatever is merged).
+* `pyproject.toml`: keep the editable path source (`tool.uv.sources`); raise
+  `mango-agents>=2.1` to the first release that contains `fix-log-messages-opt-out` once
+  it is released.
+* `README.md` and `hpc/README.md`: state that mango must be on `fix-log-messages-opt-out`
+  (hpc/README currently names `record-messages-opt-out`, which is wrong).
 * Root `CLAUDE.md`: mention the register-with-`id` pattern under "How a scenario runs"
   (step 4).
 
@@ -114,7 +108,7 @@ if not kwargs:
 3. Toy runs of all seven entry points; lossless balance gaps should match the review's
    table (diffusion 0.041 %, exact diffusion 0.170 %, FDGDM 0.000 %, DEED-ADMM 0.003 %,
    ADMM 0.012 %; consensus still fails at 94.4 %, a separate bug).
-4. One `base_s_5_elec_2019` 1-day consensus run: peak memory ≈ 0.36 GB (A3 fallback works).
+4. One `base_s_5_elec_2019` 1-day consensus run: peak memory ≈ 0.36 GB (`record_messages=False` takes effect).
 
 ---
 
@@ -201,10 +195,10 @@ Implementation for option 1:
 
 | Step | Repo | Effort | Depends on |
 |---|---|---|---|
-| A0 | — | decision | — |
+| A0 | mango (checkout switch) | XS | — |
 | A1 | mango-energy-environments | S | A0 |
 | A2 | benchmark | S (mechanical) | A1 |
-| A3 | benchmark | S | — |
+| A3 | — | none (already done) | A0 |
 | A4 | benchmark (+ docs) | XS | A0 |
 | A5 | all | S | A1–A4 |
 | B1 | benchmark | M | decision in B1 |
