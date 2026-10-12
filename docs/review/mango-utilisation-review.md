@@ -7,7 +7,8 @@ Date: 2026-10-12. Reviewed state: `energy-scheduling-benchmark` @ `b6da45d`
 `development` (`a8bff6e`) and its docs (<https://mango-agents.readthedocs.io/en/development/>).
 
 The fix plan for the two blocking issues (§2.1, §2.2) is in
-[`plan-mango-compat-and-loss-rate.md`](plan-mango-compat-and-loss-rate.md).
+[`plan-mango-compat-and-loss-rate.md`](plan-mango-compat-and-loss-rate.md); the
+loss-tolerance plan (§2.5–2.6) is in [`plan-loss-tolerance.md`](plan-loss-tolerance.md).
 
 ## 1. What mango `development` offers that matters here
 

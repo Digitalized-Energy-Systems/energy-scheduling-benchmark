@@ -209,4 +209,4 @@ Implementation for option 1:
 Follow-ups outside this plan: the consensus balance bug at 0 % loss, and the
 loss-tolerance redesign (carrier scheduler integration, `gather` for coordinator steps,
 `NeighbourState` + round deadlines, running sums for FDGDM/DEED-ADMM), both described in
-the review.
+the review. The loss-tolerance plan is in [`plan-loss-tolerance.md`](plan-loss-tolerance.md).
