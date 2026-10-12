@@ -180,7 +180,7 @@ class TestADMMScenarioIntegration:
         await execute_test_case(
             scenario=scenario,
             delay_s=0.0,
-            loss_percent=0.0,
+            loss_rate=0.0,
             name_base=name_base,
             simulate_days=1,
         )
@@ -191,7 +191,7 @@ class TestADMMScenarioIntegration:
         await execute_test_case(
             scenario=scenario,
             delay_s=0.0,
-            loss_percent=0.0,
+            loss_rate=0.0,
             name_base=name_base,
             simulate_days=1,
         )
@@ -203,7 +203,7 @@ class TestADMMScenarioIntegration:
         await execute_test_case(
             scenario=scenario,
             delay_s=0.0,
-            loss_percent=0.0,
+            loss_rate=0.0,
             name_base=name_base,
             simulate_days=1,
         )
@@ -237,7 +237,7 @@ class TestADMMScenarioIntegration:
         await execute_test_case(
             scenario=scenario,
             delay_s=0.0,
-            loss_percent=0.0,
+            loss_rate=0.0,
             name_base=name_base,
             simulate_days=1,
         )
@@ -255,7 +255,7 @@ class TestADMMScenarioIntegration:
         await execute_test_case(
             scenario=scenario,
             delay_s=0.0,
-            loss_percent=0.0,
+            loss_rate=0.0,
             name_base=name_base,
             simulate_days=1,
         )
@@ -273,7 +273,7 @@ class TestADMMScenarioIntegration:
         await execute_test_case(
             scenario=scenario,
             delay_s=0.0,
-            loss_percent=0.0,
+            loss_rate=0.0,
             name_base=name_base,
             simulate_days=1,
         )
@@ -300,7 +300,7 @@ class TestADMMScenarioIntegration:
         with pytest.raises(ValueError, match="lossless"):
             await execute_test_case(
                 scenario=scenario,
-                loss_percent=5.0,
+                loss_rate=0.05,
                 name_base=str(tmp_path / "admm"),
                 simulate_days=1,
             )

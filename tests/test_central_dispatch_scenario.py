@@ -22,7 +22,7 @@ class TestExecuteTestCase:
         await execute_test_case(
             scenario=scenario,
             delay_s=0.0,
-            loss_percent=kwargs.pop("loss_percent", 0.0),
+            loss_rate=kwargs.pop("loss_rate", 0.0),
             name_base=name_base,
             simulate_days=1,
             **kwargs,
@@ -72,4 +72,4 @@ class TestExecuteTestCase:
         """Every unit reports exactly once; a dropped report would stall the
         solve, so the scenario must refuse to start under packet loss."""
         with pytest.raises(ValueError, match="lossless"):
-            await self._run(tmp_path, loss_percent=5.0)
+            await self._run(tmp_path, loss_rate=0.05)

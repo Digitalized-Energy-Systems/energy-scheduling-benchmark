@@ -48,7 +48,9 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_world,
     collect_generator_refs,
     install_standard_recordings,
+    register_component_agent,
     require_lossless_transport,
+    resolve_loss_rate,
     run_scenario_main,
     write_scenario_outputs,
 )
@@ -179,7 +181,9 @@ async def execute_test_case(
     *,
     scenario: ScenarioData | None = None,
     delay_s: float = 0.02,
-    loss_percent: float = 0.0,
+    loss_rate: float = 0.0,
+    seed: int = 0,
+    loss_percent: float | None = None,
     name_base: str = "central_dispatch",
     simulate_days: int = 3,
     balance_tol: float = 0.01,
@@ -193,13 +197,16 @@ async def execute_test_case(
         power-balance check fails.
     """
     # Each unit reports exactly once, so a dropped report would stall the solve.
-    require_lossless_transport(loss_percent, "Central dispatch")
+    loss_rate = resolve_loss_rate(loss_rate, loss_percent)
+    require_lossless_transport(loss_rate, "Central dispatch")
 
     if scenario is None:
         scenario = build_toy_network(periods=simulate_days * 24)
 
     scenario = _clip_scenario(scenario, simulate_days)
-    world, behavior = build_world(scenario, delay_s=delay_s, loss_percent=loss_percent)
+    world, behavior = build_world(
+        scenario, delay_s=delay_s, loss_rate=loss_rate, seed=seed
+    )
 
     load_refs = behavior.get_components_by_type([LOAD])
     if not load_refs:
@@ -215,8 +222,7 @@ async def execute_test_case(
 
     # --- Leader agent (sits on the first load, like the distributed scenarios) ---
     leader_agent = RoleAgent()
-    world.register(leader_agent, suggested_aid=load_refs[0].component_id)
-    world.environment.install(leader_agent, id=load_refs[0])
+    register_component_agent(world, leader_agent, load_refs[0])
     leader_addr = leader_agent.addr
 
     aggregator = CentralDispatchAggregator(
@@ -236,8 +242,7 @@ async def execute_test_case(
         agent = agent_composed_of(
             PowerLoadMonitoring(behavior=behavior, target=leader_addr)
         )
-        world.register(agent, suggested_aid=ref.component_id)
-        world.environment.install(agent, id=ref)
+        register_component_agent(world, agent, ref)
 
     # --- One reporting agent per generator / storage unit ---
     cost_by_aid: dict[str, float] = {}
@@ -269,8 +274,7 @@ async def execute_test_case(
             )
 
         agent = agent_composed_of(UnitReporter(report, leader_addr))
-        world.register(agent, suggested_aid=ref.component_id)
-        world.environment.install(agent, id=ref)
+        register_component_agent(world, agent, ref)
 
     install_standard_recordings(world, behavior, role_cls=UnitReporter)
 

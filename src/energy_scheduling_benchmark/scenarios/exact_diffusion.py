@@ -62,7 +62,9 @@ from energy_scheduling_benchmark.scenarios._common import (
     collect_generator_refs,
     install_standard_recordings,
     make_finish_callback,
+    register_component_agent,
     require_lossless_transport,
+    resolve_loss_rate,
     run_scenario_main,
     write_scenario_outputs,
 )
@@ -76,7 +78,9 @@ async def execute_test_case(
     *,
     scenario: ScenarioData | None = None,
     delay_s: float = 0.02,
-    loss_percent: float = 0.0,
+    loss_rate: float = 0.0,
+    seed: int = 0,
+    loss_percent: float | None = None,
     name_base: str = "exact_diffusion",
     simulate_days: int = 3,
     weight_rule: str = "averaging",
@@ -108,13 +112,16 @@ async def execute_test_case(
         If true, raise instead of writing outputs when the power-balance
         check fails.
     """
-    require_lossless_transport(loss_percent, "Exact Diffusion")
+    loss_rate = resolve_loss_rate(loss_rate, loss_percent)
+    require_lossless_transport(loss_rate, "Exact Diffusion")
 
     if scenario is None:
         scenario = build_toy_network(periods=simulate_days * 24)
 
     scenario = _clip_scenario(scenario, simulate_days)
-    world, behavior = build_world(scenario, delay_s=delay_s, loss_percent=loss_percent)
+    world, behavior = build_world(
+        scenario, delay_s=delay_s, loss_rate=loss_rate, seed=seed
+    )
 
     # ------------------------------------------------------------------
     # Vectorise across the full load horizon
@@ -227,8 +234,7 @@ async def execute_test_case(
         opt_role = DistributedOptimizationRole(participant)
 
         agent = agent_composed_of(opt_role)
-        world.register(agent, suggested_aid=ref.component_id)
-        world.environment.install(agent, id=ref)
+        register_component_agent(world, agent, ref)
         gen_agents.append(agent)
 
     if not gen_agents:
@@ -236,8 +242,7 @@ async def execute_test_case(
 
     # -- Load agents (two-pass: register leader first so its addr is known) --
     leader_agent = RoleAgent()
-    world.register(leader_agent, suggested_aid=load_refs[0].component_id)
-    world.environment.install(leader_agent, id=load_refs[0])
+    register_component_agent(world, leader_agent, load_refs[0])
     leader_addr = leader_agent.addr
     leader_addr_ref["addr"] = leader_addr
 
@@ -273,8 +278,7 @@ async def execute_test_case(
         agent = agent_composed_of(
             PowerLoadMonitoring(behavior=behavior, target=leader_addr)
         )
-        world.register(agent, suggested_aid=ref.component_id)
-        world.environment.install(agent, id=ref)
+        register_component_agent(world, agent, ref)
 
     # Fully-connected exact-diffusion topology across all generator agents.
     # Exact Diffusion requires a degree-regular graph (all nodes share the

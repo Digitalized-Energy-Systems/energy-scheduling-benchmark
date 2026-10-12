@@ -77,14 +77,23 @@ Seven scenario entry points are installed:
 
 All seven share the same CLI flags: `--network` (default `toy`),
 `--name-base`, `--simulate-days` (default `3`), `--delay-s` (comms delay,
-default `0.02`), `--loss-percent` (packet loss, given as a fraction from 0 to
-1, e.g. `0.05` for 5 % — despite the name, not 0–100; default `0.0`),
-`--log-level`, plus `--balance-tol` (max per-timestep |generation − demand| /
-demand before a finished run is flagged as not converged, default `0.01`) and
-`--strict` (exit with an error instead of writing outputs when that check
-fails).  Every scenario except averaging consensus — including central
-dispatch — requires lossless transport and refuses to run with
-`--loss-percent != 0`.
+default `0.02`), `--loss-rate` (probability that a message is lost, a
+fraction from 0 to 1, e.g. `0.05` for 5 %; default `0`), `--seed` (seed for
+the loss draws, default `0`, so lossy runs are reproducible), `--log-level`,
+plus `--balance-tol` (max per-timestep |generation − demand| / demand before a
+finished run is flagged as not converged, default `0.01`) and `--strict` (exit
+with an error instead of writing outputs when that check fails, or when the
+distributed schedule never finished).  Every scenario except averaging
+consensus — including central dispatch — requires lossless transport and
+refuses to run with `--loss-rate != 0`.
+
+`--loss-percent` is deprecated. It now means a real percentage (0–100, so `5`
+is 5 %) and logs a warning; earlier versions passed its value through as a
+fraction. Use `--loss-rate` instead.
+
+The scenarios need mango from branch `fix-log-messages-opt-out`: it provides
+`create_world(record_messages=...)`, and its `world.register(agent, ..., id=ref)`
+installs the agent in the environment in the same call.
 
 Algorithm-specific flags (see `<entry-point> --help`):
 

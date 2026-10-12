@@ -15,6 +15,8 @@ import argparse
 import asyncio
 import logging
 import math
+import random
+import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from dataclasses import replace as _dataclass_replace
@@ -60,6 +62,8 @@ __all__ = [
     "resolve_scenario",
     "build_behavior",
     "build_world",
+    "register_component_agent",
+    "resolve_loss_rate",
     "_clip_scenario",
     "_lookup_ts",
     "_scalar",
@@ -113,8 +117,42 @@ def build_behavior(scenario: ScenarioData) -> PyPSABehavior:
     return PyPSABehavior.from_scenario(scenario)
 
 
+def resolve_loss_rate(
+    loss_rate: float = 0.0, loss_percent: float | None = None
+) -> float:
+    """Return the message-loss probability (a fraction in ``[0, 1]``).
+
+    *loss_percent* is the deprecated way to pass it, as a real percentage
+    (``5`` means 5 %); it is converted and wins over *loss_rate* when given.
+
+    :raises ValueError: If the resulting rate lies outside ``[0, 1]``.
+    """
+    if loss_percent is not None:
+        warnings.warn(
+            "loss_percent is deprecated; pass loss_rate as a fraction "
+            f"(loss_percent={loss_percent} -> loss_rate={loss_percent / 100.0}).",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        loss_rate = loss_percent / 100.0
+    if not 0.0 <= loss_rate <= 1.0:
+        raise ValueError(f"loss_rate must be a fraction in [0, 1], got {loss_rate!r}.")
+    return float(loss_rate)
+
+
+def register_component_agent(world: Any, agent: Any, ref: ComponentRef) -> Any:
+    """Register *agent* as ``ref.component_id`` and bind it to *ref* in the environment.
+
+    mango's ``world.register`` forwards extra keyword arguments to the
+    environment's ``install`` hook, so a single call both registers the agent
+    and installs it for *ref* (a separate ``world.environment.install`` would
+    run the hook a second time, the first time without ``id``).
+    """
+    return world.register(agent, suggested_aid=ref.component_id, id=ref)
+
+
 def build_world(
-    scenario: ScenarioData, *, delay_s: float, loss_percent: float
+    scenario: ScenarioData, *, delay_s: float, loss_rate: float = 0.0, seed: int = 0
 ) -> tuple[Any, PyPSABehavior]:
     """Build the mango simulation ``world`` + environment behavior for *scenario*.
 
@@ -124,15 +162,22 @@ def build_world(
     :param scenario: Scenario bundle to drive, already clipped to the
         simulated window (see :func:`_clip_scenario`).
     :param delay_s: Comms delay (seconds) for :class:`SimpleCommunicationSimulation`.
-    :param loss_percent: Comms packet-loss percentage for the same.
+    :param loss_rate: Probability in ``[0, 1]`` that a message is lost. mango's
+        ``SimpleCommunicationSimulation`` names this argument ``loss_percent``
+        but treats it as a fraction.
+    :param seed: Seed for the loss draws, so lossy runs are reproducible.
     """
     from mango.simulation.communication import SimpleCommunicationSimulation
     from mango.simulation.environment import DefaultEnvironment
     from mango.simulation.world import create_world
 
+    loss_rate = resolve_loss_rate(loss_rate)
+    logger.info(
+        "Communication: delay %.4g s, loss rate %.4g, seed %d", delay_s, loss_rate, seed
+    )
     behavior = build_behavior(scenario)
     com_sim = SimpleCommunicationSimulation(
-        default_delay_s=delay_s, loss_percent=loss_percent
+        default_delay_s=delay_s, loss_percent=loss_rate, rng=random.Random(seed)
     )
     # No scenario reads world.recorded_messages, and keeping every message's
     # content for the whole run dominates memory (OOM on lower_saxony_2030).
@@ -428,7 +473,7 @@ class StorageParams:
         )
 
 
-def require_lossless_transport(loss_percent: float, algorithm_name: str) -> None:
+def require_lossless_transport(loss_rate: float, algorithm_name: str) -> None:
     """Fail fast instead of deadlocking under simulated packet loss.
 
     FDGDM, Diffusion, Exact Diffusion, DEED-ADMM, and ADMM all advance a
@@ -440,16 +485,16 @@ def require_lossless_transport(loss_percent: float, algorithm_name: str) -> None
     algorithm, which has a catch-up path that lets a node skip ahead once
     any neighbour's message for a later iteration arrives.
 
-    :param loss_percent: The scenario's configured comms packet-loss percentage.
+    :param loss_rate: The scenario's configured message-loss probability (fraction).
     :param algorithm_name: Name to include in the error message.
-    :raises ValueError: If *loss_percent* is not exactly zero.
+    :raises ValueError: If *loss_rate* is not exactly zero.
     """
-    if loss_percent != 0.0:
+    if loss_rate != 0.0:
         raise ValueError(
-            f"{algorithm_name} requires lossless message delivery (loss_percent=0.0); "
-            f"got {loss_percent!r}. This algorithm waits for every neighbour's reply "
+            f"{algorithm_name} requires lossless message delivery (loss_rate=0.0); "
+            f"got {loss_rate!r}. This algorithm waits for every neighbour's reply "
             "each round with no retry, so any packet loss can deadlock the run instead "
-            "of degrading gracefully. Use --loss-percent 0 (or omit the flag)."
+            "of degrading gracefully. Use --loss-rate 0 (or omit the flag)."
         )
 
 
@@ -673,6 +718,35 @@ def carrier_style(net: Any) -> tuple[dict[str, str], dict[str, str]]:
     return colors, names
 
 
+def _bounded_float(lo: float, hi: float) -> Callable[[str], float]:
+    """argparse ``type=`` that parses a float and rejects values outside ``[lo, hi]``."""
+
+    def parse(text: str) -> float:
+        try:
+            value = float(text)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"not a number: {text!r}") from None
+        if not lo <= value <= hi:
+            raise argparse.ArgumentTypeError(
+                f"must be in [{lo:g}, {hi:g}], got {value:g}"
+            )
+        return value
+
+    return parse
+
+
+def loss_rate_from_args(args: argparse.Namespace) -> float:
+    """Resolve ``--loss-rate`` / deprecated ``--loss-percent`` into one fraction."""
+    if args.loss_percent is not None:
+        logger.warning(
+            "--loss-percent is deprecated; use --loss-rate %g instead of --loss-percent %g.",
+            args.loss_percent / 100.0,
+            args.loss_percent,
+        )
+        return args.loss_percent / 100.0
+    return 0.0 if args.loss_rate is None else args.loss_rate
+
+
 def build_scenario_argparser(
     description: str | None,
     *,
@@ -689,7 +763,7 @@ def build_scenario_argparser(
     :param lossless_only: If true, this scenario's algorithm advances a round
         only once every neighbour has replied (no retry/partial-quorum
         fallback — see :func:`require_lossless_transport`), so
-        ``--loss-percent`` only documents that constraint rather than
+        ``--loss-rate`` only documents that constraint rather than
         offering a working knob.
     :param with_balance_tol: If true, add ``--balance-tol`` (the power-balance
         tolerance passed to :class:`PowerLoadAggregator`) and ``--strict``
@@ -708,18 +782,33 @@ def build_scenario_argparser(
         ),
     )
     parser.add_argument("--delay-s", type=float, default=0.02, help="Comms delay (s).")
-    parser.add_argument(
-        "--loss-percent",
-        type=float,
-        default=0.0,
+    lossless_note = (
+        " This scenario waits for every neighbour's reply each round with no "
+        "retry, so any non-zero value raises ValueError instead of running."
+        if lossless_only
+        else ""
+    )
+    loss = parser.add_mutually_exclusive_group()
+    loss.add_argument(
+        "--loss-rate",
+        type=_bounded_float(0.0, 1.0),
+        default=None,
         help=(
-            "Comms packet-loss percentage. This scenario waits for every "
-            "neighbour's reply each round with no retry, so any non-zero "
-            "value raises ValueError instead of running (use 0, or omit "
-            "the flag)."
-            if lossless_only
-            else "Comms packet-loss percentage."
+            "Probability that a message is lost, as a fraction in [0, 1] "
+            "(e.g. 0.05 for 5%%; default 0)." + lossless_note
         ),
+    )
+    loss.add_argument(
+        "--loss-percent",
+        type=_bounded_float(0.0, 100.0),
+        default=None,
+        help="Deprecated: message loss in percent, 0-100 (5 means 5%%). Use --loss-rate.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Seed for the message-loss draws (default 0), so lossy runs are reproducible.",
     )
     parser.add_argument("--name-base", type=str, default=default_name_base)
     parser.add_argument("--simulate-days", type=int, default=3)
@@ -900,6 +989,21 @@ class PowerLoadAggregator(Role):
             for idx in sorted(self._pending):
                 self._apply_schedule_index(idx, self._pending[idx])
             self._pending.clear()
+
+    @property
+    def ready(self) -> bool:
+        """Whether every required generator reported and the schedule is being applied."""
+        return self._ready
+
+    def missing_generators(self) -> list[str]:
+        """Generators whose schedule never arrived; empty once the run is ready."""
+        if self._ready:
+            return []
+        return [
+            aid
+            for aid in self._generator_aids
+            if aid not in self._finished_aids and aid not in self._schedule_by_aid
+        ]
 
     def _verify_balance(self) -> None:
         """Check the finished schedules against the known demand target.
@@ -1117,13 +1221,27 @@ def write_scenario_outputs(
         never ran.
     :returns: The total cost (same value logged and used in the annotation).
     """
+    if aggregator is not None and not aggregator.ready:
+        # Without this a run whose optimization never finished (e.g. a
+        # participant's last messages were lost) wrote outputs silently: no
+        # schedule was ever applied and the target column stayed at 0.
+        missing = aggregator.missing_generators()
+        logger.error(
+            "%s: the distributed schedule never finished, so no set-points were "
+            "applied; %d generator(s) never reported: %s. Treat this run's "
+            "outputs as invalid.",
+            name_base,
+            len(missing),
+            ", ".join(missing) or "(unknown)",
+        )
     if aggregator is not None and strict:
         gap = aggregator.balance_max_rel_gap
         if gap is None:
             raise RuntimeError(
                 f"{name_base}: power balance was never verified (the "
-                "distributed schedule never finished); refusing to write "
-                "outputs because --strict was given."
+                "distributed schedule never finished; missing: "
+                f"{', '.join(aggregator.missing_generators()) or 'none'}); "
+                "refusing to write outputs because --strict was given."
             )
         if gap > balance_tol:
             raise RuntimeError(
@@ -1253,7 +1371,8 @@ def run_scenario_main(
         execute_test_case(
             scenario=scenario,
             delay_s=args.delay_s,
-            loss_percent=args.loss_percent,
+            loss_rate=loss_rate_from_args(args),
+            seed=args.seed,
             name_base=args.name_base,
             simulate_days=args.simulate_days,
             **kwargs,

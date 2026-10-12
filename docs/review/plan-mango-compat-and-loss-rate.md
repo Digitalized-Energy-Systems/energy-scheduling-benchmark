@@ -25,6 +25,38 @@ branch per repo; no pushes.
 
 ---
 
+## Implementation status (2026-10-12)
+
+Done in `energy-scheduling-benchmark` (B1 with option 1, `--loss-rate`):
+
+* A2: `register_component_agent()` replaces all 22 register+install pairs.
+* A3: nothing to do on the target branch.
+* A4: README and hpc/README name `fix-log-messages-opt-out`; `hpc/run_scenario.sbatch`
+  passes `--loss-rate 0`.
+* B1: `--loss-rate` (fraction, validated); `--loss-percent` is a deprecated true
+  percentage (mutually exclusive); `loss_rate` replaces `loss_percent` in
+  `build_world`, `require_lossless_transport` and every `execute_test_case`
+  (`loss_percent=` stays as a deprecated keyword, also a percentage).
+* B2: `--seed` / `seed=` → `SimpleCommunicationSimulation(rng=random.Random(seed))`;
+  the effective delay/loss/seed is logged at start.
+* B3: `PowerLoadAggregator.ready` / `missing_generators()`; `write_scenario_outputs`
+  logs an ERROR when the schedule never finished and names the missing generators in
+  the `--strict` error.
+* B4: 20 new tests (`test_common.py`, `test_consensus_scenario.py`).
+
+Verified with mango `fix-log-messages-opt-out` on `PYTHONPATH`: 145 tests pass (the 27
+that failed before now pass); all seven entry points run on the toy network with the
+review's lossless balance results (consensus still has its separate 94 % bug); two
+consensus runs with `--loss-rate 0.05 --seed 1` give byte-identical CSVs.
+
+Not done here (outside this repo / this session's worktree):
+
+* A0: switch the workspace mango checkout to `fix-log-messages-opt-out`.
+* A1: `mango-energy-environments` `install` tolerating a missing `id` (the benchmark
+  no longer needs it, but that repo's own tests still use the two-step pattern).
+* Root `run_all_scenarios.sh` still passes `--loss-percent 0` (works, logs a
+  deprecation warning); root `CLAUDE.md` flag list still says `--loss-percent`.
+
 ## Part A: mango compatibility
 
 ### A0. Mango target (decided)
