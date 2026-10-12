@@ -54,3 +54,30 @@ class TestConsensusScenarioIntegration:
                 name_base=str(tmp_path / "consensus"),
                 simulate_days=1,
             )
+
+    async def test_balances_demand_on_toy_network(self, tmp_path):
+        """Regression: the leader gain used to be ~13x too large for the
+        leader's own feedback loop on the toy network, so λ alternated
+        between two values every round and generation missed demand by up to
+        94 % no matter how many rounds ran. strict=True raises on a gap
+        above balance_tol (1 %)."""
+        name_base = str(tmp_path / "consensus")
+        await execute_test_case(
+            scenario=build_toy_network(periods=24),
+            name_base=name_base,
+            simulate_days=1,
+            strict=True,
+        )
+        df = pd.read_csv(f"{name_base}-df.csv", index_col=0)
+        generation = df.filter(like="P:").sum(axis=1)
+        demand = df.filter(like="target:").sum(axis=1)
+        assert (generation - demand).abs().max() <= 0.01 * demand.max()
+
+    async def test_rejects_unstable_leader_damping(self, tmp_path):
+        with pytest.raises(ValueError, match="leader_damping"):
+            await execute_test_case(
+                scenario=build_toy_network(periods=24),
+                name_base=str(tmp_path / "consensus"),
+                simulate_days=1,
+                leader_damping=2.5,
+            )
