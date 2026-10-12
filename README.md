@@ -121,7 +121,7 @@ Algorithm-specific flags (see `<entry-point> --help`):
 
 | Entry point           | Extra flags (defaults)                                                         |
 |-----------------------|--------------------------------------------------------------------------------|
-| `esb-consensus`       | `--max-iter 500`, `--alpha 0.2`                                                |
+| `esb-consensus`       | `--max-iter 500`, `--alpha 0.2`, `--leader-damping 0.5`                        |
 | `esb-admm`            | `--rho 0.1`, `--max-iter 2000`                                                 |
 | `esb-diffusion`       | `--max-iter 2000`, `--tol 1e-3`                                                |
 | `esb-exact-diffusion` | `--weight-rule averaging`, `--max-iter 6000`, `--tol 1e-3`                     |

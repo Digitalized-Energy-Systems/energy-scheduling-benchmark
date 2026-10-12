@@ -93,6 +93,23 @@ Relevant mango internals (verified in source):
 Runs used a throwaway shim around §2.1 (ignore `record_messages`, skip `install` without
 `id`); nothing in the repos was changed.
 
+> **Resolved (consensus balance bug).** Cause: the leader gain
+> `cost_range / mean demand` ignored how strongly the units answer a price change
+> (`dP/dλ = 1/ε`). On the toy network it made the leader's own feedback ≈ 13× too
+> strong, so its price alternated between ≈ 10 and ≈ 45 €/MWh every round (period-2
+> oscillation, total power swinging 43 ↔ 132 MW around 88 MW); on `base_s_1_elec_2019`
+> it was instead too slow (5 % gap after 500 rounds). New gain:
+> `min(leader_damping · n / Σ 1/ε, ε_leader)` — a damped Newton step on the mean price
+> (on a complete graph only the leader moves the mean, by `gain·ΔP/n` per round),
+> capped so the leader's own loop stays stable. Default `--leader-damping 0.5`.
+> Result: toy network at the central-dispatch optimum (125 997.12) with 0.000 % gap,
+> also at 5 % / 20 % loss; `base_s_1_elec_2019`, `base_s_2/5_elec_de-at-storage-2023`
+> balanced (≤ 0.02 %); costs within 0.2 % (base_s_1) and ~3 % (storage networks) of
+> central dispatch — the remaining gap is the price-response band / storage heuristic,
+> not balance. Tuned on an offline replica of the update rule that reproduces the
+> scenario runs exactly; robust for `leader_damping` in [0.5, 1.5] and α in [0.1, 0.4]
+> on all bundled networks.
+
 | Scenario, 3 days, no loss | Balance check |
 |---|---|
 | diffusion | 0.041 % ✓ |

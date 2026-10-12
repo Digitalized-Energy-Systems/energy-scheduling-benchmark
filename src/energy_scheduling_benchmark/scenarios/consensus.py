@@ -89,6 +89,7 @@ async def execute_test_case(
     simulate_days: int = 3,
     max_iter: int = 500,
     alpha: float = 0.2,
+    leader_damping: float = 0.5,
     balance_tol: float = 0.01,
     strict: bool = False,
 ) -> None:
@@ -102,6 +103,10 @@ async def execute_test_case(
         Maximum averaging-consensus iterations per generator.
     alpha:
         Follower neighbour-averaging step size.
+    leader_damping:
+        Fraction of the system-wide imbalance the leader corrects per round
+        (gain ``leader_damping · n / Σ 1/ε``, capped at the leader's own ε);
+        must be in (0, 2).
     balance_tol:
         Max allowed per-timestep |generation - demand| / demand before the
         finished schedule is flagged as not converged.
@@ -158,21 +163,39 @@ async def execute_test_case(
     # See capacity_scaled_epsilon's docstring for the rationale.
     eps = capacity_scaled_epsilon(gen_refs, statics_by_ref)
 
-    # --- Leader gain (demand-scaled) ---
+    # --- Leader gain (price-sensitivity-scaled) ---
     # The leader's price update is `lam += leader_gain * ΔP` (Jian et al.
-    # 2020, eq. 22), where ΔP is the *absolute* system-wide power imbalance
-    # (MW). A fixed leader_gain conflates two unrelated scales: ΔP grows with
-    # total demand (tens to tens-of-thousands of MW on real networks), while
-    # a sensible λ correction should stay within a few multiples of the cost
-    # spread (a handful to ~100 €/MWh). A gain tuned for a toy network's
-    # ~100 MW demand becomes wildly too large at ~60,000 MW: each correction
-    # overshoots the cost spread by orders of magnitude, so λ oscillates
-    # chaotically and never settles, no matter how many iterations run.
-    # Scaling the gain by cost_range / demand keeps one demand-scale
-    # imbalance mapped to roughly one cost-spread-scale price correction,
-    # independent of network size.
-    mean_target = float(np.mean(target_series)) if horizon > 0 else 0.0
-    leader_gain = max(eps.cost_range, 1.0) / max(mean_target, 1.0)
+    # 2020, eq. 22), where ΔP is the system-wide power imbalance (MW). Every
+    # unit answers a price change with dP/dλ = 1/ε (MW per €/MWh) inside its
+    # band, so the system's price sensitivity is S = Σ 1/ε.
+    #
+    # On the complete graph the followers' averaging preserves the mean price
+    # λ̄; only the leader moves it, by leader_gain·ΔP/n per round. A gain of
+    # leader_damping·n/S therefore corrects the fraction leader_damping of the
+    # imbalance per round (a damped Newton step on λ̄; stable for < 2). The
+    # gain is capped at ε_leader so the leader's own feedback (its price moves
+    # its own power by 1/ε_leader per €/MWh) stays below 1 < 2 − α, which
+    # matters when the leader is a large unit.
+    #
+    # The previous gain, cost_range / mean demand, ignored the units'
+    # response: on the toy network it was ~13× too large for the leader's own
+    # loop, so λ jumped between two values every round (94 % balance gap
+    # regardless of max_iter), and on base_s_1_elec_2019 it converged too
+    # slowly (5 % gap after 500 rounds). The new gain balances all bundled
+    # networks to ≤ 0.02 % for leader_damping in [0.5, 1.5].
+    def _epsilon(ref: Any) -> float:
+        # Same ε the actors below get (capacity-scaled band, storage too).
+        if ref.component_id in eps.eps_by_aid:
+            return eps.eps_by_aid[ref.component_id]
+        return eps.target_band / max(float(statics_by_ref[ref].get("p_nom", 0.0)), 1.0)
+
+    if not 0.0 < leader_damping < 2.0:
+        raise ValueError(f"leader_damping must be in (0, 2), got {leader_damping!r}")
+    price_sensitivity = sum(1.0 / _epsilon(ref) for ref in gen_refs)
+    leader_gain = min(
+        leader_damping * len(gen_refs) / max(price_sensitivity, 1e-9),
+        _epsilon(gen_refs[0]),  # the first generator is the leader (below)
+    )
 
     gen_agents: list[RoleAgent] = []
     cost_by_aid: dict[str, float] = {}
@@ -320,6 +343,15 @@ def _add_consensus_args(parser: argparse.ArgumentParser) -> None:
         default=0.2,
         help="Follower neighbour-averaging step size.",
     )
+    parser.add_argument(
+        "--leader-damping",
+        type=float,
+        default=0.5,
+        help=(
+            "Fraction of the system-wide power imbalance the leader corrects per "
+            "round (default 0.5, must be in (0, 2))."
+        ),
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -328,7 +360,7 @@ def main(argv: list[str] | None = None) -> None:
         doc=__doc__,
         default_name_base="consensus",
         extra_args=_add_consensus_args,
-        extra_kwargs=("max_iter", "alpha"),
+        extra_kwargs=("max_iter", "alpha", "leader_damping"),
         with_balance_tol=True,
         argv=argv,
     )

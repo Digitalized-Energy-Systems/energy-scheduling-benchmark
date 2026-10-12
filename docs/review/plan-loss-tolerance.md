@@ -59,8 +59,9 @@ Verification (toy network, mango `fix-log-messages-opt-out`):
 * With `--loss-rate 0.05` and `0.2` (seeds 1, 2) every scenario finishes;
   all except consensus pass the 1 % balance check (gaps ≤ 0.18 %) at costs
   within 0.1 % of lossless; central dispatch and FDGDM reach exactly the
-  lossless result. Consensus still fails its balance check with or without
-  loss (the separate tuning bug from the review).
+  lossless result. Consensus failed its balance check with or without loss
+  (the separate tuning bug from the review); fixed afterwards, see the
+  review's §2.4 — it now balances at 0 %, 5 % and 20 % loss.
 * Tests: 260 in `distributed-resource-optimization` (incl. new loss tests on
   `SimpleCarrier` and in a stepped mango world), 144 in the benchmark (each
   scenario has a strict 5 %-loss test).
