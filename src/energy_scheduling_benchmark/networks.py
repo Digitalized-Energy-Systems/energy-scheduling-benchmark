@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import math
 import re
+import urllib.error
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -105,7 +106,17 @@ def load_example(name: str, **kwargs: Any):
             f"Unknown PyPSA example: {name!r}. "
             f"Available: {', '.join(available_examples())}"
         )
-    return fn(**kwargs)
+    try:
+        return fn(**kwargs)
+    except urllib.error.URLError as exc:
+        # Examples are downloaded on first use. Compute nodes (e.g. on the
+        # HPC) have no internet, and a bare URLError is opaque in a job log.
+        raise RuntimeError(
+            f"Could not download PyPSA example {name!r} ({exc.reason}). "
+            "Without network access, warm the cache once where there is "
+            f'internet (python -c "import pypsa; pypsa.examples.{attr}()") '
+            "or pass a local .nc file via --network."
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
