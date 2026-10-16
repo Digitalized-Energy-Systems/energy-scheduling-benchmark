@@ -76,7 +76,8 @@ Seven scenario entry points are installed:
 | `esb-deed-admm`        | DEED-ADMM (Zhu et al. 2025)                                        |
 
 All seven share the same CLI flags: `--network` (default `toy`),
-`--name-base`, `--simulate-days` (default `3`), `--delay-s` (comms delay,
+`--name-base`, `--out-dir` (directory for the outputs, created if missing;
+default: the current directory), `--simulate-days` (default `3`), `--delay-s` (comms delay,
 default `0.02`), `--loss-percent` (packet loss, given as a fraction from 0 to
 1, e.g. `0.05` for 5 % — despite the name, not 0–100; default `0.0`),
 `--log-level`, plus `--balance-tol` (max per-timestep |generation − demand| /
@@ -115,7 +116,7 @@ python -m energy_scheduling_benchmark.scenarios.diffusion \
     --network /path/to/mynet.nc --name-base mynet_diffusion
 ```
 
-Each run produces:
+Each run produces (in `--out-dir`):
 
 * `<name>-df.csv`          — per-agent timeseries (one row per hourly snapshot) incl. a `cost:total` column
 * `<name>-stacked.pdf`     — generation stacked by carrier, with the demand target

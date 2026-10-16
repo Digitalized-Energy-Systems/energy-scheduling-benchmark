@@ -50,10 +50,8 @@ STEM="${STEM%.*}"
 NAME="${SCENARIO#esb-}"
 
 OUT_DIR="$ESB_ROOT/results/$STEM"
-mkdir -p "$OUT_DIR"
-# Scenarios write <name-base>-* relative to the cwd; every task uses a distinct
-# name-base, so tasks sharing a network directory never collide.
-cd "$OUT_DIR"
+# Every task uses a distinct name-base, so tasks sharing a network directory
+# never collide. --out-dir creates the directory if missing.
 
 echo "job=${SLURM_JOB_ID:-local} task=$TASK_ID node=$(hostname) scenario=$SCENARIO network=$NETWORK_ARG"
 echo "out=$OUT_DIR/$NAME-* python=$(python --version 2>&1) extra=$*"
@@ -66,4 +64,4 @@ fi
 # `srun` makes SLURM account memory/CPU per step, so `seff`/`sacct` report it.
 # --export=ALL is required: sbatch --export=NONE sets SLURM_EXPORT_ENV=NONE, which srun
 # inherits, so without it the step would start without the venv/env.sh environment.
-srun --export=ALL "$SCENARIO" --network "$NETWORK_ARG" --loss-percent 0 --name-base "$NAME" "$@"
+srun --export=ALL "$SCENARIO" --network "$NETWORK_ARG" --loss-percent 0 --name-base "$NAME" --out-dir "$OUT_DIR" "$@"

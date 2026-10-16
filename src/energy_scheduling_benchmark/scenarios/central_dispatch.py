@@ -215,8 +215,9 @@ async def execute_test_case(
 
     # --- Leader agent (sits on the first load, like the distributed scenarios) ---
     leader_agent = RoleAgent()
-    world.register(leader_agent, suggested_aid=load_refs[0].component_id)
-    world.environment.install(leader_agent, id=load_refs[0])
+    world.register(
+        leader_agent, suggested_aid=load_refs[0].component_id, id=load_refs[0]
+    )
     leader_addr = leader_agent.addr
 
     aggregator = CentralDispatchAggregator(
@@ -236,8 +237,7 @@ async def execute_test_case(
         agent = agent_composed_of(
             PowerLoadMonitoring(behavior=behavior, target=leader_addr)
         )
-        world.register(agent, suggested_aid=ref.component_id)
-        world.environment.install(agent, id=ref)
+        world.register(agent, suggested_aid=ref.component_id, id=ref)
 
     # --- One reporting agent per generator / storage unit ---
     cost_by_aid: dict[str, float] = {}
@@ -269,8 +269,7 @@ async def execute_test_case(
             )
 
         agent = agent_composed_of(UnitReporter(report, leader_addr))
-        world.register(agent, suggested_aid=ref.component_id)
-        world.environment.install(agent, id=ref)
+        world.register(agent, suggested_aid=ref.component_id, id=ref)
 
     install_standard_recordings(world, behavior, role_cls=UnitReporter)
 

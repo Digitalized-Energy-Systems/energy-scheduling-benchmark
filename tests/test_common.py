@@ -13,6 +13,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     carrier_style,
     compute_overall_cost,
     require_lossless_transport,
+    run_scenario_main,
 )
 
 
@@ -121,3 +122,26 @@ class TestRequireLosslessTransport:
     def test_nonzero_loss_raises_with_algorithm_name(self):
         with pytest.raises(ValueError, match="TestAlgo.*lossless"):
             require_lossless_transport(0.5, "TestAlgo")
+
+
+class TestOutDir:
+    def _run(self, argv):
+        seen = {}
+
+        async def fake_execute_test_case(**kwargs):
+            seen.update(kwargs)
+
+        run_scenario_main(
+            fake_execute_test_case, doc=None, default_name_base="x", argv=argv
+        )
+        return seen
+
+    def test_default_writes_to_cwd(self):
+        seen = self._run(["--name-base", "run"])
+        assert seen["name_base"] == "run"
+
+    def test_out_dir_prefixes_name_base_and_is_created(self, tmp_path):
+        out = tmp_path / "nested" / "results"
+        seen = self._run(["--name-base", "run", "--out-dir", str(out)])
+        assert seen["name_base"] == str(out / "run")
+        assert out.is_dir()
