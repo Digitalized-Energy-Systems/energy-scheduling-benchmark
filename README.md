@@ -104,9 +104,13 @@ received:
   (FDGDM's power transfers, DEED-ADMM's ξ tracker, exact diffusion's mixing)
   use running sums, so a lost message delays a transfer instead of losing it.
 * **ADMM** collects each round's answers with mango's `gather` and a timeout;
-  a participant that did not answer keeps its previous value.
+  a participant that did not answer keeps its previous value. A participant
+  that misses `--max-missing-rounds` rounds in a row (default 20; `0`
+  disables) ends the run as not converged.
 * **Leader**: the kick-off is acknowledged and retried; the hourly set-points
-  are applied at a deadline even if load reports are missing; lost results
+  are applied at a deadline (`--load-timeout` seconds into the hour, default
+  3 × `--delay-s`) even if load reports are missing, counting a missing load
+  with its forecast; lost results
   (schedules, central dispatch's unit reports) are requested again with
   mango's `gather` every `--result-poll-s` seconds. After `--result-retries`
   requests a missing result is given up, the run is logged as degraded and

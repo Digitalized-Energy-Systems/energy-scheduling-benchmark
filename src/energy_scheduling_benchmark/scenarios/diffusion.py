@@ -83,6 +83,8 @@ async def execute_test_case(
     round_timeout: float | None = None,
     result_poll_s: float = 300.0,
     result_retries: int = 12,
+    load_timeout: float | None = None,
+    max_missing_rounds: int | None = 20,
     name_base: str = "diffusion",
     simulate_days: int = 3,
     max_iter: int = 2000,
@@ -119,6 +121,8 @@ async def execute_test_case(
         round_timeout=round_timeout,
         result_poll_s=result_poll_s,
         result_retries=result_retries,
+        load_timeout=load_timeout,
+        max_missing_rounds=max_missing_rounds,
     )
 
     if scenario is None:

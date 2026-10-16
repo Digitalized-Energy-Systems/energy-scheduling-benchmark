@@ -141,6 +141,8 @@ async def execute_test_case(
     round_timeout: float | None = None,
     result_poll_s: float = 300.0,
     result_retries: int = 12,
+    load_timeout: float | None = None,
+    max_missing_rounds: int | None = 20,
     name_base: str = "admm",
     simulate_days: int = 3,
     rho: float = 0.1,
@@ -172,6 +174,8 @@ async def execute_test_case(
         round_timeout=round_timeout,
         result_poll_s=result_poll_s,
         result_retries=result_retries,
+        load_timeout=load_timeout,
+        max_missing_rounds=max_missing_rounds,
     )
 
     # --- World setup ---
@@ -259,7 +263,11 @@ async def execute_test_case(
     leader_addr_ref["addr"] = leader_addr
 
     coordinator = create_consensus_target_reach_admm_coordinator(
-        rho=rho, max_iters=max_iter, alpha=0.0, round_timeout=lt.round_timeout
+        rho=rho,
+        max_iters=max_iter,
+        alpha=0.0,
+        round_timeout=lt.round_timeout,
+        max_missing_rounds=lt.max_missing_rounds,
     )
     coord_role = CoordinatorRole(coordinator)
     leader_agent.add_role(coord_role)

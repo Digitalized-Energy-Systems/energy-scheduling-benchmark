@@ -17,6 +17,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     compute_overall_cost,
     compute_slack,
     loss_rate_from_args,
+    loss_tolerance,
     require_lossless_transport,
     resolve_loss_rate,
     run_scenario_main,
@@ -186,6 +187,39 @@ class TestOutDir:
         seen = self._run(["--name-base", "run", "--out-dir", str(out)])
         assert seen["name_base"] == str(out / "run")
         assert out.is_dir()
+
+    def test_loss_timeouts_default(self):
+        seen = self._run(["--name-base", "run"])
+        assert seen["load_timeout"] is None
+        assert seen["max_missing_rounds"] == 20
+
+    def test_loss_timeouts_forwarded(self):
+        seen = self._run(
+            ["--name-base", "run", "--load-timeout", "0.5", "--max-missing-rounds", "7"]
+        )
+        assert seen["load_timeout"] == 0.5
+        assert seen["max_missing_rounds"] == 7
+
+    def test_zero_max_missing_rounds_disables(self):
+        seen = self._run(["--name-base", "run", "--max-missing-rounds", "0"])
+        assert seen["max_missing_rounds"] is None
+
+    def test_negative_load_timeout_rejected(self):
+        with pytest.raises(SystemExit):
+            self._run(["--load-timeout", "-1"])
+
+
+class TestLossTolerance:
+    def test_defaults_scale_with_delay(self):
+        lt = loss_tolerance(0.02)
+        assert lt.load_timeout == pytest.approx(0.06)
+        assert lt.round_timeout is None
+        assert lt.max_missing_rounds == 20
+
+    def test_overrides(self):
+        lt = loss_tolerance(0.02, load_timeout=1.5, max_missing_rounds=None)
+        assert lt.load_timeout == 1.5
+        assert lt.max_missing_rounds is None
 
 
 class TestResolveLossRate:

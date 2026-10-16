@@ -574,6 +574,9 @@ class LossTolerance:
     result_poll_s: float
     #: Polls before a missing result is given up (degraded run).
     result_retries: int
+    #: Consecutive rounds a participant may miss before the ADMM coordinator
+    #: stops the run with ``converged = False`` (``None``: never).
+    max_missing_rounds: int | None = None
 
 
 def loss_tolerance(
@@ -583,6 +586,8 @@ def loss_tolerance(
     round_timeout: float | None = None,
     result_poll_s: float = 300.0,
     result_retries: int = 12,
+    load_timeout: float | None = None,
+    max_missing_rounds: int | None = 20,
 ) -> LossTolerance:
     """Default :class:`LossTolerance` for a comms delay of *delay_s*.
 
@@ -591,7 +596,8 @@ def loss_tolerance(
     still gets a positive deadline. Lossless runs (``loss_rate == 0``) get no
     round deadline unless *round_timeout* is given: the algorithms then run
     the papers' synchronous rounds and plain neighbour mixing (the running-sum
-    flows are only needed under loss).
+    flows are only needed under loss). *load_timeout* overrides the default
+    load deadline; *max_missing_rounds* is passed to the ADMM coordinator.
     """
     base = max(float(delay_s), 1e-3)
     if round_timeout is not None:
@@ -602,10 +608,13 @@ def loss_tolerance(
         resolved_round_timeout = None
     return LossTolerance(
         round_timeout=resolved_round_timeout,
-        load_timeout=3.0 * base,
+        load_timeout=3.0 * base if load_timeout is None else float(load_timeout),
         request_timeout=3.0 * base,
         result_poll_s=float(result_poll_s),
         result_retries=int(result_retries),
+        max_missing_rounds=(
+            None if max_missing_rounds is None else int(max_missing_rounds)
+        ),
     )
 
 
@@ -1008,6 +1017,25 @@ def build_scenario_argparser(
         help=(
             "Requests for a missing result before the run continues without it "
             "and is marked degraded (default 12)."
+        ),
+    )
+    parser.add_argument(
+        "--load-timeout",
+        type=_bounded_float(0.0, float("inf")),
+        default=None,
+        help=(
+            "Seconds (simulation time) after an hour starts before it is applied "
+            "with incomplete load reports (missing loads count with their forecast; "
+            "default 3 x --delay-s)."
+        ),
+    )
+    parser.add_argument(
+        "--max-missing-rounds",
+        type=int,
+        default=20,
+        help=(
+            "ADMM only: consecutive rounds a participant may miss before the "
+            "coordinator stops the run as not converged (default 20; 0 disables)."
         ),
     )
     parser.add_argument("--name-base", type=str, default=default_name_base)
@@ -2067,6 +2095,8 @@ def run_scenario_main(
             round_timeout=args.round_timeout,
             result_poll_s=args.result_poll_s,
             result_retries=args.result_retries,
+            load_timeout=args.load_timeout,
+            max_missing_rounds=args.max_missing_rounds or None,
             name_base=str(args.out_dir / args.name_base),
             simulate_days=args.simulate_days,
             cost_model=args.cost_model,

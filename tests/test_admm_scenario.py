@@ -279,4 +279,22 @@ class TestADMMScenarioIntegration:
         )
         assert os.path.exists(f"{name_base}-df.csv")
 
+    async def test_max_missing_rounds_reaches_coordinator(self, tmp_path, monkeypatch):
+        import energy_scheduling_benchmark.scenarios.admm as admm_mod
+
+        seen = {}
+        real = admm_mod.create_consensus_target_reach_admm_coordinator
+
+        def spy(**kwargs):
+            seen.update(kwargs)
+            return real(**kwargs)
+
+        monkeypatch.setattr(admm_mod, "create_consensus_target_reach_admm_coordinator", spy)
+        await execute_test_case(
+            scenario=build_toy_network(periods=24),
+            name_base=str(tmp_path / "admm"),
+            simulate_days=1,
+            max_missing_rounds=7,
+        )
+        assert seen["max_missing_rounds"] == 7
 
