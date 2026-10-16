@@ -113,6 +113,7 @@ async def execute_test_case(
     loss_rate = resolve_loss_rate(loss_rate, loss_percent)
     lt = loss_tolerance(
         delay_s,
+        loss_rate=loss_rate,
         round_timeout=round_timeout,
         result_poll_s=result_poll_s,
         result_retries=result_retries,

@@ -94,7 +94,8 @@ received:
 
 * **Algorithm rounds** (consensus, diffusion, exact diffusion, FDGDM,
   DEED-ADMM) advance when all neighbours reported *or* after `--round-timeout`
-  seconds of simulation time (default 3 × `--delay-s`); a missing neighbour
+  seconds of simulation time (default 3 × `--delay-s` when `--loss-rate` > 0;
+  lossless runs have no round deadline, as in the papers); a missing neighbour
   contributes its last value. Pairwise exchanges whose sum must be conserved
   (FDGDM's power transfers, DEED-ADMM's ξ tracker, exact diffusion's mixing)
   use running sums, so a lost message delays a transfer instead of losing it.

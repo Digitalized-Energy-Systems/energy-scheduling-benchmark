@@ -496,8 +496,9 @@ class LossTolerance:
     deadline.
     """
 
-    #: Peer-to-peer round deadline / ADMM per-round answer timeout.
-    round_timeout: float
+    #: Peer-to-peer round deadline / ADMM per-round answer timeout. ``None``
+    #: in lossless runs: rounds wait for every neighbour, as in the papers.
+    round_timeout: float | None
     #: Deadline for applying an hour whose load reports are incomplete.
     load_timeout: float
     #: Timeout of one leader request (kick-off, schedule/report poll).
@@ -511,6 +512,7 @@ class LossTolerance:
 def loss_tolerance(
     delay_s: float,
     *,
+    loss_rate: float = 0.0,
     round_timeout: float | None = None,
     result_poll_s: float = 300.0,
     result_retries: int = 12,
@@ -519,11 +521,20 @@ def loss_tolerance(
 
     Round, load and request timeouts default to three message delays (a
     request plus its reply take two); at least 1 ms, so a zero-delay world
-    still gets a positive deadline.
+    still gets a positive deadline. Lossless runs (``loss_rate == 0``) get no
+    round deadline unless *round_timeout* is given: the algorithms then run
+    the papers' synchronous rounds and plain neighbour mixing (the running-sum
+    flows are only needed under loss).
     """
     base = max(float(delay_s), 1e-3)
+    if round_timeout is not None:
+        resolved_round_timeout: float | None = float(round_timeout)
+    elif loss_rate > 0.0:
+        resolved_round_timeout = 3.0 * base
+    else:
+        resolved_round_timeout = None
     return LossTolerance(
-        round_timeout=float(round_timeout) if round_timeout is not None else 3.0 * base,
+        round_timeout=resolved_round_timeout,
         load_timeout=3.0 * base,
         request_timeout=3.0 * base,
         result_poll_s=float(result_poll_s),
@@ -909,7 +920,9 @@ def build_scenario_argparser(
         default=None,
         help=(
             "Seconds (simulation time) a round waits for missing messages before "
-            "advancing with the last received values (default: 3 x --delay-s)."
+            "advancing with the last received values (default: 3 x --delay-s under "
+            "loss; none without loss, so lossless rounds wait for every neighbour as "
+            "in the papers)."
         ),
     )
     parser.add_argument(
