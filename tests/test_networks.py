@@ -13,6 +13,7 @@ from energy_scheduling_benchmark.networks import (
     ScenarioData,
     available_examples,
     build_toy_network,
+    load_example,
     load_network,
     load_scenario,
 )
@@ -116,3 +117,19 @@ class TestLoadScenario:
         overrides = {ComponentRef(THERMAL, "foo"): pd.Series([1.0], index=snaps[:1])}
         scenario = load_scenario(net, timeseries=overrides)
         assert scenario.timeseries is overrides
+
+
+class TestLoadExampleOffline:
+    def test_download_failure_raises_actionable_error(self, monkeypatch):
+        import urllib.error
+
+        import pypsa
+
+        class _OfflineExamples:
+            @staticmethod
+            def ac_dc_meshed(**_):
+                raise urllib.error.URLError("no network")
+
+        monkeypatch.setattr(pypsa, "examples", _OfflineExamples(), raising=False)
+        with pytest.raises(RuntimeError, match="warm the cache.*--network"):
+            load_example("ac-dc-meshed")
