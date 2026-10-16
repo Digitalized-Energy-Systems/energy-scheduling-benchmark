@@ -64,9 +64,12 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_toy_network,
     build_world,
     collect_generator_refs,
+    generator_agent,
     install_standard_recordings,
+    loss_tolerance,
     make_finish_callback,
-    require_lossless_transport,
+    register_component_agent,
+    resolve_loss_rate,
     run_scenario_main,
     write_scenario_outputs,
 )
@@ -187,7 +190,12 @@ async def execute_test_case(
     *,
     scenario: ScenarioData | None = None,
     delay_s: float = 0.02,
-    loss_percent: float = 0.0,
+    loss_rate: float = 0.0,
+    seed: int = 0,
+    round_timeout: float | None = None,
+    result_poll_s: float = 300.0,
+    result_retries: int = 12,
+    loss_percent: float | None = None,
     name_base: str = "fdgdm",
     simulate_days: int = 3,
     max_iter: int = 300,
@@ -216,13 +224,21 @@ async def execute_test_case(
         Optional slack node (see :class:`SlackSpec`) that imports any
         shortfall and exports any surplus; off when ``None``.
     """
-    require_lossless_transport(loss_percent, "FDGDM")
+    loss_rate = resolve_loss_rate(loss_rate, loss_percent)
+    lt = loss_tolerance(
+        delay_s,
+        round_timeout=round_timeout,
+        result_poll_s=result_poll_s,
+        result_retries=result_retries,
+    )
 
     if scenario is None:
         scenario = build_toy_network(periods=simulate_days * 24)
 
     scenario = _clip_scenario(scenario, simulate_days)
-    world, behavior = build_world(scenario, delay_s=delay_s, loss_percent=loss_percent)
+    world, behavior = build_world(
+        scenario, delay_s=delay_s, loss_rate=loss_rate, seed=seed
+    )
 
     # ------------------------------------------------------------------
     # Vectorise across the full load horizon
@@ -430,10 +446,11 @@ async def execute_test_case(
             finish_callback=finish_callback,
             fdgdm_actor=actor,
             max_iter=max_iter,
+            round_timeout=lt.round_timeout,
         )
         opt_role = DistributedOptimizationRole(participant)
-        agent = agent_composed_of(opt_role)
-        world.register(agent, suggested_aid=ref.component_id, id=ref)
+        agent = generator_agent(opt_role)
+        register_component_agent(world, agent, ref)
         thermal_gen_agents.append(agent)
 
     # -- Non-thermal agents (registered for recording/regulation; not in FDGDM) --
@@ -444,8 +461,8 @@ async def execute_test_case(
             max_iter=0,
         )
         opt_role = DistributedOptimizationRole(noop_participant)
-        agent = agent_composed_of(opt_role)
-        world.register(agent, suggested_aid=ref.component_id, id=ref)
+        agent = generator_agent(opt_role)
+        register_component_agent(world, agent, ref)
 
     gen_agents = thermal_gen_agents  # FDGDM topology only for thermals
 
@@ -454,9 +471,7 @@ async def execute_test_case(
 
     # -- Load agents (two-pass: register leader first so its addr is known) --
     leader_agent = RoleAgent()
-    world.register(
-        leader_agent, suggested_aid=load_refs[0].component_id, id=load_refs[0]
-    )
+    register_component_agent(world, leader_agent, load_refs[0])
     leader_addr = leader_agent.addr
     leader_addr_ref["addr"] = leader_addr
 
@@ -475,6 +490,11 @@ async def execute_test_case(
         schedule_by_aid=schedule_by_aid,
         finished_message_type=FDGDMFinishedInfo,
         build_start_message=build_start_message,
+        generator_addrs={a.aid: a.addr for a in gen_agents},
+        load_timeout=lt.load_timeout,
+        request_timeout=lt.request_timeout,
+        result_poll_s=lt.result_poll_s,
+        result_retries=lt.result_retries,
         n_finished_required=len(thermal_refs),
         demand_target=target_series,
         balance_label="FDGDM",
@@ -488,7 +508,7 @@ async def execute_test_case(
         agent = agent_composed_of(
             PowerLoadMonitoring(behavior=behavior, target=leader_addr)
         )
-        world.register(agent, suggested_aid=ref.component_id, id=ref)
+        register_component_agent(world, agent, ref)
 
     if gen_agents:
         topology = complete_topology(len(gen_agents))
@@ -548,7 +568,6 @@ def main(argv: list[str] | None = None) -> None:
         default_name_base="fdgdm",
         extra_args=_add_fdgdm_args,
         extra_kwargs=("max_iter",),
-        lossless_only=True,
         with_balance_tol=True,
         argv=argv,
     )

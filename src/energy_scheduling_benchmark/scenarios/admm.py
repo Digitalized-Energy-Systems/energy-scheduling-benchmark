@@ -16,7 +16,6 @@ being pre-scheduled from a clearing price.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import logging
 from typing import Any
 
@@ -58,7 +57,9 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_world,
     collect_generator_refs,
     install_standard_recordings,
-    require_lossless_transport,
+    loss_tolerance,
+    register_component_agent,
+    resolve_loss_rate,
     run_scenario_main,
     write_scenario_outputs,
 )
@@ -100,9 +101,11 @@ class ADMMGeneratorRole(DistributedOptimizationRole):
 def _make_finish_callback(
     *,
     leader_addr_ref: dict[str, Any | None],
-    schedule_by_aid: dict[str, np.ndarray],
 ) -> Any:
-    """Return a callback that stores a generator's schedule and notifies the leader.
+    """Return a callback that sends a generator's schedule to the leader.
+
+    The leader normally has every schedule already (the coordinator runs on
+    its agent, see ``start_locally``); this message is the redundant path.
 
     ADMM's finish notification is fired directly by :class:`ADMMGeneratorRole`
     with signature ``(algorithm, role, aid)`` — unlike the carrier-based
@@ -112,15 +115,13 @@ def _make_finish_callback(
     """
 
     def handle_admm_finished(algorithm: Any, role: Any, aid: str) -> None:
-        schedule_by_aid[aid] = np.asarray(algorithm.x, dtype=float).copy()
+        schedule = np.asarray(algorithm.x, dtype=float).copy()
         leader_addr = leader_addr_ref.get("addr")
         if leader_addr is not None:
-            asyncio.create_task(
-                role.context.send_message(ADMMFinishedInfo(aid=aid), leader_addr)
+            role.context.schedule_instant_message(
+                ADMMFinishedInfo(aid=aid, schedule=schedule), leader_addr
             )
-        logger.info(
-            "ADMM finished for %s (schedule len=%s)", aid, schedule_by_aid[aid].size
-        )
+        logger.info("ADMM finished for %s (schedule len=%s)", aid, schedule.size)
 
     return handle_admm_finished
 
@@ -134,7 +135,12 @@ async def execute_test_case(
     *,
     scenario: ScenarioData | None = None,
     delay_s: float = 0.02,
-    loss_percent: float = 0.0,
+    loss_rate: float = 0.0,
+    seed: int = 0,
+    round_timeout: float | None = None,
+    result_poll_s: float = 300.0,
+    result_retries: int = 12,
+    loss_percent: float | None = None,
     name_base: str = "admm",
     simulate_days: int = 3,
     rho: float = 0.1,
@@ -158,14 +164,22 @@ async def execute_test_case(
     :param slack: Optional slack node (see :class:`SlackSpec`) that imports
         any shortfall and exports any surplus; off when ``None``.
     """
-    require_lossless_transport(loss_percent, "ADMM")
+    loss_rate = resolve_loss_rate(loss_rate, loss_percent)
+    lt = loss_tolerance(
+        delay_s,
+        round_timeout=round_timeout,
+        result_poll_s=result_poll_s,
+        result_retries=result_retries,
+    )
 
     # --- World setup ---
     if scenario is None:
         scenario = build_toy_network(periods=simulate_days * 24)
 
     scenario = _clip_scenario(scenario, simulate_days)
-    world, behavior = build_world(scenario, delay_s=delay_s, loss_percent=loss_percent)
+    world, behavior = build_world(
+        scenario, delay_s=delay_s, loss_rate=loss_rate, seed=seed
+    )
 
     # --- Demand target and time index ---
     load_refs = behavior.get_components_by_type([LOAD])
@@ -187,9 +201,7 @@ async def execute_test_case(
 
     schedule_by_aid: dict[str, np.ndarray] = {}
     leader_addr_ref: dict[str, Any | None] = {"addr": None}
-    finish_callback = _make_finish_callback(
-        leader_addr_ref=leader_addr_ref, schedule_by_aid=schedule_by_aid
-    )
+    finish_callback = _make_finish_callback(leader_addr_ref=leader_addr_ref)
 
     gen_agents: list[RoleAgent] = []
     cost_by_aid: dict[str, float] = {}
@@ -230,7 +242,7 @@ async def execute_test_case(
             )
 
         agent = agent_composed_of(ADMMGeneratorRole(actor, finish_callback))
-        world.register(agent, suggested_aid=ref.component_id, id=ref)
+        register_component_agent(world, agent, ref)
         gen_agents.append(agent)
 
     if not gen_agents:
@@ -238,16 +250,33 @@ async def execute_test_case(
 
     # --- Leader agent ---
     leader_agent = RoleAgent()
-    world.register(
-        leader_agent, suggested_aid=load_refs[0].component_id, id=load_refs[0]
-    )
+    register_component_agent(world, leader_agent, load_refs[0])
     leader_addr = leader_agent.addr
     leader_addr_ref["addr"] = leader_addr
 
     coordinator = create_consensus_target_reach_admm_coordinator(
-        rho=rho, max_iters=max_iter, alpha=0.0
+        rho=rho, max_iters=max_iter, alpha=0.0, round_timeout=lt.round_timeout
     )
-    leader_agent.add_role(CoordinatorRole(coordinator))
+    coord_role = CoordinatorRole(coordinator)
+    leader_agent.add_role(coord_role)
+
+    def start_locally(start: StartCoordinatedDistributedOptimization) -> None:
+        # The coordinator lives on the leader agent: start it without a
+        # message (which could be lost) and take its results directly.
+        done = coord_role.start(start.input)
+
+        def deliver(future: Any) -> None:
+            if future.cancelled() or future.exception() is not None:
+                return
+            addrs = list(coord_role.context.neighbors())  # coordinator's order
+            aggregator.accept_schedules(
+                {
+                    a.aid: np.asarray(x, dtype=float)
+                    for a, x in zip(addrs, future.result())
+                }
+            )
+
+        done.add_done_callback(deliver)
 
     def build_start_message() -> Any:
         return StartCoordinatedDistributedOptimization(
@@ -263,6 +292,9 @@ async def execute_test_case(
         schedule_by_aid=schedule_by_aid,
         finished_message_type=ADMMFinishedInfo,
         build_start_message=build_start_message,
+        start_locally=start_locally,
+        load_timeout=lt.load_timeout,
+        request_timeout=lt.request_timeout,
         demand_target=target_series,
         balance_label="ADMM",
         balance_tol=balance_tol,
@@ -275,7 +307,7 @@ async def execute_test_case(
         agent = agent_composed_of(
             PowerLoadMonitoring(behavior=behavior, target=leader_addr)
         )
-        world.register(agent, suggested_aid=ref.component_id, id=ref)
+        register_component_agent(world, agent, ref)
 
     all_opt_agents = gen_agents + [leader_agent]
     auto_assign(complete_topology(len(all_opt_agents)), all_opt_agents)
@@ -327,7 +359,6 @@ def main(argv: list[str] | None = None) -> None:
         default_name_base="admm",
         extra_args=_add_admm_args,
         extra_kwargs=("rho", "max_iter"),
-        lossless_only=True,
         with_balance_tol=True,
         argv=argv,
     )

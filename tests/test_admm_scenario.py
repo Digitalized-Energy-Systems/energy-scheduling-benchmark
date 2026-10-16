@@ -6,7 +6,6 @@ end-to-end integration smoke test of execute_test_case on the built-in toy netwo
 
 from __future__ import annotations
 
-import asyncio
 import os
 from unittest.mock import MagicMock
 
@@ -95,80 +94,52 @@ class TestScalar:
 
 
 class TestMakeFinishCallback:
-    """_make_finish_callback stores schedules and sends notifications."""
+    """_make_finish_callback sends the participant's x to the leader."""
 
-    async def test_stores_schedule_keyed_by_aid(self):
-        schedule_by_aid: dict = {}
-        algorithm = MagicMock()
-        algorithm.x = np.array([1.0, 2.0, 3.0])
-
-        class FakeRole:
-            class context:
-                aid = "gen0"
-
-        cb = _make_finish_callback(
-            leader_addr_ref={"addr": None}, schedule_by_aid=schedule_by_aid
-        )
-        cb(algorithm, FakeRole(), "gen0")
-
-        assert "gen0" in schedule_by_aid
-        assert np.allclose(schedule_by_aid["gen0"], [1.0, 2.0, 3.0])
-
-    async def test_stored_schedule_is_a_copy(self):
-        schedule_by_aid: dict = {}
-        original = np.array([1.0, 2.0])
-        algorithm = MagicMock()
-        algorithm.x = original
-
-        class FakeRole:
-            class context:
-                aid = "gen0"
-
-        cb = _make_finish_callback(
-            leader_addr_ref={"addr": None}, schedule_by_aid=schedule_by_aid
-        )
-        cb(algorithm, FakeRole(), "gen0")
-        original[0] = 99.0
-        assert schedule_by_aid["gen0"][0] == pytest.approx(1.0)
-
-    async def test_notifies_leader_when_addr_is_set(self):
-        sends: list = []
-
+    @staticmethod
+    def _role(sends: list):
         class FakeContext:
             aid = "gen0"
 
-            async def send_message(self, msg, addr):
+            def schedule_instant_message(self, msg, addr):
                 sends.append((msg, addr))
 
         class FakeRole:
             context = FakeContext()
 
+        return FakeRole()
+
+    async def test_notifies_leader_with_schedule(self):
+        sends: list = []
         algorithm = MagicMock()
-        algorithm.x = np.array([0.0])
+        algorithm.x = np.array([1.0, 2.0])
         leader_addr = ("localhost", 5555)
 
-        cb = _make_finish_callback(
-            leader_addr_ref={"addr": leader_addr}, schedule_by_aid={}
-        )
-        cb(algorithm, FakeRole(), "gen0")
-        await asyncio.sleep(0)  # let the task execute
+        cb = _make_finish_callback(leader_addr_ref={"addr": leader_addr})
+        cb(algorithm, self._role(sends), "gen0")
 
         assert len(sends) == 1
-        assert sends[0][1] == leader_addr
+        msg, addr = sends[0]
+        assert msg.aid == "gen0"
+        assert np.allclose(msg.schedule, [1.0, 2.0])
+        assert addr == leader_addr
+
+    async def test_sent_schedule_is_a_copy(self):
+        sends: list = []
+        algorithm = MagicMock()
+        algorithm.x = np.array([1.0, 2.0])
+        cb = _make_finish_callback(leader_addr_ref={"addr": ("localhost", 5555)})
+        cb(algorithm, self._role(sends), "gen0")
+        algorithm.x[0] = 99.0
+        assert sends[0][0].schedule[0] == pytest.approx(1.0)
 
     async def test_no_notification_when_leader_addr_is_none(self):
+        sends: list = []
         algorithm = MagicMock()
         algorithm.x = np.array([1.0])
-
-        class FakeRole:
-            class context:
-                aid = "gen0"
-
-        cb = _make_finish_callback(
-            leader_addr_ref={"addr": None}, schedule_by_aid={}
-        )
-        # Must not raise even when no leader address is available yet
-        cb(algorithm, FakeRole(), "gen0")
+        cb = _make_finish_callback(leader_addr_ref={"addr": None})
+        cb(algorithm, self._role(sends), "gen0")
+        assert sends == []
 
 
 class TestADMMScenarioIntegration:
@@ -180,7 +151,7 @@ class TestADMMScenarioIntegration:
         await execute_test_case(
             scenario=scenario,
             delay_s=0.0,
-            loss_percent=0.0,
+            loss_rate=0.0,
             name_base=name_base,
             simulate_days=1,
         )
@@ -191,7 +162,7 @@ class TestADMMScenarioIntegration:
         await execute_test_case(
             scenario=scenario,
             delay_s=0.0,
-            loss_percent=0.0,
+            loss_rate=0.0,
             name_base=name_base,
             simulate_days=1,
         )
@@ -203,7 +174,7 @@ class TestADMMScenarioIntegration:
         await execute_test_case(
             scenario=scenario,
             delay_s=0.0,
-            loss_percent=0.0,
+            loss_rate=0.0,
             name_base=name_base,
             simulate_days=1,
         )
@@ -237,7 +208,7 @@ class TestADMMScenarioIntegration:
         await execute_test_case(
             scenario=scenario,
             delay_s=0.0,
-            loss_percent=0.0,
+            loss_rate=0.0,
             name_base=name_base,
             simulate_days=1,
         )
@@ -255,7 +226,7 @@ class TestADMMScenarioIntegration:
         await execute_test_case(
             scenario=scenario,
             delay_s=0.0,
-            loss_percent=0.0,
+            loss_rate=0.0,
             name_base=name_base,
             simulate_days=1,
         )
@@ -273,7 +244,7 @@ class TestADMMScenarioIntegration:
         await execute_test_case(
             scenario=scenario,
             delay_s=0.0,
-            loss_percent=0.0,
+            loss_rate=0.0,
             name_base=name_base,
             simulate_days=1,
         )
@@ -293,16 +264,19 @@ class TestADMMScenarioIntegration:
         gap = (tail_tgt - tail_gen).abs()
         assert float(gap.mean()) < 20.0, f"Mean generation-demand gap {gap.mean():.1f} MW is too large"
 
-    async def test_raises_on_lossy_transport(self, tmp_path):
-        """The ADMM coordinator gathers every participant's reply each round;
-        packet loss would deadlock the run, so the scenario must refuse to start."""
-        scenario = build_toy_network(periods=24)
-        with pytest.raises(ValueError, match="lossless"):
-            await execute_test_case(
-                scenario=scenario,
-                loss_percent=5.0,
-                name_base=str(tmp_path / "admm"),
-                simulate_days=1,
-            )
+    async def test_runs_under_message_loss(self, tmp_path):
+        """With 5% of messages lost the run still finishes and passes the
+        power-balance check (strict): missing values are replaced by the last
+        received ones and lost results are requested again."""
+        name_base = str(tmp_path / "admm")
+        await execute_test_case(
+            scenario=build_toy_network(periods=24),
+            loss_rate=0.05,
+            seed=1,
+            name_base=name_base,
+            simulate_days=1,
+            strict=True,
+        )
+        assert os.path.exists(f"{name_base}-df.csv")
 
 

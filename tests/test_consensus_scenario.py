@@ -24,7 +24,7 @@ class TestConsensusScenarioIntegration:
         await execute_test_case(
             scenario=scenario,
             delay_s=0.0,
-            loss_percent=0.0,
+            loss_rate=0.0,
             name_base=name_base,
             simulate_days=1,
         )
@@ -50,7 +50,7 @@ class TestConsensusScenarioIntegration:
             await execute_test_case(
                 scenario=scenario,
                 delay_s=0.0,
-                loss_percent=0.0,
+                loss_rate=0.0,
                 name_base=str(tmp_path / "consensus"),
                 simulate_days=1,
             )
@@ -81,3 +81,48 @@ class TestConsensusScenarioIntegration:
                 simulate_days=1,
                 leader_damping=2.5,
             )
+
+
+class TestConsensusUnderLoss:
+    """Consensus under message loss (every scenario accepts a loss rate)."""
+
+    @pytest.mark.parametrize("loss_rate", [0.05, 0.2])
+    async def test_balances_demand_under_loss(self, tmp_path, loss_rate):
+        await self._run(
+            tmp_path, f"loss{loss_rate}", loss_rate=loss_rate, seed=1, strict=True
+        )
+
+    async def _run(self, tmp_path, name, **kwargs):
+        name_base = str(tmp_path / name)
+        await execute_test_case(
+            scenario=build_toy_network(periods=24),
+            delay_s=0.02,
+            name_base=name_base,
+            simulate_days=1,
+            **kwargs,
+        )
+        return pd.read_csv(f"{name_base}-df.csv", index_col=0)
+
+    async def test_same_seed_gives_identical_results(self, tmp_path):
+        a = await self._run(tmp_path, "a", loss_rate=0.05, seed=1)
+        b = await self._run(tmp_path, "b", loss_rate=0.05, seed=1)
+        pd.testing.assert_frame_equal(a, b)
+
+    async def test_dead_run_is_reported_as_degraded(self, tmp_path, caplog):
+        # With every message lost the kick-off is never acknowledged and no
+        # generator ever answers; the leader gives up after its polls, marks
+        # the run degraded and the balance check fails (this used to write
+        # outputs without any error).
+        await self._run(tmp_path, "lost", loss_rate=1.0)
+        assert "kick-off was never acknowledged" in caplog.text
+        assert "degraded" in caplog.text
+        assert "thermal0" in caplog.text
+        assert "violate power balance" in caplog.text
+
+    async def test_dead_run_raises_under_strict(self, tmp_path):
+        with pytest.raises(RuntimeError, match="power balance check failed"):
+            await self._run(tmp_path, "strict", loss_rate=1.0, strict=True)
+
+    async def test_deprecated_loss_percent_keyword(self, tmp_path):
+        with pytest.warns(DeprecationWarning, match="loss_percent"):
+            await self._run(tmp_path, "pct", loss_percent=0.0)

@@ -15,6 +15,8 @@ import argparse
 import asyncio
 import logging
 import math
+import random
+import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from dataclasses import replace as _dataclass_replace
@@ -23,8 +25,11 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from distributed_resource_optimization.carrier.mango import DistributedOptimizationRole
-from mango import Role
+from distributed_resource_optimization.carrier.mango import (
+    DistributedOptimizationRole,
+    RoleLocalMessage,
+)
+from mango import Role, sender_addr
 from mango.simulation.world import record_agent_having
 
 from energy_scheduling_benchmark import (
@@ -62,6 +67,8 @@ __all__ = [
     "resolve_scenario",
     "build_behavior",
     "build_world",
+    "register_component_agent",
+    "resolve_loss_rate",
     "_clip_scenario",
     "_lookup_ts",
     "_scalar",
@@ -75,6 +82,9 @@ __all__ = [
     "carrier_style",
     "build_scenario_argparser",
     "require_lossless_transport",
+    "LossTolerance",
+    "loss_tolerance",
+    "generator_agent",
     "filter_and_cache_statics",
     "collect_generator_refs",
     "build_demand_horizon",
@@ -88,8 +98,12 @@ __all__ = [
     "run_scenario_main",
     "PowerLoadInfo",
     "OptimizationFinishedInfo",
+    "ScheduleRequest",
+    "KickOff",
+    "KickOffAck",
     "PowerLoadMonitoring",
     "PowerLoadAggregator",
+    "GeneratorResultRole",
     "make_finish_callback",
 ]
 
@@ -117,8 +131,42 @@ def build_behavior(scenario: ScenarioData) -> PyPSABehavior:
     return PyPSABehavior.from_scenario(scenario)
 
 
+def resolve_loss_rate(
+    loss_rate: float = 0.0, loss_percent: float | None = None
+) -> float:
+    """Return the message-loss probability (a fraction in ``[0, 1]``).
+
+    *loss_percent* is the deprecated way to pass it, as a real percentage
+    (``5`` means 5 %); it is converted and wins over *loss_rate* when given.
+
+    :raises ValueError: If the resulting rate lies outside ``[0, 1]``.
+    """
+    if loss_percent is not None:
+        warnings.warn(
+            "loss_percent is deprecated; pass loss_rate as a fraction "
+            f"(loss_percent={loss_percent} -> loss_rate={loss_percent / 100.0}).",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        loss_rate = loss_percent / 100.0
+    if not 0.0 <= loss_rate <= 1.0:
+        raise ValueError(f"loss_rate must be a fraction in [0, 1], got {loss_rate!r}.")
+    return float(loss_rate)
+
+
+def register_component_agent(world: Any, agent: Any, ref: ComponentRef) -> Any:
+    """Register *agent* as ``ref.component_id`` and bind it to *ref* in the environment.
+
+    mango's ``world.register`` forwards extra keyword arguments to the
+    environment's ``install`` hook, so a single call both registers the agent
+    and installs it for *ref* (a separate ``world.environment.install`` would
+    run the hook a second time, the first time without ``id``).
+    """
+    return world.register(agent, suggested_aid=ref.component_id, id=ref)
+
+
 def build_world(
-    scenario: ScenarioData, *, delay_s: float, loss_percent: float
+    scenario: ScenarioData, *, delay_s: float, loss_rate: float = 0.0, seed: int = 0
 ) -> tuple[Any, PyPSABehavior]:
     """Build the mango simulation ``world`` + environment behavior for *scenario*.
 
@@ -128,15 +176,22 @@ def build_world(
     :param scenario: Scenario bundle to drive, already clipped to the
         simulated window (see :func:`_clip_scenario`).
     :param delay_s: Comms delay (seconds) for :class:`SimpleCommunicationSimulation`.
-    :param loss_percent: Comms packet-loss percentage for the same.
+    :param loss_rate: Probability in ``[0, 1]`` that a message is lost. mango's
+        ``SimpleCommunicationSimulation`` names this argument ``loss_percent``
+        but treats it as a fraction.
+    :param seed: Seed for the loss draws, so lossy runs are reproducible.
     """
     from mango.simulation.communication import SimpleCommunicationSimulation
     from mango.simulation.environment import DefaultEnvironment
     from mango.simulation.world import create_world
 
+    loss_rate = resolve_loss_rate(loss_rate)
+    logger.info(
+        "Communication: delay %.4g s, loss rate %.4g, seed %d", delay_s, loss_rate, seed
+    )
     behavior = build_behavior(scenario)
     com_sim = SimpleCommunicationSimulation(
-        default_delay_s=delay_s, loss_percent=loss_percent
+        default_delay_s=delay_s, loss_percent=loss_rate, rng=random.Random(seed)
     )
     # No scenario reads world.recorded_messages, and keeping every message's
     # content for the whole run dominates memory (OOM on lower_saxony_2030).
@@ -432,7 +487,51 @@ class StorageParams:
         )
 
 
-def require_lossless_transport(loss_percent: float, algorithm_name: str) -> None:
+@dataclass(frozen=True)
+class LossTolerance:
+    """Timeouts that let a scenario run through lost messages.
+
+    All in simulation seconds.  Without loss none of them fires: rounds and
+    requests complete after one or two message delays, well before their
+    deadline.
+    """
+
+    #: Peer-to-peer round deadline / ADMM per-round answer timeout.
+    round_timeout: float
+    #: Deadline for applying an hour whose load reports are incomplete.
+    load_timeout: float
+    #: Timeout of one leader request (kick-off, schedule/report poll).
+    request_timeout: float
+    #: Interval between the leader's polls for missing results.
+    result_poll_s: float
+    #: Polls before a missing result is given up (degraded run).
+    result_retries: int
+
+
+def loss_tolerance(
+    delay_s: float,
+    *,
+    round_timeout: float | None = None,
+    result_poll_s: float = 300.0,
+    result_retries: int = 12,
+) -> LossTolerance:
+    """Default :class:`LossTolerance` for a comms delay of *delay_s*.
+
+    Round, load and request timeouts default to three message delays (a
+    request plus its reply take two); at least 1 ms, so a zero-delay world
+    still gets a positive deadline.
+    """
+    base = max(float(delay_s), 1e-3)
+    return LossTolerance(
+        round_timeout=float(round_timeout) if round_timeout is not None else 3.0 * base,
+        load_timeout=3.0 * base,
+        request_timeout=3.0 * base,
+        result_poll_s=float(result_poll_s),
+        result_retries=int(result_retries),
+    )
+
+
+def require_lossless_transport(loss_rate: float, algorithm_name: str) -> None:
     """Fail fast instead of deadlocking under simulated packet loss.
 
     FDGDM, Diffusion, Exact Diffusion, DEED-ADMM, and ADMM all advance a
@@ -444,16 +543,16 @@ def require_lossless_transport(loss_percent: float, algorithm_name: str) -> None
     algorithm, which has a catch-up path that lets a node skip ahead once
     any neighbour's message for a later iteration arrives.
 
-    :param loss_percent: The scenario's configured comms packet-loss percentage.
+    :param loss_rate: The scenario's configured message-loss probability (fraction).
     :param algorithm_name: Name to include in the error message.
-    :raises ValueError: If *loss_percent* is not exactly zero.
+    :raises ValueError: If *loss_rate* is not exactly zero.
     """
-    if loss_percent != 0.0:
+    if loss_rate != 0.0:
         raise ValueError(
-            f"{algorithm_name} requires lossless message delivery (loss_percent=0.0); "
-            f"got {loss_percent!r}. This algorithm waits for every neighbour's reply "
+            f"{algorithm_name} requires lossless message delivery (loss_rate=0.0); "
+            f"got {loss_rate!r}. This algorithm waits for every neighbour's reply "
             "each round with no retry, so any packet loss can deadlock the run instead "
-            "of degrading gracefully. Use --loss-percent 0 (or omit the flag)."
+            "of degrading gracefully. Use --loss-rate 0 (or omit the flag)."
         )
 
 
@@ -712,6 +811,35 @@ def carrier_style(net: Any) -> tuple[dict[str, str], dict[str, str]]:
     return colors, names
 
 
+def _bounded_float(lo: float, hi: float) -> Callable[[str], float]:
+    """argparse ``type=`` that parses a float and rejects values outside ``[lo, hi]``."""
+
+    def parse(text: str) -> float:
+        try:
+            value = float(text)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"not a number: {text!r}") from None
+        if not lo <= value <= hi:
+            raise argparse.ArgumentTypeError(
+                f"must be in [{lo:g}, {hi:g}], got {value:g}"
+            )
+        return value
+
+    return parse
+
+
+def loss_rate_from_args(args: argparse.Namespace) -> float:
+    """Resolve ``--loss-rate`` / deprecated ``--loss-percent`` into one fraction."""
+    if args.loss_percent is not None:
+        logger.warning(
+            "--loss-percent is deprecated; use --loss-rate %g instead of --loss-percent %g.",
+            args.loss_percent / 100.0,
+            args.loss_percent,
+        )
+        return args.loss_percent / 100.0
+    return 0.0 if args.loss_rate is None else args.loss_rate
+
+
 def build_scenario_argparser(
     description: str | None,
     *,
@@ -728,7 +856,7 @@ def build_scenario_argparser(
     :param lossless_only: If true, this scenario's algorithm advances a round
         only once every neighbour has replied (no retry/partial-quorum
         fallback — see :func:`require_lossless_transport`), so
-        ``--loss-percent`` only documents that constraint rather than
+        ``--loss-rate`` only documents that constraint rather than
         offering a working knob.
     :param with_balance_tol: If true, add ``--balance-tol`` (the power-balance
         tolerance passed to :class:`PowerLoadAggregator`) and ``--strict``
@@ -747,17 +875,59 @@ def build_scenario_argparser(
         ),
     )
     parser.add_argument("--delay-s", type=float, default=0.02, help="Comms delay (s).")
-    parser.add_argument(
-        "--loss-percent",
-        type=float,
-        default=0.0,
+    lossless_note = (
+        " This scenario waits for every neighbour's reply each round with no "
+        "retry, so any non-zero value raises ValueError instead of running."
+        if lossless_only
+        else ""
+    )
+    loss = parser.add_mutually_exclusive_group()
+    loss.add_argument(
+        "--loss-rate",
+        type=_bounded_float(0.0, 1.0),
+        default=None,
         help=(
-            "Comms packet-loss percentage. This scenario waits for every "
-            "neighbour's reply each round with no retry, so any non-zero "
-            "value raises ValueError instead of running (use 0, or omit "
-            "the flag)."
-            if lossless_only
-            else "Comms packet-loss percentage."
+            "Probability that a message is lost, as a fraction in [0, 1] "
+            "(e.g. 0.05 for 5%%; default 0)." + lossless_note
+        ),
+    )
+    loss.add_argument(
+        "--loss-percent",
+        type=_bounded_float(0.0, 100.0),
+        default=None,
+        help="Deprecated: message loss in percent, 0-100 (5 means 5%%). Use --loss-rate.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Seed for the message-loss draws (default 0), so lossy runs are reproducible.",
+    )
+    parser.add_argument(
+        "--round-timeout",
+        type=float,
+        default=None,
+        help=(
+            "Seconds (simulation time) a round waits for missing messages before "
+            "advancing with the last received values (default: 3 x --delay-s)."
+        ),
+    )
+    parser.add_argument(
+        "--result-poll-s",
+        type=float,
+        default=300.0,
+        help=(
+            "Interval (simulation seconds) between the leader's requests for "
+            "results that never arrived (default 300)."
+        ),
+    )
+    parser.add_argument(
+        "--result-retries",
+        type=int,
+        default=12,
+        help=(
+            "Requests for a missing result before the run continues without it "
+            "and is marked degraded (default 12)."
         ),
     )
     parser.add_argument("--name-base", type=str, default=default_name_base)
@@ -834,7 +1004,32 @@ class PowerLoadInfo:
 
 @dataclass
 class OptimizationFinishedInfo:
-    """Sent by a generator agent once its distributed-optimization run is done."""
+    """A generator's finished schedule, sent to the leader.
+
+    Sent when the generator's run is done, and again as the reply to a
+    :class:`ScheduleRequest` (so a lost one can be recovered).
+    """
+
+    aid: str
+    schedule: np.ndarray | None = None
+
+
+class ScheduleRequest(RoleLocalMessage):
+    """Leader → generator: send your finished schedule (answered by
+    :class:`GeneratorResultRole`, never seen by the algorithm)."""
+
+
+@dataclass
+class KickOff(RoleLocalMessage):
+    """Leader → the trigger generator: start the distributed run with
+    *start_message* (acknowledged, so a lost kick-off is retried)."""
+
+    start_message: Any
+
+
+@dataclass
+class KickOffAck:
+    """Reply to :class:`KickOff`."""
 
     aid: str
 
@@ -856,14 +1051,60 @@ class PowerLoadMonitoring(Role):
         if not isinstance(event, PowerUpdateInfo):
             return
         power = self._behavior.observe(self.context.aid, "max_active_power")
-        asyncio.create_task(
-            self.context.send_message(
-                PowerLoadInfo(
-                    power_load=float(power), time=self.context.current_timestamp
-                ),
-                self._target,
-            )
+        self.context.schedule_instant_message(
+            PowerLoadInfo(power_load=float(power), time=self.context.current_timestamp),
+            self._target,
         )
+
+
+class GeneratorResultRole(Role):
+    """Generator-side companion of the :class:`DistributedOptimizationRole`.
+
+    Remembers the finished schedule (set by :func:`make_finish_callback`) and
+    answers the leader's :class:`ScheduleRequest` with it, so a lost
+    "finished" message can be recovered.  On :class:`KickOff` it starts the
+    local algorithm once and acknowledges every request, so a lost kick-off is
+    retried without ever restarting a run.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        #: The finished schedule, ``None`` while the run is in progress.
+        self.schedule: np.ndarray | None = None
+        self._kicked_off = False
+
+    def setup(self) -> None:
+        self.context.subscribe_message(
+            self, self._on_schedule_request, lambda c, m: isinstance(c, ScheduleRequest)
+        )
+        self.context.subscribe_message(
+            self, self._on_kick_off, lambda c, m: isinstance(c, KickOff)
+        )
+
+    def _reply(self, content: Any, meta: dict) -> None:
+        self.context.schedule_instant_task(self.context.reply_to(content, meta))
+
+    def _on_schedule_request(self, content: ScheduleRequest, meta: dict) -> None:
+        if self.schedule is None:
+            return  # still running: the leader asks again later
+        self._reply(
+            OptimizationFinishedInfo(aid=self.context.aid, schedule=self.schedule), meta
+        )
+
+    def _on_kick_off(self, content: KickOff, meta: dict) -> None:
+        if not self._kicked_off:
+            self._kicked_off = True
+            self.context.get_role(DistributedOptimizationRole).start(
+                content.start_message
+            )
+        self._reply(KickOffAck(aid=self.context.aid), meta)
+
+
+def generator_agent(opt_role: DistributedOptimizationRole) -> Any:
+    """A generator agent: the optimization role plus its :class:`GeneratorResultRole`."""
+    from mango import agent_composed_of
+
+    return agent_composed_of(opt_role, GeneratorResultRole())
 
 
 class PowerLoadAggregator(Role):
@@ -874,6 +1115,22 @@ class PowerLoadAggregator(Role):
     report for a given timestep, the aggregator applies the pre-computed
     set-points for that hour. Timesteps that arrive before the optimization
     run is done are held in ``_pending`` and flushed immediately afterwards.
+
+    Message loss (all optional; without loss none of it changes a run):
+
+    * *load_timeout*: every hour is applied at the latest *load_timeout*
+      seconds after it starts, even if load reports are missing; a missing
+      load counts with its last reported value (the hour's forecast total if
+      a load never reported).
+    * *trigger_addr_is_generator*: the kick-off is a :class:`KickOff` request
+      to the trigger generator's :class:`GeneratorResultRole`, retried (mango
+      ``gather``) until acknowledged; *start_locally* instead starts a run on
+      this agent without any message (e.g. an ADMM coordinator role).
+    * *generator_addrs* + *result_poll_s*: every *result_poll_s* seconds the
+      leader ``gather``\ s the schedules still missing; after *result_retries*
+      polls a missing generator gets an all-zero schedule and the run is
+      marked degraded (:attr:`degraded_generators`), which the balance check
+      then reports.
     """
 
     def __init__(
@@ -892,6 +1149,13 @@ class PowerLoadAggregator(Role):
         balance_label: str = "",
         balance_tol: float = 0.01,
         slack: SlackSpec | None = None,
+        start_locally: Callable[[Any], None] | None = None,
+        generator_addrs: dict[str, Any] | None = None,
+        load_timeout: float | None = None,
+        request_timeout: float = 1.0,
+        result_poll_s: float | None = None,
+        result_retries: int = 12,
+        kick_off_retries: int = 20,
     ) -> None:
         super().__init__()
         self._slack = slack
@@ -913,17 +1177,31 @@ class PowerLoadAggregator(Role):
         )
         self._balance_label = balance_label
         self._balance_tol = balance_tol
+        self._start_locally = start_locally
+        # Kept by reference: a scenario may fill it after registering the units.
+        self._generator_addrs = generator_addrs if generator_addrs is not None else {}
+        self._load_timeout = load_timeout
+        self._request_timeout = request_timeout
+        self._result_poll_s = result_poll_s
+        self._result_retries = result_retries
+        self._kick_off_retries = kick_off_retries
 
         self._ready: bool = False
         self._finished_aids: set[str] = set()
         self._pending: dict[int, float] = {}
 
-        self.demand_map: dict[Any, list[float]] = {}
+        self.demand_map: dict[Any, dict[Any, float]] = {}
+        self._closed_times: set[Any] = set()
+        self._last_load: dict[Any, float] = {}
         self.target: float = 0.0  # recorded by the world for plotting
         #: Largest per-timestep |Σ schedules − demand| / demand after the
         #: optimization finished; ``None`` until verified (or if no
         #: ``demand_target`` was supplied).
         self.balance_max_rel_gap: float | None = None
+        #: Generators that never delivered a schedule and got the zero default.
+        self.degraded_generators: list[str] = []
+        #: Hours applied at their deadline with at least one load missing.
+        self.hours_with_missing_loads: int = 0
 
     def setup(self) -> None:
         self.context.subscribe_message(
@@ -936,6 +1214,7 @@ class PowerLoadAggregator(Role):
         )
 
     def on_ready(self) -> None:
+        self._arm_hour_deadlines()
         if self._trigger is None or self._n_finished_required == 0:
             # All schedules are pre-filled; nothing to run. Still verify the
             # balance here — schedule_by_aid was already populated by the
@@ -947,9 +1226,110 @@ class PowerLoadAggregator(Role):
             self._ready = True
             self._verify_balance()
             return
-        asyncio.create_task(
-            self.context.send_message(self._build_start_message(), self._trigger)
+        if self._start_locally is not None:
+            self._start_locally(self._build_start_message())
+        elif self._generator_addrs:
+            self.context.schedule_instant_task(self._kick_off())
+        else:
+            self.context.schedule_instant_message(
+                self._build_start_message(), self._trigger
+            )
+        self._schedule_result_poll(1)
+
+    def _arm_hour_deadlines(self) -> None:
+        """Apply every hour at its deadline, whether or not any report arrived."""
+        if self._load_timeout is None:
+            return
+        for time in self._time_to_index:
+            self.context.schedule_timestamp_task(
+                self._close_hour_at_deadline(time), float(time) + self._load_timeout
+            )
+
+    # -- kick-off and result collection ---------------------------------------
+
+    async def _kick_off(self) -> None:
+        """Send :class:`KickOff` to the trigger generator until acknowledged."""
+        request = KickOff(start_message=self._build_start_message())
+        for _ in range(self._kick_off_retries):
+            replies = await self.context.gather(
+                request,
+                [self._trigger],
+                timeout=self._request_timeout,
+                reply_type=KickOffAck,
+            )
+            if replies:
+                return
+        logger.error(
+            "%s: the kick-off was never acknowledged after %d attempts; the "
+            "distributed run did not start.",
+            self._balance_label or type(self).__name__,
+            self._kick_off_retries,
         )
+
+    def _schedule_result_poll(self, attempt: int) -> None:
+        if self._result_poll_s is None or not self._generator_addrs:
+            return
+        self.context.schedule_timestamp_task(
+            self._poll_results(attempt),
+            self.context.current_timestamp + self._result_poll_s,
+        )
+
+    async def _poll_results(self, attempt: int) -> None:
+        """Ask the generators whose schedule is still missing for it."""
+        if self._ready:
+            return
+        missing = [
+            aid for aid in self._generator_addrs if aid not in self._finished_aids
+        ]
+        if missing:
+            replies = await self.context.gather(
+                self._result_request(),
+                [self._generator_addrs[aid] for aid in missing],
+                timeout=self._request_timeout,
+                reply_type=self._finished_message_type,
+            )
+            for reply in replies.values():
+                self._handle_finished(reply, {})
+        if self._ready:
+            return
+        if attempt < self._result_retries:
+            self._schedule_result_poll(attempt + 1)
+            return
+        still_missing = [
+            aid for aid in self._generator_addrs if aid not in self._finished_aids
+        ]
+        self.degraded_generators = still_missing
+        logger.error(
+            "%s: no answer from %d unit(s) after %d polls (%s); continuing "
+            "without them. Treat this run as degraded.",
+            self._balance_label or type(self).__name__,
+            len(still_missing),
+            attempt,
+            ", ".join(still_missing),
+        )
+        self._give_up(still_missing)
+
+    def _result_request(self) -> Any:
+        """The request sent to units whose result is still missing."""
+        return ScheduleRequest()
+
+    def _give_up(self, missing: list[str]) -> None:
+        """Units in *missing* never answered: give them all-zero schedules."""
+        horizon = len(self._demand_target) if self._demand_target is not None else 0
+        for aid in missing:
+            self._handle_finished(
+                OptimizationFinishedInfo(aid=aid, schedule=np.zeros(horizon)), {}
+            )
+
+    def accept_schedules(self, schedules: dict[str, np.ndarray]) -> None:
+        """Take schedules that are already on this agent (e.g. from a local
+        coordinator) as if every generator had reported them."""
+        for aid, schedule in schedules.items():
+            self._handle_finished(
+                OptimizationFinishedInfo(aid=aid, schedule=schedule), {}
+            )
+
+    # -- applying the schedule -------------------------------------------------
 
     def _apply_schedule_index(self, idx: int, target_total: float) -> None:
         self.target = float(target_total)
@@ -962,6 +1342,13 @@ class PowerLoadAggregator(Role):
                 self._behavior.act(aid, "regulate", float(p_schedule[idx]))
 
     def _handle_finished(self, message: Any, meta: dict) -> None:
+        if message.aid in self._finished_aids:
+            return  # duplicate (e.g. the reply to a poll after all)
+        schedule = getattr(message, "schedule", None)
+        if schedule is not None:
+            self._schedule_by_aid[message.aid] = np.asarray(
+                schedule, dtype=float
+            ).copy()
         self._finished_aids.add(message.aid)
         if len(self._finished_aids) == self._n_finished_required:
             self._ready = True
@@ -969,6 +1356,21 @@ class PowerLoadAggregator(Role):
             for idx in sorted(self._pending):
                 self._apply_schedule_index(idx, self._pending[idx])
             self._pending.clear()
+
+    @property
+    def ready(self) -> bool:
+        """Whether every required generator reported and the schedule is being applied."""
+        return self._ready
+
+    def missing_generators(self) -> list[str]:
+        """Generators whose schedule never arrived; empty once the run is ready."""
+        if self._ready:
+            return []
+        return [
+            aid
+            for aid in self._generator_aids
+            if aid not in self._finished_aids and aid not in self._schedule_by_aid
+        ]
 
     def _verify_balance(self) -> None:
         """Check the finished schedules against the known demand target.
@@ -1047,14 +1449,42 @@ class PowerLoadAggregator(Role):
             if idx < gap.size
         }
 
-    def _handle_load_info(self, message: PowerLoadInfo, meta: dict) -> None:
-        bucket = self.demand_map.setdefault(message.time, [])
-        bucket.append(float(message.power_load))
-        if len(bucket) != self.number_loads:
-            return  # wait until all loads report for this timestep
+    # -- load reports -----------------------------------------------------------
 
-        total = float(sum(bucket))
-        idx = self._time_to_index.get(round(float(message.time), 6))
+    def _handle_load_info(self, message: PowerLoadInfo, meta: dict) -> None:
+        sender = sender_addr(meta).aid if meta else None
+        key = sender if sender is not None else object()  # unknown sender: own slot
+        self._last_load[key] = float(message.power_load)
+        time = round(float(message.time), 6)
+        if time in self._closed_times:
+            return  # hour already applied (at its deadline); keep the value only
+        bucket = self.demand_map.setdefault(time, {})
+        bucket.setdefault(key, float(message.power_load))
+        if len(bucket) != self.number_loads:
+            return  # wait until all loads report for this timestep (or the deadline)
+        self._close_hour(time, float(sum(bucket.values())))
+
+    async def _close_hour_at_deadline(self, time: Any) -> None:
+        if time in self._closed_times:
+            return
+        bucket = self.demand_map.get(time, {})
+        missing = self.number_loads - len(bucket)
+        if missing <= 0:
+            return
+        self.hours_with_missing_loads += 1
+        known_others = [v for k, v in self._last_load.items() if k not in bucket]
+        idx = self._time_to_index.get(time)
+        if len(known_others) >= missing:
+            total = float(sum(bucket.values())) + float(sum(known_others[:missing]))
+        elif idx is not None and self._demand_target is not None:
+            total = float(self._demand_target[idx])  # a load never reported
+        else:
+            total = float(sum(bucket.values()))
+        self._close_hour(time, total)
+
+    def _close_hour(self, time: Any, total: float) -> None:
+        self._closed_times.add(time)
+        idx = self._time_to_index.get(time)
         if idx is None:
             return
 
@@ -1070,16 +1500,19 @@ class PowerLoadAggregator(Role):
 def make_finish_callback(
     *,
     leader_addr_ref: dict[str, Any | None],
-    schedule_by_aid: dict[str, np.ndarray],
     finished_message_type: type,
     algorithm_label: str,
     schedule_attr: str = "actor.P",
+    schedule_by_aid: dict[str, np.ndarray] | None = None,
 ) -> Any:
     """Return the ``(algorithm, carrier) -> None`` hook shared by the
     carrier-based algorithms (consensus, diffusion, FDGDM, DEED-ADMM).
 
     *schedule_attr* is a dotted attribute path read off *algorithm* to obtain
-    the finished per-timestep schedule (e.g. ``"actor.P"`` or ``"P"``).
+    the finished per-timestep schedule (e.g. ``"actor.P"`` or ``"P"``).  The
+    schedule travels to the leader in the finished message and stays on the
+    agent's :class:`GeneratorResultRole` for later requests.
+    *schedule_by_aid* is accepted for backwards compatibility and ignored.
     """
 
     def handle_finished(algorithm: Any, carrier: Any) -> None:
@@ -1099,7 +1532,10 @@ def make_finish_callback(
                 f"attribute path {schedule_attr!r} ({exc}); the run may have "
                 "aborted before producing a schedule."
             ) from exc
-        schedule_by_aid[aid] = np.asarray(obj, dtype=float).copy()
+        schedule = np.asarray(obj, dtype=float).copy()
+        result_role = role.context.get_role(GeneratorResultRole)
+        if result_role is not None:
+            result_role.schedule = schedule
 
         converged = getattr(algorithm, "converged", None)
         iterations = getattr(algorithm, "iterations", None)
@@ -1114,14 +1550,14 @@ def make_finish_callback(
 
         leader_addr = leader_addr_ref.get("addr")
         if leader_addr is not None:
-            asyncio.create_task(
-                role.context.send_message(finished_message_type(aid=aid), leader_addr)
+            role.context.schedule_instant_message(
+                finished_message_type(aid=aid, schedule=schedule), leader_addr
             )
         logger.info(
             "%s finished for %s (schedule len=%s%s)",
             algorithm_label,
             aid,
-            schedule_by_aid[aid].size,
+            schedule.size,
             f", iterations={iterations}" if iterations is not None else "",
         )
 
@@ -1237,13 +1673,27 @@ def write_scenario_outputs(
             raise ValueError("slack requires the scenario's aggregator.")
         if strict:
             raise ValueError("slack cannot be combined with strict.")
+    if aggregator is not None and not aggregator.ready:
+        # Without this a run whose optimization never finished (e.g. a
+        # participant's last messages were lost) wrote outputs silently: no
+        # schedule was ever applied and the target column stayed at 0.
+        missing = aggregator.missing_generators()
+        logger.error(
+            "%s: the distributed schedule never finished, so no set-points were "
+            "applied; %d generator(s) never reported: %s. Treat this run's "
+            "outputs as invalid.",
+            name_base,
+            len(missing),
+            ", ".join(missing) or "(unknown)",
+        )
     if aggregator is not None and strict:
         gap = aggregator.balance_max_rel_gap
         if gap is None:
             raise RuntimeError(
                 f"{name_base}: power balance was never verified (the "
-                "distributed schedule never finished); refusing to write "
-                "outputs because --strict was given."
+                "distributed schedule never finished; missing: "
+                f"{', '.join(aggregator.missing_generators()) or 'none'}); "
+                "refusing to write outputs because --strict was given."
             )
         if gap > balance_tol:
             raise RuntimeError(
@@ -1406,7 +1856,11 @@ def run_scenario_main(
         execute_test_case(
             scenario=scenario,
             delay_s=args.delay_s,
-            loss_percent=args.loss_percent,
+            loss_rate=loss_rate_from_args(args),
+            seed=args.seed,
+            round_timeout=args.round_timeout,
+            result_poll_s=args.result_poll_s,
+            result_retries=args.result_retries,
             name_base=str(args.out_dir / args.name_base),
             simulate_days=args.simulate_days,
             slack=slack,

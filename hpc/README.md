@@ -265,7 +265,7 @@ with `seff` after the first sweep; smaller requests start sooner.
   create their world with `record_messages=False`: on `base_s_5_elec_2019` (1 day) peak
   memory dropped from 2.5 GB to 0.36 GB (consensus) and 1.8 GB to 0.36 GB (diffusion),
   with byte-identical results. This needs a mango version that has `record_messages`
-  (branch `record-messages-opt-out`); an older mango fails with
+  (mango `development`, where the opt-out is merged); an older mango fails with
   `create_world() got an unexpected keyword argument 'record_messages'`.
 * The 32 GB / 24 h for the iterative scenarios is still a generous guess — tighten
   it with `seff` after the next sweep.
@@ -294,7 +294,7 @@ cp -r $WORK/esb/results $DATA/esb-results-$(date +%F)
   use; to use them in jobs, load each once on the login node
   (`python -c "import pypsa; pypsa.examples.ac_dc_meshed()"`), which caches it under
   `~/.cache/pypsa`, visible to the compute nodes.
-* **Reproducibility.** With `--loss-percent 0` (always passed by these scripts) and the
+* **Reproducibility.** With `--loss-rate 0` (always passed by these scripts) and the
   constant `--delay-s`, runs are deterministic, so cluster results should match the
   workstation. Comparing `cost_comparison.csv` for a network you already ran locally is
   a good acceptance test.

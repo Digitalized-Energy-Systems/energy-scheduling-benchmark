@@ -77,15 +77,47 @@ Seven scenario entry points are installed:
 
 All seven share the same CLI flags: `--network` (default `toy`),
 `--name-base`, `--out-dir` (directory for the outputs, created if missing;
-default: the current directory), `--simulate-days` (default `3`), `--delay-s` (comms delay,
-default `0.02`), `--loss-percent` (packet loss, given as a fraction from 0 to
-1, e.g. `0.05` for 5 % — despite the name, not 0–100; default `0.0`),
-`--log-level`, plus `--balance-tol` (max per-timestep |generation − demand| /
-demand before a finished run is flagged as not converged, default `0.01`) and
-`--strict` (exit with an error instead of writing outputs when that check
-fails).  Every scenario except averaging consensus — including central
-dispatch — requires lossless transport and refuses to run with
-`--loss-percent != 0`.
+default: the current directory), `--simulate-days` (default `3`), `--delay-s`
+(comms delay, default `0.02`), `--loss-rate` (probability that a message is lost, a
+fraction from 0 to 1, e.g. `0.05` for 5 %; default `0`), `--seed` (seed for
+the loss draws, default `0`, so lossy runs are reproducible), `--log-level`,
+plus `--balance-tol` (max per-timestep |generation − demand| / demand before a
+finished run is flagged as not converged, default `0.01`) and `--strict` (exit
+with an error instead of writing outputs when that check fails, or when the
+distributed schedule never finished).
+
+### Message loss
+
+Every scenario runs under message loss (`--loss-rate`). A value that was not
+updated in time keeps its last received value, or a default if it was never
+received:
+
+* **Algorithm rounds** (consensus, diffusion, exact diffusion, FDGDM,
+  DEED-ADMM) advance when all neighbours reported *or* after `--round-timeout`
+  seconds of simulation time (default 3 × `--delay-s`); a missing neighbour
+  contributes its last value. Pairwise exchanges whose sum must be conserved
+  (FDGDM's power transfers, DEED-ADMM's ξ tracker, exact diffusion's mixing)
+  use running sums, so a lost message delays a transfer instead of losing it.
+* **ADMM** collects each round's answers with mango's `gather` and a timeout;
+  a participant that did not answer keeps its previous value.
+* **Leader**: the kick-off is acknowledged and retried; the hourly set-points
+  are applied at a deadline even if load reports are missing; lost results
+  (schedules, central dispatch's unit reports) are requested again with
+  mango's `gather` every `--result-poll-s` seconds. After `--result-retries`
+  requests a missing result is given up, the run is logged as degraded and
+  the balance check decides whether it is valid.
+
+Without loss none of this changes a run: rounds and requests complete before
+their deadlines, and results match the lossless implementation.
+
+`--loss-percent` is deprecated. It now means a real percentage (0–100, so `5`
+is 5 %) and logs a warning; earlier versions passed its value through as a
+fraction. Use `--loss-rate` instead.
+
+The scenarios need mango `development` (the message-log opt-out is merged
+there): it provides `create_world(record_messages=...)`, and its
+`world.register(agent, ..., id=ref)` installs the agent in the environment in
+the same call.
 
 Algorithm-specific flags (see `<entry-point> --help`):
 

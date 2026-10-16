@@ -11,10 +11,14 @@ from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadAggregator,
     _clip_scenario,
     build_group_map,
+    build_scenario_argparser,
+    build_world,
     carrier_style,
     compute_overall_cost,
     compute_slack,
+    loss_rate_from_args,
     require_lossless_transport,
+    resolve_loss_rate,
     run_scenario_main,
 )
 
@@ -182,3 +186,73 @@ class TestOutDir:
         seen = self._run(["--name-base", "run", "--out-dir", str(out)])
         assert seen["name_base"] == str(out / "run")
         assert out.is_dir()
+
+
+class TestResolveLossRate:
+    def test_fraction_passes_through(self):
+        assert resolve_loss_rate(0.05) == 0.05
+
+    def test_deprecated_percent_is_converted_and_warns(self):
+        with pytest.warns(DeprecationWarning, match="loss_percent"):
+            assert resolve_loss_rate(loss_percent=5.0) == pytest.approx(0.05)
+
+    @pytest.mark.parametrize("rate", [-0.1, 1.5, 5.0])
+    def test_out_of_range_rejected(self, rate):
+        with pytest.raises(ValueError, match=r"\[0, 1\]"):
+            resolve_loss_rate(rate)
+
+    def test_percent_above_100_rejected(self):
+        with pytest.warns(DeprecationWarning), pytest.raises(ValueError):
+            resolve_loss_rate(loss_percent=500.0)
+
+
+class TestLossCli:
+    @staticmethod
+    def _parse(*argv):
+        parser = build_scenario_argparser(None, default_name_base="x")
+        return parser.parse_args(list(argv))
+
+    def test_default_is_lossless_with_seed_zero(self):
+        args = self._parse()
+        assert loss_rate_from_args(args) == 0.0
+        assert args.seed == 0
+
+    def test_loss_rate_is_a_fraction(self):
+        assert loss_rate_from_args(self._parse("--loss-rate", "0.05")) == 0.05
+
+    def test_deprecated_loss_percent_is_a_percentage(self):
+        assert loss_rate_from_args(self._parse("--loss-percent", "5")) == pytest.approx(
+            0.05
+        )
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ("--loss-rate", "5"),
+            ("--loss-rate", "-0.1"),
+            ("--loss-percent", "500"),
+            ("--loss-rate", "0.1", "--loss-percent", "10"),
+        ],
+    )
+    def test_invalid_values_rejected(self, argv):
+        with pytest.raises(SystemExit):
+            self._parse(*argv)
+
+    def test_seed_parsed(self):
+        assert self._parse("--seed", "7").seed == 7
+
+
+class TestBuildWorldCommunication:
+    def test_loss_rate_and_seeded_rng_reach_mango(self):
+        scenario = build_toy_network(periods=24)
+        draws = []
+        for _ in range(2):
+            world, _ = build_world(scenario, delay_s=0.0, loss_rate=0.25, seed=3)
+            com_sim = world.container.communication_sim
+            assert com_sim.loss_percent == 0.25
+            draws.append([com_sim._rng.random() for _ in range(5)])
+        assert draws[0] == draws[1]
+
+    def test_out_of_range_loss_rate_rejected(self):
+        with pytest.raises(ValueError):
+            build_world(build_toy_network(periods=24), delay_s=0.0, loss_rate=5.0)

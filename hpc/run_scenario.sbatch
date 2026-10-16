@@ -64,4 +64,4 @@ fi
 # `srun` makes SLURM account memory/CPU per step, so `seff`/`sacct` report it.
 # --export=ALL is required: sbatch --export=NONE sets SLURM_EXPORT_ENV=NONE, which srun
 # inherits, so without it the step would start without the venv/env.sh environment.
-srun --export=ALL "$SCENARIO" --network "$NETWORK_ARG" --loss-percent 0 --name-base "$NAME" --out-dir "$OUT_DIR" "$@"
+srun --export=ALL "$SCENARIO" --network "$NETWORK_ARG" --loss-rate 0 --name-base "$NAME" --out-dir "$OUT_DIR" "$@"

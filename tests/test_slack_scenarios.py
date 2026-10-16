@@ -23,7 +23,7 @@ async def _run(module, tmp_path, name: str, scenario=None, **kwargs) -> pd.DataF
     await module.execute_test_case(
         scenario=scenario or build_toy_network(periods=24),
         delay_s=0.0,
-        loss_percent=0.0,
+        loss_rate=0.0,
         name_base=name_base,
         simulate_days=1,
         **kwargs,
