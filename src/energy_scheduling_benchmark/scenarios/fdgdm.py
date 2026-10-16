@@ -195,7 +195,6 @@ async def execute_test_case(
     round_timeout: float | None = None,
     result_poll_s: float = 300.0,
     result_retries: int = 12,
-    loss_percent: float | None = None,
     name_base: str = "fdgdm",
     simulate_days: int = 3,
     max_iter: int = 300,
@@ -224,7 +223,7 @@ async def execute_test_case(
         Optional slack node (see :class:`SlackSpec`) that imports any
         shortfall and exports any surplus; off when ``None``.
     """
-    loss_rate = resolve_loss_rate(loss_rate, loss_percent)
+    loss_rate = resolve_loss_rate(loss_rate)
     lt = loss_tolerance(
         delay_s,
         loss_rate=loss_rate,

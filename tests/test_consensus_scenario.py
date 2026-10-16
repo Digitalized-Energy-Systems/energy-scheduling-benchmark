@@ -122,7 +122,3 @@ class TestConsensusUnderLoss:
     async def test_dead_run_raises_under_strict(self, tmp_path):
         with pytest.raises(RuntimeError, match="power balance check failed"):
             await self._run(tmp_path, "strict", loss_rate=1.0, strict=True)
-
-    async def test_deprecated_loss_percent_keyword(self, tmp_path):
-        with pytest.warns(DeprecationWarning, match="loss_percent"):
-            await self._run(tmp_path, "pct", loss_percent=0.0)

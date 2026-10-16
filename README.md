@@ -111,10 +111,6 @@ received:
 Without loss none of this changes a run: rounds and requests complete before
 their deadlines, and results match the lossless implementation.
 
-`--loss-percent` is deprecated. It now means a real percentage (0–100, so `5`
-is 5 %) and logs a warning; earlier versions passed its value through as a
-fraction. Use `--loss-rate` instead.
-
 The scenarios need mango `development` (the message-log opt-out is merged
 there): it provides `create_world(record_messages=...)`, and its
 `world.register(agent, ..., id=ref)` installs the agent in the environment in

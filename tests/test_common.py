@@ -192,18 +192,10 @@ class TestResolveLossRate:
     def test_fraction_passes_through(self):
         assert resolve_loss_rate(0.05) == 0.05
 
-    def test_deprecated_percent_is_converted_and_warns(self):
-        with pytest.warns(DeprecationWarning, match="loss_percent"):
-            assert resolve_loss_rate(loss_percent=5.0) == pytest.approx(0.05)
-
     @pytest.mark.parametrize("rate", [-0.1, 1.5, 5.0])
     def test_out_of_range_rejected(self, rate):
         with pytest.raises(ValueError, match=r"\[0, 1\]"):
             resolve_loss_rate(rate)
-
-    def test_percent_above_100_rejected(self):
-        with pytest.warns(DeprecationWarning), pytest.raises(ValueError):
-            resolve_loss_rate(loss_percent=500.0)
 
 
 class TestLossCli:
@@ -220,18 +212,13 @@ class TestLossCli:
     def test_loss_rate_is_a_fraction(self):
         assert loss_rate_from_args(self._parse("--loss-rate", "0.05")) == 0.05
 
-    def test_deprecated_loss_percent_is_a_percentage(self):
-        assert loss_rate_from_args(self._parse("--loss-percent", "5")) == pytest.approx(
-            0.05
-        )
-
     @pytest.mark.parametrize(
         "argv",
         [
             ("--loss-rate", "5"),
             ("--loss-rate", "-0.1"),
-            ("--loss-percent", "500"),
-            ("--loss-rate", "0.1", "--loss-percent", "10"),
+            # The old --loss-percent flag is gone (Q7: --loss-rate replaces it).
+            ("--loss-percent", "5"),
         ],
     )
     def test_invalid_values_rejected(self, argv):

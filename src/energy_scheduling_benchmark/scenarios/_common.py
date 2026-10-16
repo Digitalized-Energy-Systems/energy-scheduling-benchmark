@@ -16,7 +16,6 @@ import asyncio
 import logging
 import math
 import random
-import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from dataclasses import replace as _dataclass_replace
@@ -131,24 +130,11 @@ def build_behavior(scenario: ScenarioData) -> PyPSABehavior:
     return PyPSABehavior.from_scenario(scenario)
 
 
-def resolve_loss_rate(
-    loss_rate: float = 0.0, loss_percent: float | None = None
-) -> float:
+def resolve_loss_rate(loss_rate: float = 0.0) -> float:
     """Return the message-loss probability (a fraction in ``[0, 1]``).
 
-    *loss_percent* is the deprecated way to pass it, as a real percentage
-    (``5`` means 5 %); it is converted and wins over *loss_rate* when given.
-
-    :raises ValueError: If the resulting rate lies outside ``[0, 1]``.
+    :raises ValueError: If the rate lies outside ``[0, 1]``.
     """
-    if loss_percent is not None:
-        warnings.warn(
-            "loss_percent is deprecated; pass loss_rate as a fraction "
-            f"(loss_percent={loss_percent} -> loss_rate={loss_percent / 100.0}).",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-        loss_rate = loss_percent / 100.0
     if not 0.0 <= loss_rate <= 1.0:
         raise ValueError(f"loss_rate must be a fraction in [0, 1], got {loss_rate!r}.")
     return float(loss_rate)
@@ -840,14 +826,7 @@ def _bounded_float(lo: float, hi: float) -> Callable[[str], float]:
 
 
 def loss_rate_from_args(args: argparse.Namespace) -> float:
-    """Resolve ``--loss-rate`` / deprecated ``--loss-percent`` into one fraction."""
-    if args.loss_percent is not None:
-        logger.warning(
-            "--loss-percent is deprecated; use --loss-rate %g instead of --loss-percent %g.",
-            args.loss_percent / 100.0,
-            args.loss_percent,
-        )
-        return args.loss_percent / 100.0
+    """The ``--loss-rate`` fraction (``0`` when not given)."""
     return 0.0 if args.loss_rate is None else args.loss_rate
 
 
@@ -892,8 +871,7 @@ def build_scenario_argparser(
         if lossless_only
         else ""
     )
-    loss = parser.add_mutually_exclusive_group()
-    loss.add_argument(
+    parser.add_argument(
         "--loss-rate",
         type=_bounded_float(0.0, 1.0),
         default=None,
@@ -901,12 +879,6 @@ def build_scenario_argparser(
             "Probability that a message is lost, as a fraction in [0, 1] "
             "(e.g. 0.05 for 5%%; default 0)." + lossless_note
         ),
-    )
-    loss.add_argument(
-        "--loss-percent",
-        type=_bounded_float(0.0, 100.0),
-        default=None,
-        help="Deprecated: message loss in percent, 0-100 (5 means 5%%). Use --loss-rate.",
     )
     parser.add_argument(
         "--seed",
