@@ -98,7 +98,10 @@ class TestMakeFinishCallback:
         sends: list = []
         leader_addr = ("localhost", 5555)
         cb = _make_finish_callback(leader_addr_ref={"addr": leader_addr})
-        cb(self._algorithm(np.array([1.0, 2.0, 3.0])), self._make_fake_carrier("gen0", sends))
+        cb(
+            self._algorithm(np.array([1.0, 2.0, 3.0])),
+            self._make_fake_carrier("gen0", sends),
+        )
 
         assert len(sends) == 1
         msg, addr = sends[0]
@@ -118,7 +121,10 @@ class TestMakeFinishCallback:
     async def test_schedule_is_kept_on_the_result_role(self):
         result_role = GeneratorResultRole()
         cb = _make_finish_callback(leader_addr_ref={"addr": None})
-        cb(self._algorithm(np.array([4.0])), self._make_fake_carrier("gen0", result_role=result_role))
+        cb(
+            self._algorithm(np.array([4.0])),
+            self._make_fake_carrier("gen0", result_role=result_role),
+        )
         assert np.allclose(result_role.schedule, [4.0])
 
     async def test_no_notification_when_leader_addr_is_none(self):
@@ -176,7 +182,9 @@ class TestFDGDMScenarioIntegration:
         net = pypsa.Network()
         net.set_snapshots(pd.date_range("2024-01-01", periods=24, freq="h"))
         net.add("Bus", "b0")
-        net.add("Generator", "g0", bus="b0", carrier="gas", p_nom=10.0, marginal_cost=10.0)
+        net.add(
+            "Generator", "g0", bus="b0", carrier="gas", p_nom=10.0, marginal_cost=10.0
+        )
         scenario = ScenarioData(net=net, timeseries={}, start=datetime(2024, 1, 1))
 
         with pytest.raises(RuntimeError, match="No loads"):
@@ -217,9 +225,7 @@ class TestFDGDMScenarioIntegration:
                 name_base=name_base,
                 simulate_days=1,
             )
-        balance_msgs = [
-            r for r in caplog.records if "power balance" in r.getMessage()
-        ]
+        balance_msgs = [r for r in caplog.records if "power balance" in r.getMessage()]
         assert balance_msgs, "expected a balance verification log entry"
         assert all(r.levelno < logging.ERROR for r in balance_msgs), (
             "balance verification reported a violation on the toy network"
@@ -476,3 +482,53 @@ class TestKeepHourly:
         t_out, Y_out = _keep_hourly(t, Y)
         assert np.allclose(t_out, [500.0])
         assert np.allclose(Y_out, [[2.0, 20.0]])
+
+
+class TestEq24Stopping:
+    async def test_default_stops_early_with_the_same_cost(self, tmp_path, caplog):
+        import logging
+        import re
+
+        from energy_scheduling_benchmark.scenarios.fdgdm import execute_test_case
+
+        def run(name, **kwargs):
+            return execute_test_case(
+                scenario=build_toy_network(periods=24),
+                name_base=str(tmp_path / name),
+                simulate_days=1,
+                **kwargs,
+            )
+
+        caplog.set_level(logging.INFO)
+        await run("early")
+        early_iters = {
+            int(m)
+            for m in re.findall(r"FDGDM finished .*iterations=(\d+)", caplog.text)
+        }
+        caplog.clear()
+        await run("full", tol_ratio=None)
+        full_iters = {
+            int(m)
+            for m in re.findall(r"FDGDM finished .*iterations=(\d+)", caplog.text)
+        }
+        assert full_iters == {300}
+
+        assert early_iters and max(early_iters) < 300
+        early = pd.read_csv(tmp_path / "early-df.csv", index_col=0)["cost:total"].sum()
+        full = pd.read_csv(tmp_path / "full-df.csv", index_col=0)["cost:total"].sum()
+        assert early == pytest.approx(full, rel=1e-3)
+
+    def test_cli_default_is_paper_ratio_and_zero_disables(self):
+        from energy_scheduling_benchmark.scenarios._common import (
+            build_scenario_argparser,
+        )
+        from energy_scheduling_benchmark.scenarios.fdgdm import (
+            PAPER_TOL_RATIO,
+            _add_fdgdm_args,
+        )
+
+        parser = build_scenario_argparser(
+            None, default_name_base="x", extra_args=_add_fdgdm_args
+        )
+        assert parser.parse_args([]).tol_ratio == PAPER_TOL_RATIO
+        assert parser.parse_args(["--tol-ratio", "0"]).tol_ratio == 0.0

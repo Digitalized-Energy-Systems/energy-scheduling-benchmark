@@ -76,6 +76,11 @@ from energy_scheduling_benchmark.scenarios._common import (
 
 logger = logging.getLogger(__name__)
 
+#: Eq. 24 accuracy of Bai et al. 2022 relative to unit size: the paper stops at
+#: ε = 0.01 for units with 0–45 kW boxes (§4). Each thermal agent gets
+#: ``tol = PAPER_TOL_RATIO * p_nom`` on its per-hour step.
+PAPER_TOL_RATIO = 0.01 / 45.0
+
 
 # ---------------------------------------------------------------------------
 # FDGDM-specific pre-scheduling helpers
@@ -198,6 +203,7 @@ async def execute_test_case(
     name_base: str = "fdgdm",
     simulate_days: int = 3,
     max_iter: int = 300,
+    tol_ratio: float | None = PAPER_TOL_RATIO,
     balance_tol: float = 0.01,
     strict: bool = False,
     slack: SlackSpec | None = None,
@@ -209,7 +215,14 @@ async def execute_test_case(
     scenario:
         Pre-built :class:`ScenarioData`.  Defaults to the toy 5-bus network.
     max_iter:
-        Maximum FDGDM iterations per thermal generator.
+        Maximum FDGDM iterations per thermal generator (backstop).
+    tol_ratio:
+        Eq. 24 early stopping: each thermal agent stops contributing once its
+        largest per-hour step is below ``tol_ratio * p_nom``, and the run ends
+        when every agent and its neighbours agree (see the dro FDGDM module).
+        Default: the paper's accuracy relative to unit size
+        (:data:`PAPER_TOL_RATIO`). ``None`` or ``0`` disables it (always
+        ``max_iter`` rounds).
     balance_tol:
         Max allowed per-timestep |generation - demand| / demand before the
         finished schedule is flagged as not converged. Note FDGDM's weight
@@ -442,11 +455,13 @@ async def execute_test_case(
             epsilon=epsilon_by_agent[i],
             initial_schedule=fdgdm_initial_p_by_agent[i].copy(),
         )
+        p_nom = float(statics.get("p_nom", 0.0))
         participant = create_fdgdm_participant(
             finish_callback=finish_callback,
             fdgdm_actor=actor,
             max_iter=max_iter,
             round_timeout=lt.round_timeout,
+            tol=tol_ratio * p_nom if tol_ratio else None,
         )
         opt_role = DistributedOptimizationRole(participant)
         agent = generator_agent(opt_role)
@@ -557,7 +572,16 @@ def _add_fdgdm_args(parser: argparse.ArgumentParser) -> None:
         "--max-iter",
         type=int,
         default=300,
-        help="Maximum FDGDM iterations per thermal generator.",
+        help="Maximum FDGDM iterations per thermal generator (backstop).",
+    )
+    parser.add_argument(
+        "--tol-ratio",
+        type=float,
+        default=PAPER_TOL_RATIO,
+        help=(
+            "Eq. 24 early stop: per-hour step tolerance as a fraction of each "
+            "unit's p_nom (default: the paper's 0.01/45); 0 disables it."
+        ),
     )
 
 
@@ -567,7 +591,7 @@ def main(argv: list[str] | None = None) -> None:
         doc=__doc__,
         default_name_base="fdgdm",
         extra_args=_add_fdgdm_args,
-        extra_kwargs=("max_iter",),
+        extra_kwargs=("max_iter", "tol_ratio"),
         with_balance_tol=True,
         argv=argv,
     )
