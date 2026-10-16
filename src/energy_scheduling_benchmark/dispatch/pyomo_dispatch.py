@@ -195,7 +195,7 @@ class SlackSpec:
     importing replaces generation.
     """
 
-    import_price: float = 3000.0
+    import_price: float = 4000.0
     export_price: float = 0.0
 
 

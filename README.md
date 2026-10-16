@@ -133,7 +133,7 @@ The networks are islanded, so by default every scenario must match demand with i
 own units, and runs that miss by more than 1 % are excluded from the cost
 comparison. `--slack` adds a slack node (the point of common coupling of Bai et
 al. 2022) to all seven scenarios: it imports any shortfall at
-`--slack-import-price` (default 3000 €/MWh) and exports any surplus at
+`--slack-import-price` (default 4000 €/MWh, the EU day-ahead price cap) and exports any surplus at
 `--slack-export-price` (default 0 €/MWh). Both are added to `cost:total` and
 written as `slack:import`/`slack:export` columns; central dispatch gets the same
 slack inside its LP. Off by default. See [`docs/slack-node.md`](docs/slack-node.md).

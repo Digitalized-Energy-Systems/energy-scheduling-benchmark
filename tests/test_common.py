@@ -243,3 +243,14 @@ class TestBuildWorldCommunication:
     def test_out_of_range_loss_rate_rejected(self):
         with pytest.raises(ValueError):
             build_world(build_toy_network(periods=24), delay_s=0.0, loss_rate=5.0)
+
+
+class TestSlackDefaults:
+    def test_import_price_is_the_sdac_cap(self):
+        from energy_scheduling_benchmark.scenarios._common import (
+            build_scenario_argparser,
+        )
+
+        args = build_scenario_argparser(None, default_name_base="x").parse_args([])
+        assert args.slack_import_price == 4000.0
+        assert args.slack_export_price == 0.0

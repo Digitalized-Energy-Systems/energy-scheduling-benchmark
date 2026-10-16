@@ -72,7 +72,7 @@ feasible, even when capacity falls short.
 | Flag | Default | Why |
 |---|---|---|
 | `--slack` | off | Keeps existing results comparable; turn it on per sweep. |
-| `--slack-import-price` | 3000 €/MWh | Must exceed every generator's marginal cost (the dearest on these networks is oil at 84–133 €/MWh), otherwise central dispatch imports instead of generating. It works like a value-of-lost-load penalty: a distributed run that under-supplies pays for it. |
+| `--slack-import-price` | 4000 €/MWh | The harmonised maximum clearing price of the EU single day-ahead coupling (SDAC): +4000 €/MWh since 10 May 2022 (raised from 3000 €/MWh under ACER's HMMCP methodology, CACM Art. 41(1); the current reference value is +4000 / −500 €/MWh). Importing at the market's price ceiling is the most expensive way the grid can cover a shortfall, so it works like a value-of-lost-load penalty: a distributed run that under-supplies pays for it. It must also exceed every generator's marginal cost (the dearest on these networks is oil at 84–133 €/MWh), otherwise central dispatch imports instead of generating. Default until 2026-10-16: 3000 €/MWh (the cap before May 2022). |
 | `--slack-export-price` | 0 €/MWh | Exporting costs the same as curtailing. A positive price (being paid for exports) would make central dispatch generate extra just to sell it. |
 
 `--slack` cannot be combined with `--strict`: the slack closes every gap, so there
@@ -111,7 +111,7 @@ energy-scheduling-benchmark/hpc/submit_all.sh --all -- --slack
   into the distributed iteration. In Bai et al. the PCC output is reported to the
   controllable agents; here it only closes the balance afterwards.
 * **Import price dominates:** a run that under-supplies by 1 % of demand pays roughly
-  3000 × that energy, which can outweigh all generation cost. That is intended (it
+  4000 € per MWh of that energy, which can outweigh all generation cost. That is intended (it
   ranks unconverged runs last) but means costs with import are not generation costs.
 * **FDGDM's `P:` columns** clip storage charging at 0, so for FDGDM
   `Σ P + import − export` does not reproduce demand exactly in charging hours.

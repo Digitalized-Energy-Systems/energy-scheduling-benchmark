@@ -41,7 +41,14 @@ from shapely.geometry import Point
 REGION_PREFIX = "DE9"
 
 # 2030 *national* (whole-Germany) installed-capacity targets [MW].
-# Defaults follow EEG 2023 / WindSeeG headline figures — edit to your scenario.
+# Sources (checked 2026-10-16):
+#   onwind  115 GW — EEG 2023 § 4 Satz 1 Nr. 1 lit. d ("115 Gigawatt im Jahr 2030")
+#   solar   215 GW — EEG 2023 § 4 Satz 1 Nr. 3 lit. d ("215 Gigawatt im Jahr 2030")
+#   offwind  30 GW — WindSeeG § 1 Abs. 2 ("mindestens 30 Gigawatt bis zum Jahr 2030")
+#   battery  24 GW — no statutory target; this value matches large-battery
+#            figures for 2037 (NEP 2037/2045 V2023 scenario framework,
+#            23.7–24.2 GW) and 2040 (Frontier Economics), not 2030. Source for
+#            2030 pending (see TODO, Phase 2 Lower Saxony).
 # The uplift runs on the full German network *before* the Lower Saxony cut, so
 # each carrier's national increment is spread over all German buses in
 # proportion to their land-availability ``p_nom_max`` headroom; Lower Saxony
