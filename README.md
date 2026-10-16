@@ -125,7 +125,7 @@ Algorithm-specific flags (see `<entry-point> --help`):
 | `esb-diffusion`       | `--max-iter 2000`, `--tol 1e-3`                                                |
 | `esb-exact-diffusion` | `--weight-rule averaging`, `--max-iter 6000`, `--tol 1e-3`                     |
 | `esb-fdgdm`           | `--max-iter 300`, `--tol-ratio 0.000222` (Eq. 24 stop, 0.01/45 × p_nom; 0 = off) |
-| `esb-deed-admm`       | `--gamma 0.05`, `--max-iter 500`                                               |
+| `esb-deed-admm`       | `--gamma 0.05`, `--max-iter 500`, `--tol-ratio 0.000222` (stop, as FDGDM; 0 = off) |
 
 ### Optional slack node
 

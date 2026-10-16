@@ -86,3 +86,44 @@ class TestExecuteTestCase:
             strict=True,
         )
         assert os.path.exists(f"{name_base}-df.csv")
+
+
+class TestConvergenceStop:
+    async def test_default_stops_early_with_the_same_cost(self, tmp_path, caplog):
+        import logging
+        import re
+
+        def run(name, **kwargs):
+            return execute_test_case(
+                scenario=build_toy_network(periods=24),
+                name_base=str(tmp_path / name),
+                simulate_days=1,
+                **kwargs,
+            )
+
+        pattern = r"DEED-ADMM finished .*iterations=(\d+)"
+        caplog.set_level(logging.INFO)
+        await run("early")
+        early_iters = {int(m) for m in re.findall(pattern, caplog.text)}
+        caplog.clear()
+        await run("full", tol_ratio=None)
+        full_iters = {int(m) for m in re.findall(pattern, caplog.text)}
+
+        assert full_iters == {500}
+        assert early_iters and max(early_iters) < 500
+        early = pd.read_csv(tmp_path / "early-df.csv", index_col=0)["cost:total"].sum()
+        full = pd.read_csv(tmp_path / "full-df.csv", index_col=0)["cost:total"].sum()
+        assert early == pytest.approx(full, rel=1e-3)
+
+    def test_cli_default_and_zero_disables(self):
+        from energy_scheduling_benchmark.scenarios._common import (
+            build_scenario_argparser,
+        )
+        from energy_scheduling_benchmark.scenarios.deed_admm import _add_deed_admm_args
+        from energy_scheduling_benchmark.scenarios.fdgdm import PAPER_TOL_RATIO
+
+        parser = build_scenario_argparser(
+            None, default_name_base="x", extra_args=_add_deed_admm_args
+        )
+        assert parser.parse_args([]).tol_ratio == PAPER_TOL_RATIO
+        assert parser.parse_args(["--tol-ratio", "0"]).tol_ratio == 0.0

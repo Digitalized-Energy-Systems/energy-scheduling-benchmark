@@ -68,6 +68,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     run_scenario_main,
     write_scenario_outputs,
 )
+from energy_scheduling_benchmark.scenarios.fdgdm import PAPER_TOL_RATIO
 
 # ---------------------------------------------------------------------------
 # Scenario entry point
@@ -87,6 +88,7 @@ async def execute_test_case(
     simulate_days: int = 3,
     gamma: float = 0.05,
     max_iter: int = 500,
+    tol_ratio: float | None = PAPER_TOL_RATIO,
     balance_tol: float = 0.01,
     strict: bool = False,
     slack: SlackSpec | None = None,
@@ -100,7 +102,13 @@ async def execute_test_case(
     gamma:
         ADMM penalty parameter γ (paper default: 0.05).
     max_iter:
-        Maximum number of DEED-ADMM iterations.
+        Maximum number of DEED-ADMM iterations (backstop).
+    tol_ratio:
+        Convergence stop (the paper defines none; same rule as FDGDM's Eq. 24
+        stop): each agent is converged when its per-hour schedule step and
+        its tracker ξ are below ``tol_ratio * p_nom``; the run ends when every
+        agent and its neighbours agree. Default: FDGDM's paper ratio 0.01/45.
+        ``None`` or ``0`` runs a fixed ``max_iter``.
     balance_tol:
         Max allowed per-timestep |generation - demand| / demand before the
         finished schedule is flagged as not converged.
@@ -192,6 +200,7 @@ async def execute_test_case(
                 gamma=gamma,
                 max_iter=max_iter,
                 round_timeout=lt.round_timeout,
+                tol=tol_ratio * p_nom if tol_ratio else None,
                 n_agents=n_gens,
             )
         elif ref.element_type == RENEWABLE:
@@ -205,6 +214,7 @@ async def execute_test_case(
                 gamma=gamma,
                 max_iter=max_iter,
                 round_timeout=lt.round_timeout,
+                tol=tol_ratio * p_nom if tol_ratio else None,
                 n_agents=n_gens,
             )
         else:
@@ -220,6 +230,7 @@ async def execute_test_case(
                 gamma=gamma,
                 max_iter=max_iter,
                 round_timeout=lt.round_timeout,
+                tol=tol_ratio * p_nom if tol_ratio else None,
                 n_agents=n_gens,
             )
 
@@ -329,6 +340,15 @@ def _add_deed_admm_args(parser: argparse.ArgumentParser) -> None:
         default=500,
         help="Maximum number of DEED-ADMM iterations.",
     )
+    parser.add_argument(
+        "--tol-ratio",
+        type=float,
+        default=PAPER_TOL_RATIO,
+        help=(
+            "Convergence stop: per-hour step and tracker tolerance as a fraction "
+            "of each unit's p_nom (default 0.01/45, as FDGDM); 0 disables it."
+        ),
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -337,7 +357,7 @@ def main(argv: list[str] | None = None) -> None:
         doc=__doc__,
         default_name_base="deed_admm",
         extra_args=_add_deed_admm_args,
-        extra_kwargs=("gamma", "max_iter"),
+        extra_kwargs=("gamma", "max_iter", "tol_ratio"),
         with_balance_tol=True,
         argv=argv,
     )
