@@ -227,8 +227,7 @@ async def execute_test_case(
         opt_role = DistributedOptimizationRole(participant)
 
         agent = agent_composed_of(opt_role)
-        world.register(agent, suggested_aid=ref.component_id)
-        world.environment.install(agent, id=ref)
+        world.register(agent, suggested_aid=ref.component_id, id=ref)
         gen_agents.append(agent)
 
     if not gen_agents:
@@ -236,8 +235,9 @@ async def execute_test_case(
 
     # -- Load agents (two-pass: register leader first so its addr is known) --
     leader_agent = RoleAgent()
-    world.register(leader_agent, suggested_aid=load_refs[0].component_id)
-    world.environment.install(leader_agent, id=load_refs[0])
+    world.register(
+        leader_agent, suggested_aid=load_refs[0].component_id, id=load_refs[0]
+    )
     leader_addr = leader_agent.addr
     leader_addr_ref["addr"] = leader_addr
 
@@ -273,8 +273,7 @@ async def execute_test_case(
         agent = agent_composed_of(
             PowerLoadMonitoring(behavior=behavior, target=leader_addr)
         )
-        world.register(agent, suggested_aid=ref.component_id)
-        world.environment.install(agent, id=ref)
+        world.register(agent, suggested_aid=ref.component_id, id=ref)
 
     # Fully-connected exact-diffusion topology across all generator agents.
     # Exact Diffusion requires a degree-regular graph (all nodes share the

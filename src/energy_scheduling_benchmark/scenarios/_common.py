@@ -18,6 +18,7 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from dataclasses import replace as _dataclass_replace
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -722,6 +723,12 @@ def build_scenario_argparser(
         ),
     )
     parser.add_argument("--name-base", type=str, default=default_name_base)
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=Path("."),
+        help="Directory for the CSV/PDF outputs (created if missing).",
+    )
     parser.add_argument("--simulate-days", type=int, default=3)
     parser.add_argument("--log-level", type=str, default="INFO")
     if with_balance_tol:
@@ -1249,12 +1256,15 @@ def run_scenario_main(
         (*extra_kwargs, "balance_tol", "strict") if with_balance_tol else extra_kwargs
     )
     kwargs = {name: getattr(args, name) for name in names}
+    # Every output path is derived from name_base, so prefixing it with the
+    # output directory routes all CSV/PDF writes there.
+    args.out_dir.mkdir(parents=True, exist_ok=True)
     asyncio.run(
         execute_test_case(
             scenario=scenario,
             delay_s=args.delay_s,
             loss_percent=args.loss_percent,
-            name_base=args.name_base,
+            name_base=str(args.out_dir / args.name_base),
             simulate_days=args.simulate_days,
             **kwargs,
         )

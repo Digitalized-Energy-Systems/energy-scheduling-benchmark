@@ -208,7 +208,9 @@ async def execute_test_case(
                 eta_discharge=sp.eta_discharge,
                 e_initial=sp.e_initial,
                 e_final=sp.e_initial,
-                charge_cost=max(0.0, cost),
+                # Discharge-only cost, as in central dispatch and
+                # compute_overall_cost: a full cycle is priced once.
+                charge_cost=0.0,
                 discharge_cost=max(0.0, cost),
             )
         else:
@@ -224,8 +226,7 @@ async def execute_test_case(
             )
 
         agent = agent_composed_of(ADMMGeneratorRole(actor, finish_callback))
-        world.register(agent, suggested_aid=ref.component_id)
-        world.environment.install(agent, id=ref)
+        world.register(agent, suggested_aid=ref.component_id, id=ref)
         gen_agents.append(agent)
 
     if not gen_agents:
@@ -233,8 +234,9 @@ async def execute_test_case(
 
     # --- Leader agent ---
     leader_agent = RoleAgent()
-    world.register(leader_agent, suggested_aid=load_refs[0].component_id)
-    world.environment.install(leader_agent, id=load_refs[0])
+    world.register(
+        leader_agent, suggested_aid=load_refs[0].component_id, id=load_refs[0]
+    )
     leader_addr = leader_agent.addr
     leader_addr_ref["addr"] = leader_addr
 
@@ -268,8 +270,7 @@ async def execute_test_case(
         agent = agent_composed_of(
             PowerLoadMonitoring(behavior=behavior, target=leader_addr)
         )
-        world.register(agent, suggested_aid=ref.component_id)
-        world.environment.install(agent, id=ref)
+        world.register(agent, suggested_aid=ref.component_id, id=ref)
 
     all_opt_agents = gen_agents + [leader_agent]
     auto_assign(complete_topology(len(all_opt_agents)), all_opt_agents)
