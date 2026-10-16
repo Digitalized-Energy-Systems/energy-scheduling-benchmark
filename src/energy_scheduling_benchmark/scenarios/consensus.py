@@ -225,7 +225,7 @@ async def execute_test_case(
                 e_final=sp.e_initial,
                 soc_min=0.0,
                 soc_max=1.0,
-                charge_cost=max(0.0, cost),
+                charge_cost=0.0,  # discharge-only cost (Q15)
                 discharge_cost=max(0.0, cost),
                 epsilon=eps.target_band / max(p_nom, 1.0),
             )

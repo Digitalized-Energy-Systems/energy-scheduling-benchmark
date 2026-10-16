@@ -24,7 +24,6 @@ from energy_scheduling_benchmark.scenarios._common import (
 from energy_scheduling_benchmark.scenarios.fdgdm import (
     FDGDMFinishedInfo,
     _capacity_proportional_allocation,
-    _schedule_storage_soc,
     execute_test_case,
 )
 
@@ -330,121 +329,6 @@ class TestCapacityProportionalAllocation:
         allocs = _capacity_proportional_allocation(target, p_max, p_min)
         assert np.allclose(sum(allocs), target)
         assert np.allclose(allocs[0], allocs[1])
-
-
-# ---------------------------------------------------------------------------
-# _schedule_storage_soc unit tests
-# ---------------------------------------------------------------------------
-
-
-class TestScheduleStorageSoc:
-    """_schedule_storage_soc energy-constrained storage dispatch."""
-
-    def test_discharges_into_deficit(self):
-        # One deficit hour, enough SOC to cover it fully.
-        net_load = np.array([10.0])
-        result = _schedule_storage_soc(
-            net_load_ts=net_load,
-            p_nom=20.0,
-            p_min_pu=-1.0,
-            max_hours=2.0,
-            soc_initial_pu=1.0,  # full
-            efficiency_store=1.0,
-            efficiency_dispatch=1.0,
-            inflow_mwh=np.zeros(1),
-        )
-        assert np.allclose(result, [10.0])
-
-    def test_charges_from_surplus(self):
-        # One surplus hour (negative net_load), storage starts empty.
-        net_load = np.array([-15.0])
-        result = _schedule_storage_soc(
-            net_load_ts=net_load,
-            p_nom=20.0,
-            p_min_pu=-1.0,
-            max_hours=1.0,
-            soc_initial_pu=0.0,
-            efficiency_store=1.0,
-            efficiency_dispatch=1.0,
-            inflow_mwh=np.zeros(1),
-        )
-        # Charges at min(p_charge_max=20, surplus=15, storable=max_energy=20) → 15
-        assert np.allclose(result, [-15.0])
-
-    def test_discharge_limited_by_p_nom(self):
-        net_load = np.array([100.0])
-        result = _schedule_storage_soc(
-            net_load_ts=net_load,
-            p_nom=10.0,
-            p_min_pu=-1.0,
-            max_hours=10.0,
-            soc_initial_pu=1.0,
-            efficiency_store=1.0,
-            efficiency_dispatch=1.0,
-            inflow_mwh=np.zeros(1),
-        )
-        assert np.allclose(result, [10.0])
-
-    def test_soc_not_overdrawn(self):
-        # Only 5 MWh stored; try to discharge 10 MW for 1 h → capped at 5 MW.
-        net_load = np.array([10.0])
-        result = _schedule_storage_soc(
-            net_load_ts=net_load,
-            p_nom=10.0,
-            p_min_pu=-1.0,
-            max_hours=1.0,
-            soc_initial_pu=0.5,  # 5 MWh
-            efficiency_store=1.0,
-            efficiency_dispatch=1.0,
-            inflow_mwh=np.zeros(1),
-        )
-        assert np.allclose(result, [5.0])
-
-    def test_zero_when_no_surplus_or_deficit(self):
-        net_load = np.zeros(3)
-        result = _schedule_storage_soc(
-            net_load_ts=net_load,
-            p_nom=10.0,
-            p_min_pu=-1.0,
-            max_hours=2.0,
-            soc_initial_pu=0.5,
-            efficiency_store=1.0,
-            efficiency_dispatch=1.0,
-            inflow_mwh=np.zeros(3),
-        )
-        assert np.allclose(result, [0.0, 0.0, 0.0])
-
-    def test_inflow_increases_soc(self):
-        # Start empty, inflow of 5 MWh in first hour, discharge in second.
-        net_load = np.array([0.0, 5.0])
-        result = _schedule_storage_soc(
-            net_load_ts=net_load,
-            p_nom=10.0,
-            p_min_pu=-1.0,
-            max_hours=1.0,
-            soc_initial_pu=0.0,
-            efficiency_store=1.0,
-            efficiency_dispatch=1.0,
-            inflow_mwh=np.array([5.0, 0.0]),
-        )
-        # Hour 0: no deficit, no charge; inflow adds 5 MWh
-        # Hour 1: deficit 5 MW, 5 MWh available → dispatches 5 MW
-        assert np.allclose(result, [0.0, 5.0])
-
-    def test_charge_limited_by_capacity(self):
-        # Storage is almost full; surplus exceeds remaining capacity.
-        net_load = np.array([-100.0])
-        result = _schedule_storage_soc(
-            net_load_ts=net_load,
-            p_nom=10.0,
-            p_min_pu=-1.0,
-            max_hours=1.0,
-            soc_initial_pu=0.9,  # only 1 MWh left
-            efficiency_store=1.0,
-            efficiency_dispatch=1.0,
-            inflow_mwh=np.zeros(1),
-        )
-        assert np.allclose(result, [-1.0])
 
 
 # ---------------------------------------------------------------------------

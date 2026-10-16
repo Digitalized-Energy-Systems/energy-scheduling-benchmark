@@ -1099,9 +1099,12 @@ class ScheduleRequest(RoleLocalMessage):
 @dataclass
 class KickOff(RoleLocalMessage):
     """Leader → the trigger generator: start the distributed run with
-    *start_message* (acknowledged, so a lost kick-off is retried)."""
+    *start_message* (acknowledged, so a lost kick-off is retried). *run*
+    numbers the runs, so retries of one run start it once while a later run
+    (e.g. FDGDM's outer storage rounds) starts again."""
 
     start_message: Any
+    run: int = 1
 
 
 @dataclass
@@ -1148,7 +1151,7 @@ class GeneratorResultRole(Role):
         super().__init__()
         #: The finished schedule, ``None`` while the run is in progress.
         self.schedule: np.ndarray | None = None
-        self._kicked_off = False
+        self._started_run = 0
 
     def setup(self) -> None:
         self.context.subscribe_message(
@@ -1169,8 +1172,9 @@ class GeneratorResultRole(Role):
         )
 
     def _on_kick_off(self, content: KickOff, meta: dict) -> None:
-        if not self._kicked_off:
-            self._kicked_off = True
+        if content.run > self._started_run:
+            self._started_run = content.run
+            self.schedule = None  # a poll must not return the previous run's result
             self.context.get_role(DistributedOptimizationRole).start(
                 content.start_message
             )
@@ -1233,9 +1237,17 @@ class PowerLoadAggregator(Role):
         result_poll_s: float | None = None,
         result_retries: int = 12,
         kick_off_retries: int = 20,
+        on_run_finished: Callable[[], Any | None] | None = None,
     ) -> None:
         super().__init__()
         self._slack = slack
+        # Called when every required unit reported. Returning a start message
+        # launches another distributed run (e.g. FDGDM's outer storage rounds);
+        # returning None finishes. Finished messages carry no run id, so under
+        # heavy loss a late result poll could deliver a previous run's schedule.
+        self._on_run_finished = on_run_finished
+        #: Distributed runs started (1 unless *on_run_finished* asks for more).
+        self.runs: int = 0
         self._behavior = behavior
         self.number_loads = number_loads
         self._generator_aids = generator_aids
@@ -1303,14 +1315,16 @@ class PowerLoadAggregator(Role):
             self._ready = True
             self._verify_balance()
             return
+        self._start_run(self._build_start_message())
+
+    def _start_run(self, start_message: Any) -> None:
+        self.runs += 1
         if self._start_locally is not None:
-            self._start_locally(self._build_start_message())
+            self._start_locally(start_message)
         elif self._generator_addrs:
-            self.context.schedule_instant_task(self._kick_off())
+            self.context.schedule_instant_task(self._kick_off(start_message))
         else:
-            self.context.schedule_instant_message(
-                self._build_start_message(), self._trigger
-            )
+            self.context.schedule_instant_message(start_message, self._trigger)
         self._schedule_result_poll(1)
 
     def _arm_hour_deadlines(self) -> None:
@@ -1324,17 +1338,27 @@ class PowerLoadAggregator(Role):
 
     # -- kick-off and result collection ---------------------------------------
 
-    async def _kick_off(self) -> None:
-        """Send :class:`KickOff` to the trigger generator until acknowledged."""
-        request = KickOff(start_message=self._build_start_message())
+    async def _kick_off(self, start_message: Any) -> None:
+        """Send :class:`KickOff` until acknowledged.
+
+        The first run starts at the trigger generator (the others join on its
+        round-0 messages). A later run kicks off every participant: after a
+        finished run, participants ignore non-initial messages.
+        """
+        request = KickOff(start_message=start_message, run=self.runs)
+        pending = (
+            [self._trigger] if self.runs == 1 else list(self._generator_addrs.values())
+        )
         for _ in range(self._kick_off_retries):
             replies = await self.context.gather(
                 request,
-                [self._trigger],
+                pending,
                 timeout=self._request_timeout,
                 reply_type=KickOffAck,
             )
-            if replies:
+            acked = {reply.aid for reply in replies.values()}
+            pending = [addr for addr in pending if addr.aid not in acked]
+            if not pending:
                 return
         logger.error(
             "%s: the kick-off was never acknowledged after %d attempts; the "
@@ -1428,6 +1452,12 @@ class PowerLoadAggregator(Role):
             ).copy()
         self._finished_aids.add(message.aid)
         if len(self._finished_aids) == self._n_finished_required:
+            if self._on_run_finished is not None:
+                next_start = self._on_run_finished()
+                if next_start is not None:
+                    self._finished_aids = set()
+                    self._start_run(next_start)
+                    return
             self._ready = True
             self._verify_balance()
             for idx in sorted(self._pending):

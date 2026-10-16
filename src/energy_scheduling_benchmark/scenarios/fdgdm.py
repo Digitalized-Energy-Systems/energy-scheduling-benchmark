@@ -9,9 +9,12 @@ Flow
 ----
 1. Load agents observe their ``max_active_power`` whenever their
    timeseries fires and send a ``PowerLoadInfo`` to the leader.
-2. Renewables are pre-scheduled at their available capacity; storage is
-   pre-scheduled with an energy-constrained SOC-aware forward pass (charges
-   from renewable surplus, discharges into deficit, tracks reservoir level).
+2. Renewables are pre-scheduled at their available capacity.  FDGDM runs
+   on the thermals.  Storage (Bai et al. have none) stays outside FDGDM but
+   is price-driven: after each FDGDM run the leader takes the converged
+   incremental cost λ*(t), gives every storage unit the exact best response
+   of the shared storage model (decision Q15), and reruns FDGDM on the
+   remaining demand — a few damped outer rounds.
    FDGDM is run on thermals only for the residual demand.
 3. The epsilon (curvature bound) for thermals is computed from the cost
    range to prevent first-step overshoot of the gradient update.
@@ -35,6 +38,7 @@ from distributed_resource_optimization import (
 from distributed_resource_optimization.carrier.mango import (
     DistributedOptimizationRole,
 )
+from distributed_resource_optimization.misc.storage import StorageModel
 from mango import (
     RoleAgent,
     agent_composed_of,
@@ -57,6 +61,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadMonitoring,
     ScenarioData,
     SlackSpec,
+    StorageParams,
     _clip_scenario,
     _lookup_ts,
     build_demand_horizon,
@@ -76,6 +81,13 @@ from energy_scheduling_benchmark.scenarios._common import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: Outer rounds of the price-driven storage loop (FDGDM runs after the first).
+STORAGE_ROUNDS = 5
+#: Damping of each storage update (a convex mix of feasible schedules stays feasible).
+STORAGE_DAMPING = 0.5
+#: Stop the outer loop once no storage schedule would move more than this (MW).
+STORAGE_TOL_MW = 0.01
 
 #: Eq. 24 accuracy of Bai et al. 2022 relative to unit size: the paper stops at
 #: ε = 0.01 for units with 0–45 kW boxes (§4). Each thermal agent gets
@@ -124,67 +136,6 @@ def _capacity_proportional_allocation(
         share = np.where(total_slack > 0, pmin + residual * slack_i / total_slack, pmin)
         allocs.append(np.clip(share, pmin, pmax))
     return allocs
-
-
-def _schedule_storage_soc(
-    net_load_ts: np.ndarray,
-    p_nom: float,
-    p_min_pu: float,
-    max_hours: float,
-    soc_initial_pu: float,
-    efficiency_store: float,
-    efficiency_dispatch: float,
-    inflow_mwh: np.ndarray,
-) -> np.ndarray:
-    """Energy-constrained storage dispatch over a scheduling horizon.
-
-    Charges during surplus-renewable hours (net_load < 0) and discharges
-    during deficit hours (net_load > 0), tracking state-of-charge each step.
-
-    .. note::
-        Assumes **1-hour timesteps**.  SOC is in MWh and power limits are in MW;
-        the comparison ``dispatch = min(p_nom, net_load, soc × η)`` is only
-        numerically valid when each interval is exactly 1 h.  Sub-hourly
-        networks will produce incorrect SOC accounting.
-
-    :param net_load_ts: Residual load after renewables (MW, per hour).
-                        Positive = demand exceeds supply; negative = surplus.
-    :param p_nom: Discharge power limit (MW).
-    :param p_min_pu: Charge power limit as fraction of p_nom (negative, e.g. -1.0).
-    :param max_hours: Energy capacity in hours at full power (MWh = p_nom × max_hours).
-    :param soc_initial_pu: Initial state-of-charge as fraction of max energy.
-    :param efficiency_store: Round-trip charge efficiency (≤ 1).
-    :param efficiency_dispatch: Round-trip discharge efficiency (≤ 1).
-    :param inflow_mwh: Natural energy inflow each hour (MWh), e.g. river inflow.
-    :returns: Net dispatch in MW per hour.  Positive = discharge; negative = charge.
-    """
-    max_energy = max_hours * p_nom
-    p_charge_max = (-p_min_pu) * p_nom
-    soc = soc_initial_pu * max_energy
-    net = np.zeros(len(net_load_ts), dtype=float)
-
-    for t in range(len(net_load_ts)):
-        soc = min(soc + float(inflow_mwh[t]), max_energy)
-
-        if net_load_ts[t] > 0.0:
-            deliverable = soc * efficiency_dispatch
-            dispatch = min(p_nom, net_load_ts[t], deliverable)
-            if dispatch > 0.0:
-                soc -= dispatch / efficiency_dispatch
-                net[t] = dispatch
-        else:
-            surplus = -net_load_ts[t]
-            storable = (
-                (max_energy - soc) / efficiency_store if efficiency_store > 0 else 0.0
-            )
-            charge = min(p_charge_max, surplus, storable)
-            if charge > 0.0:
-                soc += charge * efficiency_store
-                net[t] = -charge
-
-        soc = max(0.0, soc)
-
-    return net
 
 
 # ---------------------------------------------------------------------------
@@ -295,11 +246,7 @@ async def execute_test_case(
     # Necessary because including zero-cost generators in FDGDM drives thermals
     # to 0 on the first iteration (large w_abs = 1/(n·ε) × cost_diff).
     #
-    # Pass 2 — Storage with energy-constrained SOC-aware dispatch.
-    # Storage starts at state_of_charge_initial (often 0 for PHS); pre-scheduling
-    # at constant max-discharge would exceed the reservoir capacity immediately.
-    # Instead, we charge from renewable surplus hours and discharge during deficit
-    # hours while tracking SOC each step.
+    # Storage takes part in FDGDM itself (shared storage model, Q15).
     # ------------------------------------------------------------------
     renewable_refs = [r for r in nonthermal_refs if r.element_type == RENEWABLE]
     storage_refs = [r for r in nonthermal_refs if r.element_type == STORAGE]
@@ -321,37 +268,6 @@ async def execute_test_case(
 
     # Residual load after renewables: positive = deficit, negative = surplus.
     net_load_ts = (target_series - renewable_gen_ts).astype(float)
-
-    for ref in storage_refs:
-        statics = statics_by_ref[ref]
-        cost_by_aid[ref.component_id] = float(statics.get("marginal_cost", 0.0))
-        p_nom = float(statics.get("p_nom", 0.0))
-
-        # Inflow from PyPSA timeseries (e.g. reservoir hydro); falls back to
-        # the static "inflow" attribute if no timeseries column is present.
-        su_t = getattr(getattr(scenario, "net", None), "storage_units_t", None)
-        inflow_df = getattr(su_t, "inflow", None)
-        if inflow_df is not None and ref.component_id in inflow_df.columns:
-            inflow_mwh = np.asarray(
-                inflow_df[ref.component_id].reindex(time_index).fillna(0.0), dtype=float
-            )
-        else:
-            inflow_mwh = np.full(
-                horizon, float(statics.get("inflow", 0.0)), dtype=float
-            )
-
-        net = _schedule_storage_soc(
-            net_load_ts=net_load_ts,
-            p_nom=p_nom,
-            p_min_pu=float(statics.get("p_min_pu", -1.0)),
-            max_hours=float(statics.get("max_hours", 6.0)),
-            soc_initial_pu=float(statics.get("state_of_charge_initial", 0.0)),
-            efficiency_store=float(statics.get("efficiency_store", 1.0)),
-            efficiency_dispatch=float(statics.get("efficiency_dispatch", 1.0)),
-            inflow_mwh=inflow_mwh,
-        )
-        schedule_by_aid[ref.component_id] = net
-        net_load_ts -= net  # update residual for subsequent storage units
 
     adjusted_target = np.maximum(net_load_ts, 0.0)
 
@@ -395,6 +311,7 @@ async def execute_test_case(
     # cheap generators above zero (spurious over-generation).  Setting
     # p_max[t] = 0 forces project() to clip any update back to zero.
     # ------------------------------------------------------------------
+    thermal_p_max_unmasked = [pmax.copy() for pmax in thermal_p_max_vecs]
     zero_demand_mask = adjusted_target < 1.0
     if zero_demand_mask.any():
         thermal_p_max_vecs = [pmax.copy() for pmax in thermal_p_max_vecs]
@@ -408,7 +325,7 @@ async def execute_test_case(
     # breaking the zero-row-sum conservation invariant.
     # ------------------------------------------------------------------
     n_thermals = len(thermal_refs)
-    if n_thermals >= 2:
+    if n_thermals >= 1:
         thermal_p_min_vecs = [np.zeros(horizon) for _ in thermal_refs]
         fdgdm_initial_p_by_agent = _capacity_proportional_allocation(
             adjusted_target, thermal_p_max_vecs, thermal_p_min_vecs
@@ -439,13 +356,20 @@ async def execute_test_case(
             base_epsilon * total_p_nom / max(p_nom, 1.0) for p_nom in thermal_p_nom_list
         ]
     else:
-        epsilon_by_agent = [0.1]
+        epsilon_by_agent = [0.1] * max(n_thermals, 1)
+
+    def _storage_epsilon(p_nom: float) -> float:
+        # Same capacity scaling as the thermals' proxy curvature.
+        if n_thermals >= 2:
+            return base_epsilon * total_p_nom / max(p_nom, 1.0)
+        return 0.1
 
     # Dummy kickoff data — each actor uses its own initial_schedule instead.
     fdgdm_initial_p = adjusted_target / max(n_thermals, 1)
 
     # -- Thermal generator agents (FDGDM participants) --
     thermal_gen_agents: list[RoleAgent] = []
+    thermal_actors: list[LinearCostEconomicDispatchFDGDMActor] = []
     for i, ref in enumerate(thermal_refs):
         statics = statics_by_ref[ref]
         cost = float(statics.get("marginal_cost", 0.0))
@@ -484,8 +408,29 @@ async def execute_test_case(
         agent = generator_agent(opt_role)
         register_component_agent(world, agent, ref)
         thermal_gen_agents.append(agent)
+        thermal_actors.append(actor)
 
-    # -- Non-thermal agents (registered for recording/regulation; not in FDGDM) --
+    # -- Storage units: outside FDGDM, price-driven by the outer loop below --
+    storage_units: list[tuple[str, StorageModel, float]] = []
+    for ref in storage_refs:
+        statics = statics_by_ref[ref]
+        cost = max(0.0, float(statics.get("marginal_cost", 0.0)))
+        cost_by_aid[ref.component_id] = cost
+        p_nom = float(statics.get("p_nom", 0.0))
+        sp = StorageParams.from_statics(statics, p_nom)
+        model = StorageModel(
+            e_max=sp.e_max,
+            p_charge_max=sp.p_charge_max,
+            p_discharge_max=sp.p_discharge_max,
+            eta_charge=sp.eta_charge,
+            eta_discharge=sp.eta_discharge,
+            e_initial=sp.e_initial,
+            discharge_cost=cost,
+        )
+        storage_units.append((ref.component_id, model, _storage_epsilon(p_nom)))
+        schedule_by_aid[ref.component_id] = np.zeros(horizon)
+
+    # -- Renewable and storage agents (registered for recording/regulation; not in FDGDM) --
     for ref in nonthermal_refs:
         noop_participant = create_fdgdm_participant(
             finish_callback=lambda _a, _c: None,
@@ -496,7 +441,7 @@ async def execute_test_case(
         agent = generator_agent(opt_role)
         register_component_agent(world, agent, ref)
 
-    gen_agents = thermal_gen_agents  # FDGDM topology only for thermals
+    gen_agents = thermal_gen_agents  # FDGDM participants
 
     if not generator_aids:
         raise RuntimeError("No generator agents found for FDGDM scenario.")
@@ -513,6 +458,66 @@ async def execute_test_case(
         # it with its own pre-computed initial_schedule on the first project().
         return create_fdgdm_start(data=fdgdm_initial_p)
 
+    outer = {"round": 0, "p_max": [pmax.copy() for pmax in thermal_p_max_vecs]}
+
+    def _incremental_cost() -> np.ndarray:
+        """λ*(t) from the thermals' final schedules: the mean gradient of the
+        units strictly inside their limits, else the highest gradient of a
+        running unit (scarcity), else 0 (renewable surplus)."""
+        lam = np.zeros(horizon)
+        P = [
+            np.asarray(schedule_by_aid[r.component_id], dtype=float)
+            for r in thermal_refs
+        ]
+        grads = [a.gradient(p, None) for a, p in zip(thermal_actors, P)]
+        for t in range(horizon):
+            interior = [
+                g[t]
+                for g, p, pm in zip(grads, P, outer["p_max"])
+                if 1e-6 < p[t] < pm[t] - 1e-6
+            ]
+            if interior:
+                lam[t] = float(np.mean(interior))
+            else:
+                running = [g[t] for g, p in zip(grads, P) if p[t] > 1e-6]
+                lam[t] = max(running) if running else 0.0
+        return lam
+
+    def _next_storage_round() -> Any:
+        """Update storage from λ*; return the next FDGDM start, or None to stop."""
+        if outer["round"] >= STORAGE_ROUNDS:
+            return None
+        lam = _incremental_cost()
+        proposal: dict[str, np.ndarray] = {}
+        change = 0.0
+        for aid, model, eps in storage_units:
+            response, _ = model.price_response(lam, eps)
+            old = schedule_by_aid[aid]
+            new = (1.0 - STORAGE_DAMPING) * old + STORAGE_DAMPING * response
+            proposal[aid] = new
+            change = max(change, float(np.max(np.abs(new - old))))
+        if change < STORAGE_TOL_MW:
+            return None  # the thermals were dispatched against the current storage
+        outer["round"] += 1
+        schedule_by_aid.update(proposal)
+        residual = np.maximum(net_load_ts - sum(proposal.values()), 0.0)
+        p_max_k = [pmax.copy() for pmax in thermal_p_max_unmasked]
+        mask = residual < 1.0
+        for pmax in p_max_k:
+            pmax[mask] = 0.0
+        alloc = _capacity_proportional_allocation(
+            residual, p_max_k, [np.zeros(horizon) for _ in p_max_k]
+        )
+        for actor, pmax, a in zip(thermal_actors, p_max_k, alloc):
+            actor.p_max = pmax
+            actor._p_max = np.asarray(pmax, dtype=float)
+            actor.initial_schedule = a.copy()
+        outer["p_max"] = p_max_k
+        logger.info(
+            "FDGDM storage round %d: max storage change %.3f MW", outer["round"], change
+        )
+        return create_fdgdm_start(data=residual / max(n_thermals, 1))
+
     aggregator = PowerLoadAggregator(
         behavior=behavior,
         number_loads=len(load_refs),
@@ -528,6 +533,9 @@ async def execute_test_case(
         result_poll_s=lt.result_poll_s,
         result_retries=lt.result_retries,
         n_finished_required=len(thermal_refs),
+        on_run_finished=_next_storage_round
+        if storage_units and n_thermals >= 2
+        else None,
         demand_target=target_series,
         balance_label="FDGDM",
         balance_tol=balance_tol,

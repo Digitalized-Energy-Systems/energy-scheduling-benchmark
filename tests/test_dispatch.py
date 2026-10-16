@@ -281,3 +281,58 @@ class TestQuadraticDispatch:
             solve_multiperiod_dispatch(
                 costs=[1.0], costs_quad=[-1.0], p_max=[[5.0]], demand=[1.0]
             )
+
+
+class TestStorageModelConsistency:
+    """Central dispatch and the distributed algorithms use the same storage
+    model (decision Q15): central dispatch's battery schedule must be feasible
+    for the shared StorageModel built from the same parameters, and the
+    model's own exact response must satisfy StorageSpec's constraints."""
+
+    @staticmethod
+    def _pair():
+        from distributed_resource_optimization.misc.storage import StorageModel
+
+        from energy_scheduling_benchmark.dispatch.pyomo_dispatch import StorageSpec
+
+        params = dict(
+            e_max=20.0,
+            p_charge_max=6.0,
+            p_discharge_max=8.0,
+            eta_charge=0.9,
+            eta_discharge=0.92,
+            e_initial=0.5,
+        )
+        spec = StorageSpec(**params, discharge_cost=1.0)
+        model = StorageModel(**params, discharge_cost=1.0)
+        return spec, model
+
+    def test_central_schedule_is_feasible_for_the_shared_model(self):
+        spec, model = self._pair()
+        demand = np.array([30.0, 30.0, 80.0, 90.0, 40.0, 85.0])
+        result = solve_multiperiod_dispatch(
+            costs=[10.0, 60.0],
+            p_max=[[50.0] * 6, [100.0] * 6],
+            demand=demand,
+            storage=[spec],
+        )
+        assert result.success
+        net = result.storage[0]
+        p_d, p_c = np.maximum(net, 0.0), np.maximum(-net, 0.0)
+        assert model.is_feasible(p_d, p_c, tol=1e-5)
+        np.testing.assert_allclose(model.energy(p_d, p_c), result.energy[0], atol=1e-5)
+        assert np.any(net != 0)  # the battery actually trades
+
+    def test_shared_model_response_is_feasible_for_central_dispatch(self):
+        spec, model = self._pair()
+        lam = np.array([5.0, 5.0, 80.0, 90.0, 5.0, 85.0])
+        p, e = model.price_response(lam, 0.1)
+        p_d, p_c = np.maximum(p, 0.0), np.maximum(-p, 0.0)
+        e0 = spec.e_initial * spec.e_max
+        assert np.all(p_d <= spec.p_discharge_max + 1e-6)
+        assert np.all(p_c <= spec.p_charge_max + 1e-6)
+        assert np.all(e >= -1e-6) and np.all(e <= spec.e_max + 1e-6)
+        assert e[-1] >= e0 - 1e-6  # central dispatch's E_T >= E_0
+        np.testing.assert_allclose(
+            np.diff(e), spec.eta_charge * p_c - p_d / spec.eta_discharge, atol=1e-6
+        )
