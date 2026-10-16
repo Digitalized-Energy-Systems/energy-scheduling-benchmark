@@ -71,6 +71,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     register_component_agent,
     resolve_loss_rate,
     run_scenario_main,
+    thermal_cost_quad,
     write_scenario_outputs,
 )
 
@@ -207,6 +208,7 @@ async def execute_test_case(
     balance_tol: float = 0.01,
     strict: bool = False,
     slack: SlackSpec | None = None,
+    cost_model: str = "linear",
 ) -> None:
     """Run the FDGDM benchmark once and write out CSV + plots.
 
@@ -279,6 +281,7 @@ async def execute_test_case(
 
     # -- Generator classification --
     gen_refs, statics_by_ref = collect_generator_refs(behavior)
+    cost_quad_by_aid = thermal_cost_quad(gen_refs, statics_by_ref, cost_model)
     group_map = build_group_map(gen_refs, statics_by_ref=statics_by_ref)
 
     thermal_refs = [r for r in gen_refs if r.element_type == THERMAL]
@@ -449,12 +452,26 @@ async def execute_test_case(
         cost_by_aid[ref.component_id] = cost
         p_max_vec = thermal_p_max_vecs[i]
 
-        actor = LinearCostEconomicDispatchFDGDMActor(
-            cost=cost,
-            p_max=p_max_vec,
-            epsilon=epsilon_by_agent[i],
-            initial_schedule=fdgdm_initial_p_by_agent[i].copy(),
-        )
+        c2 = cost_quad_by_aid.get(ref.component_id)
+        if c2:
+            # Quadratic costs (Q2/Q17): the gradient uses the true curvature
+            # 2c₂; the weights use u = max(2c₂, proxy). Bai et al. only need an
+            # *upper bound* of F'' — u = 2c₂ alone overshoots on the benchmark's
+            # wide cost spreads (toy: units pinned at their limits after 3 rounds).
+            actor = LinearCostEconomicDispatchFDGDMActor(
+                cost=cost,
+                p_max=p_max_vec,
+                epsilon=2.0 * c2,
+                curvature_upper_bound=max(2.0 * c2, epsilon_by_agent[i]),
+                initial_schedule=fdgdm_initial_p_by_agent[i].copy(),
+            )
+        else:
+            actor = LinearCostEconomicDispatchFDGDMActor(
+                cost=cost,
+                p_max=p_max_vec,
+                epsilon=epsilon_by_agent[i],
+                initial_schedule=fdgdm_initial_p_by_agent[i].copy(),
+            )
         p_nom = float(statics.get("p_nom", 0.0))
         participant = create_fdgdm_participant(
             finish_callback=finish_callback,
@@ -551,6 +568,7 @@ async def execute_test_case(
         world,
         name_base=name_base,
         cost_by_aid=cost_by_aid,
+        cost_quad_by_aid=cost_quad_by_aid,
         clip_target_to_p=False,
         aggregator=aggregator,
         balance_tol=balance_tol,

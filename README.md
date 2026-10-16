@@ -80,7 +80,11 @@ All seven share the same CLI flags: `--network` (default `toy`),
 default: the current directory), `--simulate-days` (default `3`), `--delay-s`
 (comms delay, default `0.02`), `--loss-rate` (probability that a message is lost, a
 fraction from 0 to 1, e.g. `0.05` for 5 %; default `0`), `--seed` (seed for
-the loss draws, default `0`, so lossy runs are reproducible), `--log-level`,
+the loss draws, default `0`, so lossy runs are reproducible), `--cost-model`
+(`linear`, the default PyPSA marginal costs, or `quadratic`: thermal units add
+`c₂·P²` with `c₂ = 0.11·marginal_cost/p_nom`, so their marginal cost is 22 % higher
+at full output — k = 0.11 from Wood & Wollenberg's Example 4E; renewables and
+storage stay linear; central dispatch then solves a QP with HiGHS), `--log-level`,
 plus `--balance-tol` (max per-timestep |generation − demand| / demand before a
 finished run is flagged as not converged, default `0.01`) and `--strict` (exit
 with an error instead of writing outputs when that check fails, or when the

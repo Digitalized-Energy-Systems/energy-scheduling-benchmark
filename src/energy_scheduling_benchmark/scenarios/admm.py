@@ -61,6 +61,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     register_component_agent,
     resolve_loss_rate,
     run_scenario_main,
+    thermal_cost_quad,
     write_scenario_outputs,
 )
 
@@ -147,6 +148,7 @@ async def execute_test_case(
     balance_tol: float = 0.01,
     strict: bool = False,
     slack: SlackSpec | None = None,
+    cost_model: str = "linear",
 ) -> None:
     """Run the ADMM benchmark once and write CSV + PDF outputs.
 
@@ -195,6 +197,7 @@ async def execute_test_case(
 
     # --- Generator agent creation ---
     gen_refs, statics_by_ref = collect_generator_refs(behavior)
+    cost_quad_by_aid = thermal_cost_quad(gen_refs, statics_by_ref, cost_model)
     group_map = build_group_map(gen_refs, statics_by_ref=statics_by_ref)
 
     generator_aids = [ref.component_id for ref in gen_refs]
@@ -239,6 +242,7 @@ async def execute_test_case(
                 lb=lb_vec,
                 u=np.asarray(p_max_vec, dtype=float),
                 S=np.full(horizon, cost, dtype=float),
+                Q=cost_quad_by_aid.get(ref.component_id),
             )
 
         agent = agent_composed_of(ADMMGeneratorRole(actor, finish_callback))
@@ -324,6 +328,7 @@ async def execute_test_case(
         world,
         name_base=name_base,
         cost_by_aid=cost_by_aid,
+        cost_quad_by_aid=cost_quad_by_aid,
         stacked_title="Stacked power – ADMM",
         aggregator=aggregator,
         balance_tol=balance_tol,

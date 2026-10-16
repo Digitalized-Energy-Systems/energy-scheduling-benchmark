@@ -66,6 +66,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     register_component_agent,
     resolve_loss_rate,
     run_scenario_main,
+    thermal_cost_quad,
     write_scenario_outputs,
 )
 from energy_scheduling_benchmark.scenarios.fdgdm import PAPER_TOL_RATIO
@@ -92,6 +93,7 @@ async def execute_test_case(
     balance_tol: float = 0.01,
     strict: bool = False,
     slack: SlackSpec | None = None,
+    cost_model: str = "linear",
 ) -> None:
     """Run the DEED-ADMM benchmark once and write out CSV + plots.
 
@@ -166,6 +168,7 @@ async def execute_test_case(
     # Generator agents
     # ------------------------------------------------------------------
     gen_refs, statics_by_ref = collect_generator_refs(behavior)
+    cost_quad_by_aid = thermal_cost_quad(gen_refs, statics_by_ref, cost_model)
     group_map = build_group_map(gen_refs, statics_by_ref=statics_by_ref)
     n_gens = len(gen_refs)
     generator_aids = [ref.component_id for ref in gen_refs]
@@ -223,6 +226,7 @@ async def execute_test_case(
             p_min_vec = np.minimum(max(0.0, p_min_pu * p_nom), p_max_vec)
             participant = create_deed_admm_thermal_participant(
                 finish_callback,
+                cost_quad=cost_quad_by_aid.get(ref.component_id, 0.0),
                 p_min=p_min_vec,
                 p_max=p_max_vec,
                 marginal_cost=cost,
@@ -310,6 +314,7 @@ async def execute_test_case(
         world,
         name_base=name_base,
         cost_by_aid=cost_by_aid,
+        cost_quad_by_aid=cost_quad_by_aid,
         stacked_title="Stacked power (DEED-ADMM)",
         cost_title="Cost per timestep (DEED-ADMM)",
         aggregator=aggregator,

@@ -254,3 +254,56 @@ class TestSlackDefaults:
         args = build_scenario_argparser(None, default_name_base="x").parse_args([])
         assert args.slack_import_price == 4000.0
         assert args.slack_export_price == 0.0
+
+
+class TestCostModel:
+    def test_quadratic_coefficient_is_k_c1_over_p_nom(self):
+        from energy_scheduling_benchmark.scenarios._common import (
+            QUADRATIC_K,
+            quadratic_cost_coefficient,
+        )
+
+        statics = {"marginal_cost": 50.0, "p_nom": 200.0}
+        assert quadratic_cost_coefficient(statics, "linear") == 0.0
+        c2 = quadratic_cost_coefficient(statics, "quadratic")
+        assert c2 == pytest.approx(QUADRATIC_K * 50.0 / 200.0)
+        # marginal cost at full output: c1 + 2·c2·p_nom = (1 + 2k)·c1
+        assert 50.0 + 2 * c2 * 200.0 == pytest.approx((1 + 2 * QUADRATIC_K) * 50.0)
+        assert (
+            quadratic_cost_coefficient(
+                {"marginal_cost": 0.0, "p_nom": 10.0}, "quadratic"
+            )
+            == 0.0
+        )
+        with pytest.raises(ValueError, match="cost_model"):
+            quadratic_cost_coefficient(statics, "cubic")
+
+    def test_only_thermal_units_get_a_quadratic_term(self):
+        from energy_scheduling_benchmark import RENEWABLE, STORAGE, THERMAL
+        from energy_scheduling_benchmark.scenarios._common import thermal_cost_quad
+
+        refs = [
+            ComponentRef(THERMAL, "g"),
+            ComponentRef(RENEWABLE, "w"),
+            ComponentRef(STORAGE, "s"),
+        ]
+        statics = {r: {"marginal_cost": 10.0, "p_nom": 100.0} for r in refs}
+        assert set(thermal_cost_quad(refs, statics, "quadratic")) == {"g"}
+        assert thermal_cost_quad(refs, statics, "linear") == {}
+
+    def test_overall_cost_adds_c2_p_squared(self):
+        t = np.array([0.0, 3600.0])
+        Y = np.array([[10.0], [20.0]])
+        total, _ = compute_overall_cost(
+            {"g": 2.0}, t, Y, ["g"], cost_quad_by_aid={"g": 0.1}
+        )
+        assert total == pytest.approx(2.0 * 30.0 + 0.1 * (100.0 + 400.0))
+
+    def test_cli_default_linear_and_choices(self):
+        parser = build_scenario_argparser(None, default_name_base="x")
+        assert parser.parse_args([]).cost_model == "linear"
+        assert (
+            parser.parse_args(["--cost-model", "quadratic"]).cost_model == "quadratic"
+        )
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--cost-model", "cubic"])

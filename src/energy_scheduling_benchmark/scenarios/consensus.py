@@ -51,6 +51,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     SlackSpec,
     StorageParams,
     _clip_scenario,
+    apply_cost_model,
     build_demand_horizon,
     build_group_map,
     build_p_max_vec,
@@ -93,6 +94,7 @@ async def execute_test_case(
     balance_tol: float = 0.01,
     strict: bool = False,
     slack: SlackSpec | None = None,
+    cost_model: str = "linear",
 ) -> None:
     """Run the consensus benchmark once and write out CSV + plots.
 
@@ -167,6 +169,7 @@ async def execute_test_case(
     # --- Per-generator epsilon (capacity-scaled) ---
     # See capacity_scaled_epsilon's docstring for the rationale.
     eps = capacity_scaled_epsilon(gen_refs, statics_by_ref)
+    eps, cost_quad_by_aid = apply_cost_model(eps, gen_refs, statics_by_ref, cost_model)
 
     # --- Leader gain (price-sensitivity-scaled) ---
     # The leader's price update is `lam += leader_gain * ΔP` (Jian et al.
@@ -322,6 +325,7 @@ async def execute_test_case(
         world,
         name_base=name_base,
         cost_by_aid=cost_by_aid,
+        cost_quad_by_aid=cost_quad_by_aid,
         aggregator=aggregator,
         balance_tol=balance_tol,
         strict=strict,

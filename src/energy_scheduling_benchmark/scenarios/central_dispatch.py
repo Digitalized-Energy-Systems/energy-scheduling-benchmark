@@ -53,6 +53,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     register_component_agent,
     resolve_loss_rate,
     run_scenario_main,
+    thermal_cost_quad,
     write_scenario_outputs,
 )
 
@@ -75,6 +76,8 @@ class UnitReport:
     aid: str
     cost: float
     p_min: np.ndarray | None = None
+    #: Quadratic cost coefficient c₂ (``--cost-model quadratic``, thermal only).
+    cost_quad: float = 0.0
     p_max: np.ndarray | None = None
     storage: StorageParams | None = None
 
@@ -160,6 +163,7 @@ class CentralDispatchAggregator(PowerLoadAggregator):
         stores = [r for r in self._reports.values() if r.storage is not None]
         result = solve_multiperiod_dispatch(
             costs=[r.cost for r in gens],
+            costs_quad=[r.cost_quad for r in gens],
             p_max=np.array([r.p_max for r in gens]).reshape(len(gens), demand.size),
             p_min=np.array([r.p_min for r in gens]).reshape(len(gens), demand.size),
             demand=demand,
@@ -227,6 +231,7 @@ async def execute_test_case(
     balance_tol: float = 0.01,
     strict: bool = False,
     slack: SlackSpec | None = None,
+    cost_model: str = "linear",
 ) -> None:
     """Run the central-dispatch benchmark once and write out CSV + plots.
 
@@ -262,6 +267,7 @@ async def execute_test_case(
     )
 
     gen_refs, statics_by_ref = collect_generator_refs(behavior)
+    cost_quad_by_aid = thermal_cost_quad(gen_refs, statics_by_ref, cost_model)
     if not gen_refs:
         raise RuntimeError("No generators found for central-dispatch scenario.")
     group_map = build_group_map(gen_refs, statics_by_ref=statics_by_ref)
@@ -322,6 +328,7 @@ async def execute_test_case(
             report = UnitReport(
                 aid=ref.component_id,
                 cost=cost,
+                cost_quad=cost_quad_by_aid.get(ref.component_id, 0.0),
                 p_min=p_min,
                 p_max=np.nan_to_num(np.asarray(p_max, dtype=float)),
             )
@@ -339,6 +346,7 @@ async def execute_test_case(
         world,
         name_base=name_base,
         cost_by_aid=cost_by_aid,
+        cost_quad_by_aid=cost_quad_by_aid,
         stacked_title="Stacked power – central dispatch",
         aggregator=aggregator,
         balance_tol=balance_tol,

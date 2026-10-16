@@ -224,8 +224,10 @@ def solve_multiperiod_dispatch(
     p_min: Sequence[Sequence[float]] | np.ndarray | None = None,
     storage: Sequence[StorageSpec] = (),
     slack: SlackSpec | None = None,
+    costs_quad: Sequence[float] | None = None,
 ) -> MultiPeriodDispatchResult:
-    """Solve a copper-plate economic dispatch over a horizon as one LP.
+    """Solve a copper-plate economic dispatch over a horizon as one LP
+    (a convex QP with *costs_quad*).
 
     Parameters
     ----------
@@ -240,6 +242,10 @@ def solve_multiperiod_dispatch(
         Optional per-timestep lower bounds, shape ``(N, T)`` (default zero).
     storage:
         Storage units co-optimised over the horizon (see :class:`StorageSpec`).
+    costs_quad:
+        Optional quadratic cost coefficient per generator (€/MW²h, ≥ 0), adding
+        ``Σ c₂ · p²`` to the objective (``--cost-model quadratic``). Needs a QP
+        solver (HiGHS).
     slack:
         Optional slack node (see :class:`SlackSpec`). Adds import/export
         variables to every timestep's balance, priced in the objective (export
@@ -347,9 +353,29 @@ def solve_multiperiod_dispatch(
             + (slack.export_price + _SLACK_EXPORT_TIEBREAK) * model.s_exp[t]
             for t in model.T
         )
+    quad = None if costs_quad is None else np.asarray(costs_quad, dtype=float)
+    if quad is not None and np.any(quad):
+        if quad.shape != (n,) or np.any(quad < 0):
+            raise ValueError("costs_quad must be non-negative, one value per generator")
+        cost_expr += sum(
+            quad[i] * model.p[i, t] * model.p[i, t]
+            for i in model.G
+            for t in model.T
+            if quad[i]
+        )
     model.cost = pyo.Objective(expr=cost_expr, sense=pyo.minimize)
 
-    solver = _pick_solver()
+    if quad is not None and np.any(quad):
+        # appsi_highs rejects quadratic objectives (DegreeError); Pyomo's
+        # plain "highs" interface passes the Hessian to HiGHS' QP solver.
+        solver = pyo.SolverFactory("highs")
+        if not solver.available(exception_flag=False):
+            raise RuntimeError("Quadratic costs need the HiGHS QP solver (highspy).")
+        # HiGHS' QP solver otherwise reports "Solve error" for ~5e-7 MW
+        # residuals on badly scaled networks (bounds 1e-6 … 2e6 MW, de-at-storage).
+        solver.config.solver_options["primal_feasibility_tolerance"] = 1e-6
+    else:
+        solver = _pick_solver()
     results = solver.solve(model, load_solutions=False, tee=False)
     status = str(results.solver.termination_condition)
     if status not in {"optimal", "locallyOptimal"}:

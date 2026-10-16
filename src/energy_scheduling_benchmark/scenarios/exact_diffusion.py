@@ -54,6 +54,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     SlackSpec,
     StorageParams,
     _clip_scenario,
+    apply_cost_model,
     build_demand_horizon,
     build_group_map,
     build_p_max_vec,
@@ -65,6 +66,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     install_standard_recordings,
     loss_tolerance,
     make_finish_callback,
+    price_sensitivity,
     register_component_agent,
     resolve_loss_rate,
     run_scenario_main,
@@ -93,6 +95,7 @@ async def execute_test_case(
     balance_tol: float = 0.01,
     strict: bool = False,
     slack: SlackSpec | None = None,
+    cost_model: str = "linear",
 ) -> None:
     """Run the exact-diffusion benchmark once and write out CSV + plots.
 
@@ -171,6 +174,7 @@ async def execute_test_case(
     # --- Per-generator epsilon (capacity-scaled) ---
     # See capacity_scaled_epsilon's docstring for the rationale.
     eps = capacity_scaled_epsilon(gen_refs, statics_by_ref)
+    eps, cost_quad_by_aid = apply_cost_model(eps, gen_refs, statics_by_ref, cost_model)
 
     # --- Stability-derived gradient step ---
     # Ces et al. 2025 tune the feedback gain ε offline (genetic algorithm,
@@ -189,6 +193,11 @@ async def execute_test_case(
     # after 8000 iterations); at half the step it converges to a fully
     # balanced dispatch.
     grad_step = 0.25 * n_gens * eps.target_band / max(total_p_nom, 1.0)
+    if cost_quad_by_aid:
+        # Same bound with the true curvatures: Σ(p_nom_i/band) is Σ 1/ε_i.
+        grad_step = (
+            0.25 * n_gens / max(price_sensitivity(eps, gen_refs, statics_by_ref), 1e-9)
+        )
 
     # Warm-start λ at the mean marginal cost — Ces et al. 2025 initialise the
     # incremental cost from the cost coefficients at the initial dispatch
@@ -319,6 +328,7 @@ async def execute_test_case(
         world,
         name_base=name_base,
         cost_by_aid=cost_by_aid,
+        cost_quad_by_aid=cost_quad_by_aid,
         aggregator=aggregator,
         balance_tol=balance_tol,
         strict=strict,

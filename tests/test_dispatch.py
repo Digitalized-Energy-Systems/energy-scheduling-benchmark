@@ -256,3 +256,28 @@ class TestMultiperiodDispatchSlack:
         assert result.success
         np.testing.assert_allclose(result.slack_import, [4.0], atol=1e-6)
         np.testing.assert_allclose(result.generation[0], [0.0], atol=1e-6)
+
+
+class TestQuadraticDispatch:
+    def test_equal_incremental_cost_optimum(self):
+        # min 2x + 0.5x² + 3y + 0.1y² s.t. x + y = 8 -> 2 + x = 3 + 0.2y -> x = 13/6
+        result = solve_multiperiod_dispatch(
+            costs=[2.0, 3.0],
+            costs_quad=[0.5, 0.1],
+            p_max=[[10.0], [10.0]],
+            demand=[8.0],
+        )
+        assert result.success
+        np.testing.assert_allclose(result.generation[:, 0], [13 / 6, 35 / 6], atol=1e-6)
+
+    def test_zero_quadratic_terms_are_the_lp(self):
+        kwargs = dict(costs=[2.0, 3.0], p_max=[[10.0], [10.0]], demand=[8.0])
+        lp = solve_multiperiod_dispatch(**kwargs)
+        qp0 = solve_multiperiod_dispatch(costs_quad=[0.0, 0.0], **kwargs)
+        np.testing.assert_array_equal(lp.generation, qp0.generation)
+
+    def test_negative_quadratic_cost_rejected(self):
+        with pytest.raises(ValueError, match="non-negative"):
+            solve_multiperiod_dispatch(
+                costs=[1.0], costs_quad=[-1.0], p_max=[[5.0]], demand=[1.0]
+            )

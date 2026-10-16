@@ -130,6 +130,84 @@ def build_behavior(scenario: ScenarioData) -> PyPSABehavior:
     return PyPSABehavior.from_scenario(scenario)
 
 
+#: Cost models of ``--cost-model`` (decision Q2).
+COST_MODELS = ("linear", "quadratic")
+
+#: Quadratic cost factor k of ``c₂ = k · c₁ / p_nom`` (decision Q17): a unit's
+#: marginal cost rises from c₁ at 0 MW to (1 + 2k)·c₁ at full output. 0.11 is
+#: the mean of c·P_max/b over the three units of Wood & Wollenberg, *Power
+#: Generation, Operation and Control*, Example 4E (0.091, 0.129, 0.123).
+QUADRATIC_K = 0.11
+
+
+def quadratic_cost_coefficient(statics: dict, cost_model: str) -> float:
+    """``c₂`` (€/MW²h) of one generator for *cost_model* (0 for ``linear``).
+
+    ``c₂ = QUADRATIC_K · max(c₁, 0) / p_nom``; zero-cost units (renewables) and
+    units without ``p_nom`` stay linear. Storage is not passed here (its cost
+    stays linear, decision Q15).
+    """
+    if cost_model not in COST_MODELS:
+        raise ValueError(f"cost_model must be one of {COST_MODELS}, got {cost_model!r}")
+    if cost_model == "linear":
+        return 0.0
+    c1 = max(float(statics.get("marginal_cost", 0.0)), 0.0)
+    p_nom = float(statics.get("p_nom", 0.0))
+    return QUADRATIC_K * c1 / p_nom if p_nom > 0 else 0.0
+
+
+def thermal_cost_quad(
+    gen_refs: Sequence[ComponentRef], statics_by_ref: dict, cost_model: str
+) -> dict[str, float]:
+    """``{component_id: c₂}`` of the thermal units with a quadratic term.
+
+    Empty for ``cost_model="linear"``. Only thermal units get c₂ (heat-rate
+    curves, decision Q17); renewables and storage stay linear everywhere.
+    """
+    out: dict[str, float] = {}
+    for ref in gen_refs:
+        if ref.element_type != THERMAL:
+            continue
+        c2 = quadratic_cost_coefficient(statics_by_ref[ref], cost_model)
+        if c2 > 0:
+            out[ref.component_id] = c2
+    return out
+
+
+def apply_cost_model(
+    eps: EpsilonScaling,
+    gen_refs: Sequence[ComponentRef],
+    statics_by_ref: dict,
+    cost_model: str,
+) -> tuple[EpsilonScaling, dict[str, float]]:
+    """Price-response ε for *cost_model* plus the c₂ table for the cost metric.
+
+    With quadratic costs a thermal unit's ε is its true curvature 2c₂ (Jian et
+    al. eq. 23: P = (λ − b)/(2a)) instead of the capacity-scaled proxy; all
+    other units keep the proxy. Linear: returns *eps* unchanged and ``{}``.
+    """
+    cost_quad = thermal_cost_quad(gen_refs, statics_by_ref, cost_model)
+    if not cost_quad:
+        return eps, {}
+    eps_by_aid = dict(eps.eps_by_aid)
+    for aid, c2 in cost_quad.items():
+        eps_by_aid[aid] = 2.0 * c2
+    return _dataclass_replace(eps, eps_by_aid=eps_by_aid), cost_quad
+
+
+def price_sensitivity(
+    eps: EpsilonScaling, gen_refs: Sequence[ComponentRef], statics_by_ref: dict
+) -> float:
+    """Σ 1/εᵢ (MW per €/MWh) over *gen_refs*; storage uses band / p_nom."""
+    total = 0.0
+    for ref in gen_refs:
+        e = eps.eps_by_aid.get(ref.component_id)
+        if e is None:
+            e = eps.target_band / max(float(statics_by_ref[ref].get("p_nom", 0.0)), 1.0)
+        total += 1.0 / e
+    return total
+
+
 def resolve_loss_rate(loss_rate: float = 0.0) -> float:
     """Return the message-loss probability (a fraction in ``[0, 1]``).
 
@@ -672,6 +750,7 @@ def compute_overall_cost(
     Y_P: np.ndarray,
     labels_P: Sequence[str],
     step_s: float = 3600.0,
+    cost_quad_by_aid: dict[str, float] | None = None,
 ) -> tuple[float, pd.Series]:
     """Total linear cost of a "P" recording: sum_t sum_i cost_by_aid[aid_i] * P_i(t).
 
@@ -698,9 +777,13 @@ def compute_overall_cost(
         t_arr, Y_P = _keep_hourly(t_arr, Y_P, step_s)
 
     cost_vec = np.array([cost_by_aid.get(aid, 0.0) for aid in labels_P])
-    per_step = pd.Series(
-        (np.maximum(Y_P, 0.0) * cost_vec).sum(axis=1), index=t_arr, name="cost:total"
-    )
+    dispatched = np.maximum(Y_P, 0.0)
+    step_cost = (dispatched * cost_vec).sum(axis=1)
+    if cost_quad_by_aid:
+        # --cost-model quadratic: + Σ c₂ · P² per step (Q17).
+        quad_vec = np.array([cost_quad_by_aid.get(aid, 0.0) for aid in labels_P])
+        step_cost = step_cost + (dispatched**2 * quad_vec).sum(axis=1)
+    per_step = pd.Series(step_cost, index=t_arr, name="cost:total")
     # NB: this is a linear energy cost (Σ marginal_cost * dispatched MW) only —
     # no startup/no-load/commitment cost. "compute_overall_cost" oversells
     # that; compute_linear_energy_cost (below) is the clearer name to use in
@@ -878,6 +961,15 @@ def build_scenario_argparser(
         help=(
             "Probability that a message is lost, as a fraction in [0, 1] "
             "(e.g. 0.05 for 5%%; default 0)." + lossless_note
+        ),
+    )
+    parser.add_argument(
+        "--cost-model",
+        choices=COST_MODELS,
+        default="linear",
+        help=(
+            "Generator cost: 'linear' (PyPSA marginal cost, default) or 'quadratic' "
+            "(+ c2·P² with c2 = 0.11·marginal_cost/p_nom, decision Q17)."
         ),
     )
     parser.add_argument(
@@ -1607,6 +1699,7 @@ def write_scenario_outputs(
     net: Any | None = None,
     label: str = "",
     slack: SlackSpec | None = None,
+    cost_quad_by_aid: dict[str, float] | None = None,
 ) -> float:
     """Write the standard scenario result files and return the total cost.
 
@@ -1700,7 +1793,9 @@ def write_scenario_outputs(
         m = min(len(t_P), len(target_series))
         t_P, Y_P, target_series = t_P[:m], Y_P[:m], target_series[:m]
 
-    total_cost, cost_series = compute_overall_cost(cost_by_aid, t_P, Y_P, labels_P)
+    total_cost, cost_series = compute_overall_cost(
+        cost_by_aid, t_P, Y_P, labels_P, cost_quad_by_aid=cost_quad_by_aid
+    )
     extra: pd.Series | pd.DataFrame = cost_series
     slack_note = ""
     if slack is not None:
@@ -1848,6 +1943,7 @@ def run_scenario_main(
             result_retries=args.result_retries,
             name_base=str(args.out_dir / args.name_base),
             simulate_days=args.simulate_days,
+            cost_model=args.cost_model,
             slack=slack,
             **kwargs,
         )
