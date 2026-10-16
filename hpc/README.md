@@ -182,6 +182,7 @@ cd $WORK/esb
 energy-scheduling-benchmark/hpc/submit_all.sh --all                      # every .nc in resources/networks/
 energy-scheduling-benchmark/hpc/submit_all.sh base_s_5_elec_2019.nc lower_saxony_2030.nc
 energy-scheduling-benchmark/hpc/submit_all.sh --all -- --simulate-days 1 # flags after -- go to every scenario
+energy-scheduling-benchmark/hpc/submit_all.sh --all -- --slack           # with a slack node (see docs/slack-node.md)
 ```
 
 Useful environment overrides:
@@ -198,7 +199,8 @@ each with its own memory/time request from the `RESOURCES` table at the top of
 `submit_all.sh`, plus an `aggregate` job that waits for all arrays (`afterany`, so it
 also runs when single tasks fail — exactly like `run_all_scenarios.sh`, which skips
 failing scenarios) and then runs `compare_costs.py`. Runs with too large a
-power imbalance are marked non-converged there, as locally.
+power imbalance are marked non-converged there, as locally. Runs made with
+`--slack` are never excluded; their slack use lands in `results/slack_usage.csv`.
 
 Output:
 

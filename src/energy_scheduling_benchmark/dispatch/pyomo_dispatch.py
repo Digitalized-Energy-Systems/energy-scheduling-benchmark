@@ -33,6 +33,7 @@ __all__ = [
     "solve_multiperiod_dispatch",
     "DispatchResult",
     "MultiPeriodDispatchResult",
+    "SlackSpec",
     "StorageSpec",
 ]
 
@@ -177,6 +178,25 @@ class StorageSpec:
     discharge_cost: float = 0.0
 
 
+#: Extra cost per MWh exported through the slack (€/MWh), only in the LP
+#: objective: makes curtailment win over a free export when both cost the same.
+_SLACK_EXPORT_TIEBREAK = 1e-3
+
+
+@dataclass(frozen=True)
+class SlackSpec:
+    """Slack node (point of common coupling) that closes the power balance.
+
+    Stands in for the PCC of Bai et al. 2022 (Eq. 3): it supplies any shortfall
+    (import) and absorbs any surplus (export) at the given prices (€/MWh).
+    The import price should exceed every generator's marginal cost, otherwise
+    importing replaces generation.
+    """
+
+    import_price: float = 3000.0
+    export_price: float = 0.0
+
+
 @dataclass(frozen=True)
 class MultiPeriodDispatchResult:
     """Outcome of a multi-period economic-dispatch solve."""
@@ -190,6 +210,9 @@ class MultiPeriodDispatchResult:
     energy: np.ndarray
     objective: float
     solver_status: str
+    #: Slack import / export per timestep (length ``T``); ``None`` without a slack.
+    slack_import: np.ndarray | None = None
+    slack_export: np.ndarray | None = None
 
 
 def solve_multiperiod_dispatch(
@@ -198,6 +221,7 @@ def solve_multiperiod_dispatch(
     demand: Sequence[float] | np.ndarray,
     p_min: Sequence[Sequence[float]] | np.ndarray | None = None,
     storage: Sequence[StorageSpec] = (),
+    slack: SlackSpec | None = None,
 ) -> MultiPeriodDispatchResult:
     """Solve a copper-plate economic dispatch over a horizon as one LP.
 
@@ -214,12 +238,18 @@ def solve_multiperiod_dispatch(
         Optional per-timestep lower bounds, shape ``(N, T)`` (default zero).
     storage:
         Storage units co-optimised over the horizon (see :class:`StorageSpec`).
+    slack:
+        Optional slack node (see :class:`SlackSpec`). Adds import/export
+        variables to every timestep's balance, priced in the objective (export
+        plus a tiny tie-break so curtailment is preferred), which also keeps
+        the LP feasible when capacity falls short.
 
     Returns
     -------
     MultiPeriodDispatchResult
         ``success`` is ``True`` when the LP returns an optimal solution;
         otherwise the arrays are zero-filled and ``objective`` is NaN.
+        ``objective`` includes the slack terms (with the tie-break).
     """
     demand_arr = np.asarray(demand, dtype=float).ravel()
     T = demand_arr.size
@@ -286,25 +316,36 @@ def solve_multiperiod_dispatch(
             + m.p_c[s, t] * storage[s].eta_charge
         ),
     )
+    if slack is not None:
+        model.s_imp = pyo.Var(model.T, bounds=(0.0, None))
+        model.s_exp = pyo.Var(model.T, bounds=(0.0, None))
+
+    def _slack_net(m: pyo.ConcreteModel, t: int) -> pyo.Expression | float:
+        return m.s_imp[t] - m.s_exp[t] if slack is not None else 0.0
+
     model.balance = pyo.Constraint(
         model.T,
         rule=lambda m, t: (
-            sum(m.p[i, t] for i in m.G) + sum(m.p_d[s, t] - m.p_c[s, t] for s in m.S)
+            sum(m.p[i, t] for i in m.G)
+            + sum(m.p_d[s, t] - m.p_c[s, t] for s in m.S)
+            + _slack_net(m, t)
             == demand_arr[t]
         ),
     )
     # _CYCLING_PENALTY breaks ties against pointless charge/discharge cycling
     # when storage is lossless and prices are flat (e.g. the toy network).
-    model.cost = pyo.Objective(
-        expr=sum(costs[i] * model.p[i, t] for i in model.G for t in model.T)
-        + sum(
-            storage[s].discharge_cost * model.p_d[s, t]
-            + _CYCLING_PENALTY * model.p_c[s, t]
-            for s in model.S
-            for t in model.T
-        ),
-        sense=pyo.minimize,
+    cost_expr = sum(costs[i] * model.p[i, t] for i in model.G for t in model.T) + sum(
+        storage[s].discharge_cost * model.p_d[s, t] + _CYCLING_PENALTY * model.p_c[s, t]
+        for s in model.S
+        for t in model.T
     )
+    if slack is not None:
+        cost_expr += sum(
+            slack.import_price * model.s_imp[t]
+            + (slack.export_price + _SLACK_EXPORT_TIEBREAK) * model.s_exp[t]
+            for t in model.T
+        )
+    model.cost = pyo.Objective(expr=cost_expr, sense=pyo.minimize)
 
     solver = _pick_solver()
     results = solver.solve(model, load_solutions=False, tee=False)
@@ -327,6 +368,10 @@ def solve_multiperiod_dispatch(
         [[pyo.value(model.E[s, t]) for t in range(T + 1)] for s in range(k)],
         dtype=float,
     ).reshape(k, T + 1)
+    slack_import = slack_export = None
+    if slack is not None:
+        slack_import = np.array([pyo.value(model.s_imp[t]) for t in range(T)])
+        slack_export = np.array([pyo.value(model.s_exp[t]) for t in range(T)])
     return MultiPeriodDispatchResult(
         success=True,
         generation=generation,
@@ -334,4 +379,6 @@ def solve_multiperiod_dispatch(
         energy=energy,
         objective=float(pyo.value(model.cost)),
         solver_status=status,
+        slack_import=slack_import,
+        slack_export=slack_export,
     )

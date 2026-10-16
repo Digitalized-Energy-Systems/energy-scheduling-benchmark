@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from energy_scheduling_benchmark.dispatch import (
+    SlackSpec,
     StorageSpec,
     solve_central_dispatch,
     solve_multiperiod_dispatch,
@@ -181,3 +182,77 @@ class TestSolveMultiperiodDispatch:
     def test_empty_reports_failure(self):
         result = solve_multiperiod_dispatch(costs=[], p_max=[], demand=[])
         assert not result.success
+
+
+class TestMultiperiodDispatchSlack:
+    """Slack node (import/export) in the full-horizon LP."""
+
+    def test_no_slack_reports_none(self):
+        result = solve_multiperiod_dispatch(
+            costs=[10.0], p_max=[[5.0, 5.0]], demand=[4.0, 4.0]
+        )
+        assert result.success
+        assert result.slack_import is None and result.slack_export is None
+
+    def test_slack_unused_when_generation_suffices(self):
+        kwargs = dict(
+            costs=[10.0, 30.0], p_max=[[5.0, 5.0], [5.0, 5.0]], demand=[4.0, 8.0]
+        )
+        plain = solve_multiperiod_dispatch(**kwargs)
+        with_slack = solve_multiperiod_dispatch(**kwargs, slack=SlackSpec())
+        assert with_slack.success
+        np.testing.assert_allclose(with_slack.generation, plain.generation, atol=1e-6)
+        np.testing.assert_allclose(with_slack.slack_import, [0.0, 0.0], atol=1e-6)
+        np.testing.assert_allclose(with_slack.slack_export, [0.0, 0.0], atol=1e-6)
+        assert with_slack.objective == pytest.approx(plain.objective)
+
+    def test_shortfall_is_imported_at_import_price(self):
+        # Without a slack this LP is infeasible (5 MW capacity, 8 MW demand).
+        result = solve_multiperiod_dispatch(
+            costs=[10.0],
+            p_max=[[5.0, 5.0]],
+            demand=[4.0, 8.0],
+            slack=SlackSpec(import_price=3000.0),
+        )
+        assert result.success
+        np.testing.assert_allclose(result.generation[0], [4.0, 5.0], atol=1e-6)
+        np.testing.assert_allclose(result.slack_import, [0.0, 3.0], atol=1e-6)
+        assert result.objective == pytest.approx(10 * 9 + 3000 * 3)
+
+    def test_forced_surplus_is_exported(self):
+        # p_min = 6 MW above a 4 MW demand: the 2 MW surplus must go somewhere.
+        result = solve_multiperiod_dispatch(
+            costs=[10.0],
+            p_max=[[10.0, 10.0]],
+            p_min=[[6.0, 6.0]],
+            demand=[4.0, 4.0],
+            slack=SlackSpec(),
+        )
+        assert result.success
+        np.testing.assert_allclose(result.slack_export, [2.0, 2.0], atol=1e-6)
+        np.testing.assert_allclose(result.slack_import, [0.0, 0.0], atol=1e-6)
+
+    def test_curtailment_preferred_over_free_export(self):
+        # Free wind (cost 0) above demand: exporting at price 0 costs the same
+        # as curtailing, the tie-break must pick curtailment.
+        result = solve_multiperiod_dispatch(
+            costs=[0.0],
+            p_max=[[10.0, 10.0]],
+            demand=[4.0, 4.0],
+            slack=SlackSpec(export_price=0.0),
+        )
+        assert result.success
+        np.testing.assert_allclose(result.generation[0], [4.0, 4.0], atol=1e-6)
+        np.testing.assert_allclose(result.slack_export, [0.0, 0.0], atol=1e-6)
+
+    def test_cheap_import_replaces_generation(self):
+        # Documents why the import price must exceed every marginal cost.
+        result = solve_multiperiod_dispatch(
+            costs=[50.0],
+            p_max=[[10.0]],
+            demand=[4.0],
+            slack=SlackSpec(import_price=5.0),
+        )
+        assert result.success
+        np.testing.assert_allclose(result.slack_import, [4.0], atol=1e-6)
+        np.testing.assert_allclose(result.generation[0], [0.0], atol=1e-6)
