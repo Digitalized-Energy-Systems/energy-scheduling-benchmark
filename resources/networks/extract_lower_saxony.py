@@ -47,8 +47,10 @@ REGION_PREFIX = "DE9"
 #   offwind  30 GW — WindSeeG § 1 Abs. 2 ("mindestens 30 Gigawatt bis zum Jahr 2030")
 #   battery  24 GW — no statutory target; this value matches large-battery
 #            figures for 2037 (NEP 2037/2045 V2023 scenario framework,
-#            23.7–24.2 GW) and 2040 (Frontier Economics), not 2030. Source for
-#            2030 pending (see TODO, Phase 2 Lower Saxony).
+#            23.7–24.2 GW) and 2040 (Frontier Economics), not 2030. Kept as
+#            the project's assumption of an ambitious 2030 fleet (decided
+#            2026-10-16); the only published 2030 figure found is Frontier
+#            Economics' 15 GW / 57 GWh of large batteries.
 # The uplift runs on the full German network *before* the Lower Saxony cut, so
 # each carrier's national increment is spread over all German buses in
 # proportion to their land-availability ``p_nom_max`` headroom; Lower Saxony
