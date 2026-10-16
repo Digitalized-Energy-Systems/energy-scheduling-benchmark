@@ -163,7 +163,9 @@ class StorageSpec:
     Same model as the distributed scenarios' storage actors (see
     ``ProximalStorageADMMActor`` in ``distributed_resource_optimization``):
     ``E[t+1] = E[t] - p_d[t] / eta_discharge + p_c[t] * eta_charge`` with
-    ``0 <= E <= e_max`` and a cyclic terminal condition ``E[T] = E[0]``.
+    ``0 <= E <= e_max`` and the terminal condition ``E[T] >= E[0]`` (the
+    battery ends at least as full as it started; same rule in every
+    algorithm, decision Q15).
     """
 
     e_max: float
@@ -305,7 +307,7 @@ def solve_multiperiod_dispatch(
         return float(np.clip(storage[s].e_initial, 0.0, 1.0)) * storage[s].e_max
 
     model.soc_initial = pyo.Constraint(model.S, rule=lambda m, s: m.E[s, 0] == _e0(s))
-    model.soc_final = pyo.Constraint(model.S, rule=lambda m, s: m.E[s, T] == _e0(s))
+    model.soc_final = pyo.Constraint(model.S, rule=lambda m, s: m.E[s, T] >= _e0(s))
     model.soc_dynamics = pyo.Constraint(
         model.S,
         model.T,
