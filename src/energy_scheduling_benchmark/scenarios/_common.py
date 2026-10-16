@@ -13,13 +13,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import math
 import random
+import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from dataclasses import replace as _dataclass_replace
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import numpy as np
@@ -1089,6 +1092,9 @@ class OptimizationFinishedInfo:
 
     aid: str
     schedule: np.ndarray | None = None
+    #: Rounds the unit's algorithm ran and how it stopped (for the meta sidecar).
+    iterations: int | None = None
+    converged: bool | None = None
 
 
 class ScheduleRequest(RoleLocalMessage):
@@ -1151,6 +1157,8 @@ class GeneratorResultRole(Role):
         super().__init__()
         #: The finished schedule, ``None`` while the run is in progress.
         self.schedule: np.ndarray | None = None
+        self.iterations: int | None = None
+        self.converged: bool | None = None
         self._started_run = 0
 
     def setup(self) -> None:
@@ -1168,7 +1176,13 @@ class GeneratorResultRole(Role):
         if self.schedule is None:
             return  # still running: the leader asks again later
         self._reply(
-            OptimizationFinishedInfo(aid=self.context.aid, schedule=self.schedule), meta
+            OptimizationFinishedInfo(
+                aid=self.context.aid,
+                schedule=self.schedule,
+                iterations=self.iterations,
+                converged=self.converged,
+            ),
+            meta,
         )
 
     def _on_kick_off(self, content: KickOff, meta: dict) -> None:
@@ -1248,6 +1262,11 @@ class PowerLoadAggregator(Role):
         self._on_run_finished = on_run_finished
         #: Distributed runs started (1 unless *on_run_finished* asks for more).
         self.runs: int = 0
+        #: Per unit: rounds run and stop flag from the finished messages.
+        self.iterations_by_aid: dict[str, int | None] = {}
+        self.converged_by_aid: dict[str, bool | None] = {}
+        #: Coordinator-level statistics (e.g. ADMM iterations / missed answers).
+        self.algorithm_stats: dict[str, Any] = {}
         self._behavior = behavior
         self.number_loads = number_loads
         self._generator_aids = generator_aids
@@ -1451,6 +1470,8 @@ class PowerLoadAggregator(Role):
                 schedule, dtype=float
             ).copy()
         self._finished_aids.add(message.aid)
+        self.iterations_by_aid[message.aid] = getattr(message, "iterations", None)
+        self.converged_by_aid[message.aid] = getattr(message, "converged", None)
         if len(self._finished_aids) == self._n_finished_required:
             if self._on_run_finished is not None:
                 next_start = self._on_run_finished()
@@ -1640,12 +1661,13 @@ def make_finish_callback(
                 "aborted before producing a schedule."
             ) from exc
         schedule = np.asarray(obj, dtype=float).copy()
+        converged = getattr(algorithm, "converged", None)
+        iterations = getattr(algorithm, "iterations", None)
         result_role = role.context.get_role(GeneratorResultRole)
         if result_role is not None:
             result_role.schedule = schedule
-
-        converged = getattr(algorithm, "converged", None)
-        iterations = getattr(algorithm, "iterations", None)
+            result_role.iterations = iterations
+            result_role.converged = converged
         if converged is False:
             logger.warning(
                 "%s did not converge for %s after %s iteration(s); schedule may "
@@ -1658,7 +1680,13 @@ def make_finish_callback(
         leader_addr = leader_addr_ref.get("addr")
         if leader_addr is not None:
             role.context.schedule_instant_message(
-                finished_message_type(aid=aid, schedule=schedule), leader_addr
+                finished_message_type(
+                    aid=aid,
+                    schedule=schedule,
+                    iterations=iterations,
+                    converged=converged,
+                ),
+                leader_addr,
             )
         logger.info(
             "%s finished for %s (schedule len=%s%s)",
@@ -1712,6 +1740,71 @@ def install_standard_recordings(
             return float(behavior.observe(a.aid, "active_power") or 0.0)
 
     record_agent_having(world, "P", role_cls, _extract)
+
+
+def _run_meta(world: Any, aggregator: Any, total_cost: float) -> dict[str, Any]:
+    """Outcome part of ``<name>-meta.json`` (the CLI adds dimensions, git, wall time)."""
+    meta: dict[str, Any] = {
+        "total_cost": total_cost,
+        "messages_delivered": getattr(world, "messages_delivered_count", None),
+        "simulated_seconds": float(
+            getattr(getattr(world, "clock", None), "time", 0.0) or 0.0
+        ),
+    }
+    if aggregator is None:
+        return meta
+    iterations = [i for i in aggregator.iterations_by_aid.values() if i is not None]
+    converged = [c for c in aggregator.converged_by_aid.values() if c is not None]
+    stats = dict(getattr(aggregator, "algorithm_stats", {}) or {})
+    if not iterations and stats.get("iterations") is not None:
+        iterations = [stats["iterations"]]
+    if not converged and stats.get("converged") is not None:
+        converged = [stats["converged"]]
+    if converged:
+        stop_reason = "converged" if all(converged) else "max_iter"
+    else:
+        stop_reason = "fixed_budget" if iterations else "n/a"
+    for key in ("solver_status", "objective"):
+        value = getattr(aggregator, key, None)
+        if value is not None:
+            stats[key] = value
+    meta.update(
+        {
+            "balance_max_rel_gap": aggregator.balance_max_rel_gap,
+            "iterations_max": max(iterations) if iterations else None,
+            "iterations_min": min(iterations) if iterations else None,
+            "iterations_mean": float(np.mean(iterations)) if iterations else None,
+            "stop_reason": stop_reason,
+            "outer_runs": getattr(aggregator, "runs", None),
+            "degraded_generators": list(aggregator.degraded_generators),
+            "hours_with_missing_loads": aggregator.hours_with_missing_loads,
+            "algorithm_stats": stats,
+        }
+    )
+    return meta
+
+
+def _git_state(module: Any) -> dict[str, Any]:
+    """HEAD SHA and dirty flag of the git checkout containing *module* (None if none)."""
+    try:
+        here = str(Path(module.__file__).resolve().parent)
+        sha = subprocess.run(
+            ["git", "-C", here, "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "-C", here, "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        ).stdout.strip()
+        return {"sha": sha, "dirty": bool(dirty)}
+    except (OSError, subprocess.SubprocessError, AttributeError, TypeError):
+        return {"sha": None, "dirty": None}
 
 
 def write_scenario_outputs(
@@ -1851,6 +1944,8 @@ def write_scenario_outputs(
     _write_agent_recordings_csv(
         world, f"{name_base}-df.csv", snapshot_step_s=3600.0, extra=extra
     )
+    with open(f"{name_base}-meta.json", "w", encoding="utf-8") as f:
+        json.dump(_run_meta(world, aggregator, total_cost), f, indent=2, default=str)
 
     if group_map is None:
         group_map = {str(lbl): str(lbl) for lbl in labels_P}
@@ -1962,6 +2057,7 @@ def run_scenario_main(
     # Every output path is derived from name_base, so prefixing it with the
     # output directory routes all CSV/PDF writes there.
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    started = perf_counter()
     asyncio.run(
         execute_test_case(
             scenario=scenario,
@@ -1978,3 +2074,47 @@ def run_scenario_main(
             **kwargs,
         )
     )
+    _complete_meta(
+        args.out_dir / f"{args.name_base}-meta.json",
+        scenario=default_name_base,
+        args=args,
+        wall_time_s=perf_counter() - started,
+    )
+
+
+def _complete_meta(
+    path: Path, *, scenario: str, args: argparse.Namespace, wall_time_s: float
+) -> None:
+    """Add run dimensions, git SHAs and wall time to a written meta sidecar."""
+    if not path.exists():
+        return  # the run failed before writing outputs (e.g. --strict)
+    import distributed_resource_optimization
+    import mango
+    import mango_energy_environments
+
+    import energy_scheduling_benchmark
+
+    meta = json.loads(path.read_text(encoding="utf-8"))
+    dims = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}
+    dims.update(
+        {
+            "scenario": scenario,
+            "topology": "complete",
+            "loss_rate": loss_rate_from_args(args),
+        }
+    )
+    meta = {
+        "dimensions": dims,
+        **meta,
+        "wall_time_s": wall_time_s,
+        "git": {
+            m.__name__: _git_state(m)
+            for m in (
+                energy_scheduling_benchmark,
+                distributed_resource_optimization,
+                mango_energy_environments,
+                mango,
+            )
+        },
+    }
+    path.write_text(json.dumps(meta, indent=2, default=str), encoding="utf-8")

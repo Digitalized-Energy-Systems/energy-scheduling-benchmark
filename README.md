@@ -172,6 +172,10 @@ Each run produces (in `--out-dir`):
 * `<name>-observation.pdf` — per-unit power as a grid of per-carrier subplots
 * `<name>-balance.pdf`     — total generation vs demand, plus the residual
 * `<name>-cost.pdf`        — dispatch cost per timestep
+* `<name>-meta.json`       — run dimensions (all CLI options, scenario, topology),
+  total cost, balance gap, rounds/iterations and stop reason, delivered messages,
+  wall time, loss diagnostics (degraded units, hours with missing loads, ADMM
+  missed answers) and the git SHA (+ dirty flag) of each package
 
 To run all seven scenarios against the PyPSA-Eur extracts and compare total
 costs, use `../run_all_scenarios.sh` from the repo root (writes

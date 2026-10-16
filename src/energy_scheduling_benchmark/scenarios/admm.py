@@ -272,6 +272,11 @@ async def execute_test_case(
         def deliver(future: Any) -> None:
             if future.cancelled() or future.exception() is not None:
                 return
+            aggregator.algorithm_stats = {
+                "iterations": coordinator.iterations,
+                "converged": coordinator.converged,
+                "missed_answers": coordinator.missed_answers,
+            }
             addrs = list(coord_role.context.neighbors())  # coordinator's order
             aggregator.accept_schedules(
                 {

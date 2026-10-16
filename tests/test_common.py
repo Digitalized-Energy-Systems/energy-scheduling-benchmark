@@ -307,3 +307,40 @@ class TestCostModel:
         )
         with pytest.raises(SystemExit):
             parser.parse_args(["--cost-model", "cubic"])
+
+
+class TestMetaSidecar:
+    def test_cli_run_writes_meta_with_dimensions_metrics_and_versions(self, tmp_path):
+        import json
+
+        from energy_scheduling_benchmark.scenarios.central_dispatch import main
+
+        main(
+            [
+                "--network",
+                "toy",
+                "--simulate-days",
+                "1",
+                "--name-base",
+                "cd",
+                "--out-dir",
+                str(tmp_path),
+            ]
+        )
+        meta = json.loads((tmp_path / "cd-meta.json").read_text())
+        dims = meta["dimensions"]
+        assert (
+            dims["network"] == "toy"
+            and dims["loss_rate"] == 0.0
+            and dims["topology"] == "complete"
+        )
+        assert meta["total_cost"] > 0
+        assert meta["messages_delivered"] > 0
+        assert meta["wall_time_s"] > 0
+        assert meta["algorithm_stats"]["solver_status"] == "optimal"
+        assert set(meta["git"]) == {
+            "energy_scheduling_benchmark",
+            "distributed_resource_optimization",
+            "mango_energy_environments",
+            "mango",
+        }
