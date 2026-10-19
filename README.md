@@ -188,7 +188,7 @@ Algorithm-specific flags (see `<entry-point> --help`):
 | Entry point           | Extra flags (defaults)                                                         |
 |-----------------------|--------------------------------------------------------------------------------|
 | `esb-consensus`       | `--max-iter 500`, `--alpha 0.2`, `--leader-damping 0.5`                        |
-| `esb-admm`            | `--rho 0.1`, `--max-iter 2000`                                                 |
+| `esb-admm`            | `--rho 0.1`, `--max-iter 2000`, `--adaptive-rho` (off; Boyd §3.4.1 residual balancing) |
 | `esb-diffusion`       | `--max-iter 2000`, `--tol 1e-3`                                                |
 | `esb-exact-diffusion` | `--weight-rule averaging`, `--max-iter 6000`, `--tol 1e-3`                     |
 | `esb-fdgdm`           | `--max-iter 300`, `--tol-ratio 0.000222` (Eq. 24 stop, 0.01/45 × p_nom; 0 = off) |

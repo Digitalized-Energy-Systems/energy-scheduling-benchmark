@@ -61,7 +61,9 @@ class TestLookupTs:
         assert _lookup_ts(self._scenario({real_ref: ts}), alt_ref) is ts
 
     def test_missing_key_returns_none(self):
-        assert _lookup_ts(self._scenario({}), ComponentRef("thermal", "missing")) is None
+        assert (
+            _lookup_ts(self._scenario({}), ComponentRef("thermal", "missing")) is None
+        )
 
     def test_element_type_mismatch_returns_none(self):
         ref = ComponentRef("thermal", "g0")
@@ -71,7 +73,9 @@ class TestLookupTs:
     def test_component_id_mismatch_returns_none(self):
         ref = ComponentRef("thermal", "g0")
         ts = pd.Series([1.0])
-        assert _lookup_ts(self._scenario({ref: ts}), ComponentRef("thermal", "g1")) is None
+        assert (
+            _lookup_ts(self._scenario({ref: ts}), ComponentRef("thermal", "g1")) is None
+        )
 
 
 class TestScalar:
@@ -190,7 +194,9 @@ class TestADMMScenarioIntegration:
         net = pypsa.Network()
         net.set_snapshots(pd.date_range("2024-01-01", periods=24, freq="h"))
         net.add("Bus", "b0")
-        net.add("Generator", "g0", bus="b0", carrier="gas", p_nom=10.0, marginal_cost=10.0)
+        net.add(
+            "Generator", "g0", bus="b0", carrier="gas", p_nom=10.0, marginal_cost=10.0
+        )
         scenario = ScenarioData(net=net, timeseries={}, start=datetime(2024, 1, 1))
 
         with pytest.raises(RuntimeError, match="No loads"):
@@ -262,7 +268,9 @@ class TestADMMScenarioIntegration:
 
         # After the schedule is applied, generation must be within 20 MW of demand.
         gap = (tail_tgt - tail_gen).abs()
-        assert float(gap.mean()) < 20.0, f"Mean generation-demand gap {gap.mean():.1f} MW is too large"
+        assert float(gap.mean()) < 20.0, (
+            f"Mean generation-demand gap {gap.mean():.1f} MW is too large"
+        )
 
     async def test_runs_under_message_loss(self, tmp_path):
         """With 5% of messages lost the run still finishes and passes the
@@ -289,7 +297,9 @@ class TestADMMScenarioIntegration:
             seen.update(kwargs)
             return real(**kwargs)
 
-        monkeypatch.setattr(admm_mod, "create_consensus_target_reach_admm_coordinator", spy)
+        monkeypatch.setattr(
+            admm_mod, "create_consensus_target_reach_admm_coordinator", spy
+        )
         await execute_test_case(
             scenario=build_toy_network(periods=24),
             name_base=str(tmp_path / "admm"),
@@ -298,3 +308,29 @@ class TestADMMScenarioIntegration:
         )
         assert seen["max_missing_rounds"] == 7
 
+    async def test_adaptive_rho_from_a_poor_start(self, tmp_path, monkeypatch):
+        """--adaptive-rho reaches the optimum from rho = 10 (fixed rho = 10
+        creeps); the coordinator's rho changes are recorded."""
+        import energy_scheduling_benchmark.scenarios.admm as admm_mod
+
+        coordinators = []
+        real = admm_mod.create_consensus_target_reach_admm_coordinator
+
+        def spy(**kwargs):
+            coordinators.append(real(**kwargs))
+            return coordinators[-1]
+
+        monkeypatch.setattr(
+            admm_mod, "create_consensus_target_reach_admm_coordinator", spy
+        )
+        await execute_test_case(
+            scenario=build_toy_network(periods=24),
+            name_base=str(tmp_path / "admm"),
+            simulate_days=1,
+            rho=10.0,
+            adaptive_rho=True,
+            strict=True,
+        )
+        coordinator = coordinators[0]
+        assert coordinator.adaptive_rho and coordinator.converged
+        assert coordinator.rho_changes > 0 and coordinator.final_rho != 10.0

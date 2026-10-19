@@ -149,6 +149,7 @@ async def execute_test_case(
     simulate_days: int = 3,
     rho: float = 0.1,
     max_iter: int = 2000,
+    adaptive_rho: bool = False,
     balance_tol: float = 0.01,
     strict: bool = False,
     slack: SlackSpec | None = None,
@@ -162,6 +163,8 @@ async def execute_test_case(
         merit-order prices (hits max_iter, up to +7 % cost on the PyPSA-Eur
         extracts); 0.1 reaches the central-dispatch optimum.
     :param max_iter: Maximum exchange-ADMM coordinator iterations.
+    :param adaptive_rho: Residual balancing of rho (Boyd et al. 2011, §3.4.1),
+        starting from *rho*; off by default.
     :param balance_tol: Max allowed per-timestep |generation - demand| /
         demand before the finished schedule is flagged as not converged.
     :param strict: If true, raise instead of writing outputs when the
@@ -266,6 +269,7 @@ async def execute_test_case(
 
     coordinator = create_consensus_target_reach_admm_coordinator(
         rho=rho,
+        adaptive_rho=adaptive_rho,
         max_iters=max_iter,
         alpha=0.0,
         round_timeout=lt.round_timeout,
@@ -286,6 +290,8 @@ async def execute_test_case(
                 "iterations": coordinator.iterations,
                 "converged": coordinator.converged,
                 "missed_answers": coordinator.missed_answers,
+                "final_rho": coordinator.final_rho,
+                "rho_changes": coordinator.rho_changes,
             }
             addrs = list(coord_role.context.neighbors())  # coordinator's order
             aggregator.accept_schedules(
@@ -372,6 +378,14 @@ def _add_admm_args(parser: argparse.ArgumentParser) -> None:
         default=2000,
         help="Maximum exchange-ADMM coordinator iterations.",
     )
+    parser.add_argument(
+        "--adaptive-rho",
+        action="store_true",
+        help=(
+            "Residual balancing (Boyd et al. 2011, §3.4.1, eq. 3.13; mu = 10, tau = 2): "
+            "adapt rho each round, starting from --rho. Off by default (fixed rho)."
+        ),
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -380,7 +394,7 @@ def main(argv: list[str] | None = None) -> None:
         doc=__doc__,
         default_name_base="admm",
         extra_args=_add_admm_args,
-        extra_kwargs=("rho", "max_iter"),
+        extra_kwargs=("rho", "max_iter", "adaptive_rho"),
         with_balance_tol=True,
         argv=argv,
     )
