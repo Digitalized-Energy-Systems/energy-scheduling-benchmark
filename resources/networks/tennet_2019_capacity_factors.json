@@ -1,0 +1,32 @@
+{
+  "year": 2019,
+  "method": "Hourly 2019 capacity factors of solar, onshore and offshore wind in the TenneT\nDE control area from measured production (decision Q23, TODO Phase 2c).\n\nProduction: ENTSO-E Transparency \"Actual generation per production type\", via\nthe Open Power System Data time-series package (2020-10-06), columns\n``DE_tennet_{solar,wind_onshore,wind_offshore}_generation_actual`` (MW, UTC).\n\nInstalled capacity (the denominator):\n\n* solar, onshore wind \u2014 TenneT's share of the OPSD renewable power plants\n  register (2020-08-25; it ends in June 2018) times OPSD's hourly national\n  capacity series for 2019 (``DE_solar_capacity``, ``DE_wind_onshore_capacity``),\n  so the 2019 fleet growth is kept;\n* offshore wind \u2014 all North Sea parks are connected by TenneT; grid-feeding\n  North Sea capacity 5,236 MW at the end of 2018 and 6,440 MW at the end of\n  2019 (Deutsche WindGuard, \"Status des Offshore-Windenergieausbaus in\n  Deutschland\", 2018 and 2019), linear over 2019. OPSD's offshore capacities\n  are below TenneT's own peak production and are not used.\n\nCapacity factor = production / capacity, clipped to [0, 1]. Output: a CSV\n(``utc_timestamp, solar, onwind, offwind``) plus a JSON sidecar with the input\nfiles' SHA-256 and the method parameters.",
+  "tennet_register_share": {
+    "solar": 0.36775428554463063,
+    "onwind": 0.41123602571203344
+  },
+  "north_sea_capacity_mw": {
+    "2019-01-01": 5236.0,
+    "2020-01-01": 6440.0
+  },
+  "sources": {
+    "time_series_60min_singleindex.csv": {
+      "url": "https://data.open-power-system-data.org/time_series/2020-10-06/time_series_60min_singleindex.csv",
+      "sha256": "6a7f2bc571314cbf9c321cc03437691cd4be95c3a6f075e60ff99e8035c704c8"
+    },
+    "renewable_power_plants_DE.csv": {
+      "url": "https://data.open-power-system-data.org/renewable_power_plants/2020-08-25/renewable_power_plants_DE.csv",
+      "sha256": "358aac3be85a7bfde3f432bedc2dd6520769f43bf30782d13eaf356de07c528a"
+    }
+  },
+  "clipped_hours": {
+    "solar": 0,
+    "onwind": 0,
+    "offwind": 0
+  },
+  "mean_capacity_factor": {
+    "solar": 0.0985,
+    "onwind": 0.2574,
+    "offwind": 0.392
+  }
+}
