@@ -20,6 +20,14 @@ Flow
    range to prevent first-step overshoot of the gradient update.
 4. After FDGDM finishes, the leader applies all schedules as the
    simulation clock advances.
+
+Scope (decision Q24, kept as in the paper): FDGDM conserves ΣP in every step
+(Eq. 10) and handles unit limits only by clipping (Eq. 16), which loses power
+whenever a limit binds; renewables run at full availability (MPPT) and are
+never curtailed. It works only with strictly convex costs, no binding limits
+at the optimum and no renewable surplus. Outside that scope (linear costs
+without the proxy, quadratic costs at the limits, ``lower_saxony_2030``'s 2030
+renewable surplus) it fails structurally — see ``docs/deviations.md``, FDGDM.
 """
 
 from __future__ import annotations
