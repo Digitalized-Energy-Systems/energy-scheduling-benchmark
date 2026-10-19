@@ -49,6 +49,7 @@ from energy_scheduling_benchmark import (
     ComponentRef,
     PowerUpdateInfo,
     PyPSABehavior,
+    tuned_params,
 )
 from energy_scheduling_benchmark.dispatch import SlackSpec
 from energy_scheduling_benchmark.networks import (
@@ -1082,6 +1083,16 @@ def build_scenario_argparser(
         help=(
             "Probability that a message is lost, as a fraction in [0, 1] "
             "(e.g. 0.05 for 5%%; default 0)." + lossless_note
+        ),
+    )
+    parser.add_argument(
+        "--tuned-params",
+        type=Path,
+        default=None,
+        help=(
+            "TOML file with the tuned algorithm parameters (iteration budgets, rho, "
+            "alpha, ...) per scenario, topology and network; default: the packaged "
+            "tuned_parameters.toml. Explicit flags override it."
         ),
     )
     parser.add_argument(
@@ -2179,7 +2190,28 @@ def run_scenario_main(
         lossless_only=lossless_only,
         with_balance_tol=with_balance_tol,
     )
+    # Tuned parameters: a first parse finds the network/topology, the file's
+    # values become the parser defaults, and the second parse lets explicit
+    # flags win.
+    first = parser.parse_args(argv)
+    config = tuned_params.load(first.tuned_params)
+    tuned, tuned_from = tuned_params.resolve(
+        config, default_name_base, first.network, first.topology
+    )
+    known = {action.dest for action in parser._actions}
+    unknown = sorted(set(tuned) - known)
+    if unknown:
+        parser.error(
+            f"{first.tuned_params or tuned_params.DEFAULT_PATH}: unknown parameter(s) "
+            f"{unknown} for {default_name_base}"
+        )
+    parser.set_defaults(**tuned)
     args = parser.parse_args(argv)
+    args.tuned_from = {
+        key: tuned_from[key]
+        for key in tuned
+        if getattr(args, key) == tuned[key]  # not overridden on the command line
+    }
 
     slack = None
     if args.slack:

@@ -48,6 +48,9 @@ distributed-resource-optimization = { path = "../distributed-resource-optimizati
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+energy_scheduling_benchmark = ["tuned_parameters.toml"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 

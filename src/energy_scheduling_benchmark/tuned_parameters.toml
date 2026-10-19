@@ -1,0 +1,58 @@
+# Tuned algorithm parameters (TODO Phase 3; decision 2026-10-19: iteration
+# budgets live here, not in code). Read by every scenario CLI; an explicit
+# command-line flag overrides the value from this file. Layout and precedence:
+# see energy_scheduling_benchmark/tuned_params.py.
+#
+# Keys are the CLI flags' dest names (--max-iter -> max_iter). Values that are
+# fixed by a paper (FDGDM / DEED-ADMM tol_ratio = 0.01/45, Bai et al. Eq. 24)
+# or derived from the network (step sizes, epsilon bands) stay in code.
+
+# --- Scenario defaults (every network, complete topology) -----------------
+
+[consensus]
+max_iter = 500
+alpha = 0.2          # follower averaging step
+leader_damping = 0.5 # fraction of the imbalance the leader corrects per round (divided by the graph diameter)
+
+[admm]
+rho = 0.1            # rho = 1 converges too slowly on GW fleets (+7 % cost at max_iter)
+max_iter = 2000
+
+[diffusion]
+max_iter = 2000
+tol = 1e-3
+
+[exact_diffusion]
+weight_rule = "averaging"   # Ces et al. 2025 Table I: best-performing rule
+max_iter = 6000
+tol = 1e-3
+
+[fdgdm]
+max_iter = 300
+
+[deed_admm]
+gamma = 0.05         # Zhu et al. 2025 default
+max_iter = 500
+
+# --- Sparse topologies -----------------------------------------------------
+# The leader's correction needs ~one round per hop: DE-AT 2-bus ring (21 units,
+# diameter 5) balances after 877 rounds (2026-10-19). The power-balance stop
+# ends runs early, so a generous budget only costs time when a run would fail.
+
+[consensus.topology.ring]
+max_iter = 3000
+
+[consensus.topology.grid]
+max_iter = 3000
+
+# DEED-ADMM mixes slowly on sparse graphs (W = I − βL, β = 1/(max degree + 1))
+# and its stop rule did not fire on DE-AT. Gap to central dispatch on the DE-AT
+# 2-bus ring by budget (2026-10-19): 500 → +10.5 %, 3000 → +5.6 %,
+# 5000 → +4.4 %, 10000 → +1.9 %, 30000 → +0.27 % (206 s). The complete graph
+# reaches +0.53 % in 500 rounds; 30000 gives comparable quality.
+
+[deed_admm.topology.ring]
+max_iter = 30000
+
+[deed_admm.topology.grid]
+max_iter = 30000

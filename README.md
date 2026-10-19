@@ -85,11 +85,38 @@ the loss draws, default `0`, so lossy runs are reproducible), `--cost-model`
 `c₂·P²` with `c₂ = 0.11·marginal_cost/p_nom`, so their marginal cost is 22 % higher
 at full output — k = 0.11 from Wood & Wollenberg's Example 4E; renewables and
 storage stay linear; central dispatch then solves a QP with HiGHS), `--topology`
-(communication graph, see below; default `complete`), `--log-level`,
+(communication graph, see below; default `complete`), `--tuned-params` (see
+below), `--log-level`,
 plus `--balance-tol` (max per-timestep |generation − demand| / demand before a
 finished run is flagged as not converged, default `0.01`) and `--strict` (exit
 with an error instead of writing outputs when that check fails, or when the
 distributed schedule never finished).
+
+### Tuned parameters
+
+Algorithm parameters that are tuned rather than derived — iteration budgets
+(`max_iter`), ADMM `rho`, consensus `alpha` / `leader_damping`, DEED-ADMM `gamma`,
+diffusion `tol`, exact diffusion's `weight_rule` — live in
+`src/energy_scheduling_benchmark/tuned_parameters.toml`, per scenario, with
+optional sections per topology and per network:
+
+```toml
+[consensus]                    # every network
+max_iter = 500
+
+[consensus.topology.ring]      # sparse graphs need more rounds
+max_iter = 3000
+
+[network."base_s_2_elec_de-at-storage-2023".deed_admm]
+max_iter = 2000
+```
+
+Later sections override earlier ones in that order, and an explicit flag
+(`--max-iter 800`) overrides the file. `--tuned-params FILE` reads another file.
+Each run's `<name>-meta.json` records the values used and, under
+`dimensions.tuned_from`, the section each one came from. Values fixed by a paper
+(FDGDM / DEED-ADMM `tol_ratio`) and values derived from the network (step sizes,
+ε bands) stay in code.
 
 ### Communication topology
 
