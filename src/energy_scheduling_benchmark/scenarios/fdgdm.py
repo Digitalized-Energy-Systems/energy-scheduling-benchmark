@@ -42,8 +42,6 @@ from distributed_resource_optimization.misc.storage import StorageModel
 from mango import (
     RoleAgent,
     agent_composed_of,
-    auto_assign,
-    complete_topology,
 )
 from mango.simulation.world import discrete_step_until
 
@@ -71,8 +69,10 @@ from energy_scheduling_benchmark.scenarios._common import (
     collect_generator_refs,
     generator_agent,
     install_standard_recordings,
+    install_topology,
     loss_tolerance,
     make_finish_callback,
+    participant_graph,
     register_component_agent,
     resolve_loss_rate,
     run_scenario_main,
@@ -154,6 +154,7 @@ async def execute_test_case(
     result_retries: int = 12,
     load_timeout: float | None = None,
     max_missing_rounds: int | None = 20,
+    topology: str = "complete",
     name_base: str = "fdgdm",
     simulate_days: int = 3,
     max_iter: int = 300,
@@ -372,6 +373,7 @@ async def execute_test_case(
     fdgdm_initial_p = adjusted_target / max(n_thermals, 1)
 
     # -- Thermal generator agents (FDGDM participants) --
+    pgraph = participant_graph(scenario, topology, thermal_refs)
     thermal_gen_agents: list[RoleAgent] = []
     thermal_actors: list[LinearCostEconomicDispatchFDGDMActor] = []
     for i, ref in enumerate(thermal_refs):
@@ -407,6 +409,7 @@ async def execute_test_case(
             max_iter=max_iter,
             round_timeout=lt.round_timeout,
             tol=tol_ratio * p_nom if tol_ratio else None,
+            diameter=pgraph.diameter,
         )
         opt_role = DistributedOptimizationRole(participant)
         agent = generator_agent(opt_role)
@@ -554,9 +557,7 @@ async def execute_test_case(
         )
         register_component_agent(world, agent, ref)
 
-    if gen_agents:
-        topology = complete_topology(len(gen_agents))
-        auto_assign(topology, gen_agents)
+    install_topology(world, scenario, topology, gen_agents)
 
     # -- Recordings --
     # "P" is clipped at recording time (max(0, ...)) so storage in charging

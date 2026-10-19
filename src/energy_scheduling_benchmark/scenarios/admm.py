@@ -32,7 +32,7 @@ from distributed_resource_optimization.carrier.mango import (
     OptimizationFinishedMessage,
     StartCoordinatedDistributedOptimization,
 )
-from mango import RoleAgent, agent_composed_of, auto_assign, complete_topology
+from mango import RoleAgent, agent_composed_of
 from mango.simulation.world import discrete_step_until
 
 from energy_scheduling_benchmark import (
@@ -57,6 +57,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_world,
     collect_generator_refs,
     install_standard_recordings,
+    install_topology,
     loss_tolerance,
     register_component_agent,
     resolve_loss_rate,
@@ -143,6 +144,7 @@ async def execute_test_case(
     result_retries: int = 12,
     load_timeout: float | None = None,
     max_missing_rounds: int | None = 20,
+    topology: str = "complete",
     name_base: str = "admm",
     simulate_days: int = 3,
     rho: float = 0.1,
@@ -327,7 +329,9 @@ async def execute_test_case(
         register_component_agent(world, agent, ref)
 
     all_opt_agents = gen_agents + [leader_agent]
-    auto_assign(complete_topology(len(all_opt_agents)), all_opt_agents)
+    # The coordinator (on the leader) reaches every participant; its
+    # messages travel over the chosen topology.
+    install_topology(world, scenario, topology, gen_agents, logical=all_opt_agents)
 
     # --- Recordings ---
     install_standard_recordings(world, behavior, role_cls=ADMMGeneratorRole)

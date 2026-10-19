@@ -18,6 +18,7 @@ import logging
 import math
 import random
 import subprocess
+import weakref
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from dataclasses import replace as _dataclass_replace
@@ -25,14 +26,20 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+import networkx as nx
 import numpy as np
 import pandas as pd
 from distributed_resource_optimization.carrier.mango import (
     DistributedOptimizationRole,
     RoleLocalMessage,
 )
-from mango import Role, sender_addr
+from mango import Role, auto_assign, complete_topology, graph_topology, sender_addr
 from mango.simulation.world import record_agent_having
+from mango_energy_environments.environments.scheduling.topology import (
+    TOPOLOGIES,
+    TopologyCommunicationSimulation,
+    build_communication_graph,
+)
 
 from energy_scheduling_benchmark import (
     LOAD,
@@ -221,6 +228,13 @@ def resolve_loss_rate(loss_rate: float = 0.0) -> float:
     return float(loss_rate)
 
 
+#: Per world: agent id -> the component it was registered for (see
+#: :func:`register_component_agent`); :func:`install_topology` reads it.
+_REFS_BY_WORLD: weakref.WeakKeyDictionary[Any, dict[str, ComponentRef]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
 def register_component_agent(world: Any, agent: Any, ref: ComponentRef) -> Any:
     """Register *agent* as ``ref.component_id`` and bind it to *ref* in the environment.
 
@@ -229,7 +243,101 @@ def register_component_agent(world: Any, agent: Any, ref: ComponentRef) -> Any:
     and installs it for *ref* (a separate ``world.environment.install`` would
     run the hook a second time, the first time without ``id``).
     """
-    return world.register(agent, suggested_aid=ref.component_id, id=ref)
+    registered = world.register(agent, suggested_aid=ref.component_id, id=ref)
+    _REFS_BY_WORLD.setdefault(world, {})[agent.aid] = ref
+    return registered
+
+
+@dataclass(frozen=True)
+class ParticipantGraph:
+    """The algorithm participants' communication graph (see :func:`participant_graph`)."""
+
+    graph: nx.Graph
+    diameter: int
+    max_degree: int
+
+    @property
+    def degrees(self) -> dict[ComponentRef, int]:
+        return dict(self.graph.degree())
+
+
+def participant_graph(
+    scenario: ScenarioData, kind: str, participants: Sequence[ComponentRef]
+) -> ParticipantGraph:
+    """Graph of *participants* under topology *kind*, known before any agent
+    exists, for graph-dependent algorithm parameters (diameter for the stop
+    rules, DEED-ADMM's β, exact diffusion's Perron scaling). Same edges as
+    :func:`install_topology` later wires."""
+    participants = list(participants)
+    if kind == "complete":
+        graph = nx.complete_graph(participants)
+    else:
+        graph = build_communication_graph(kind, scenario.net, participants)
+    diameter = nx.diameter(graph) if graph.number_of_nodes() > 1 else 1
+    max_degree = max((d for _, d in graph.degree()), default=0)
+    return ParticipantGraph(
+        graph=graph, diameter=max(1, diameter), max_degree=max_degree
+    )
+
+
+def install_topology(
+    world: Any,
+    scenario: ScenarioData,
+    kind: str,
+    participants: Sequence[Any],
+    *,
+    logical: Sequence[Any] | None = None,
+) -> None:
+    """Connect the algorithm agents and route every message over *kind*.
+
+    *participants* (agents registered with :func:`register_component_agent`)
+    form the communication graph of :func:`build_communication_graph`
+    (``complete`` / ``ring`` ordered by id / ``grid`` along the buses); every
+    other registered agent (loads, the leader, units outside the algorithm)
+    attaches via its bus. The algorithm's neighbours are the participants'
+    edges, and the world's communication simulation delivers every message
+    (also leader <-> agent) along the shortest path: hops x delay, lost with
+    ``1 - (1 - loss)^hops``. With ``complete`` every pair is one hop and the
+    run is unchanged.
+
+    :param logical: agents that instead get a complete mango topology among
+        themselves (ADMM: the coordinator must reach every participant); the
+        messages still travel over the *kind* graph of *participants*.
+    """
+    if kind not in TOPOLOGIES:
+        raise ValueError(f"unknown topology {kind!r}; choose from {TOPOLOGIES}")
+    algorithm_agents = list(logical if logical is not None else participants)
+    if kind == "complete":
+        if algorithm_agents:
+            auto_assign(complete_topology(len(algorithm_agents)), algorithm_agents)
+        return
+    refs = _REFS_BY_WORLD.get(world, {})
+    part_refs = [refs[a.aid] for a in participants]
+    part_set = set(part_refs)
+    attached = [r for r in refs.values() if r not in part_set]
+    graph = build_communication_graph(kind, scenario.net, part_refs, attached)
+    aid_by_ref = {ref: aid for aid, ref in refs.items()}
+    world.communication_sim.set_graph(nx.relabel_nodes(graph, aid_by_ref, copy=True))
+    logger.info(
+        "Topology %s: %d participants, %d attached, %d links, diameter %s",
+        kind,
+        len(part_refs),
+        len(attached),
+        graph.number_of_edges(),
+        nx.diameter(graph) if nx.is_connected(graph) else "inf",
+    )
+    if not algorithm_agents:
+        return
+    if logical is not None:
+        auto_assign(complete_topology(len(algorithm_agents)), algorithm_agents)
+        return
+    index = {ref: i for i, ref in enumerate(part_refs)}
+    logical_graph = nx.Graph()
+    logical_graph.add_nodes_from(range(len(part_refs)))
+    logical_graph.add_edges_from(
+        (index[u], index[v]) for u, v in graph.subgraph(part_refs).edges
+    )
+    auto_assign(graph_topology(logical_graph), algorithm_agents)
 
 
 def build_world(
@@ -248,7 +356,6 @@ def build_world(
         but treats it as a fraction.
     :param seed: Seed for the loss draws, so lossy runs are reproducible.
     """
-    from mango.simulation.communication import SimpleCommunicationSimulation
     from mango.simulation.environment import DefaultEnvironment
     from mango.simulation.world import create_world
 
@@ -257,8 +364,10 @@ def build_world(
         "Communication: delay %.4g s, loss rate %.4g, seed %d", delay_s, loss_rate, seed
     )
     behavior = build_behavior(scenario)
-    com_sim = SimpleCommunicationSimulation(
-        default_delay_s=delay_s, loss_percent=loss_rate, rng=random.Random(seed)
+    # Without a graph (topology "complete") this equals mango's
+    # SimpleCommunicationSimulation draw for draw; install_topology sets one.
+    com_sim = TopologyCommunicationSimulation(
+        delay_s=delay_s, loss_rate=loss_rate, rng=random.Random(seed)
     )
     # No scenario reads world.recorded_messages, and keeping every message's
     # content for the whole run dominates memory (OOM on lower_saxony_2030).
@@ -973,6 +1082,18 @@ def build_scenario_argparser(
         help=(
             "Probability that a message is lost, as a fraction in [0, 1] "
             "(e.g. 0.05 for 5%%; default 0)." + lossless_note
+        ),
+    )
+    parser.add_argument(
+        "--topology",
+        choices=TOPOLOGIES,
+        default="complete",
+        help=(
+            "Communication graph: 'complete' (default, everyone talks to everyone), "
+            "'ring' (algorithm agents in a cycle ordered by id) or 'grid' (along the "
+            "buses: agents on one bus and on line/link-connected buses are "
+            "neighbours). Loads attach via their bus; every message travels the "
+            "shortest path (hops x --delay-s, loss per hop)."
         ),
     )
     parser.add_argument(
@@ -2100,6 +2221,7 @@ def run_scenario_main(
             name_base=str(args.out_dir / args.name_base),
             simulate_days=args.simulate_days,
             cost_model=args.cost_model,
+            topology=args.topology,
             slack=slack,
             **kwargs,
         )
@@ -2129,7 +2251,6 @@ def _complete_meta(
     dims.update(
         {
             "scenario": scenario,
-            "topology": "complete",
             "loss_rate": loss_rate_from_args(args),
         }
     )

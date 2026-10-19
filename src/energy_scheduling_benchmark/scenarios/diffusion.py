@@ -30,8 +30,6 @@ from distributed_resource_optimization.carrier.mango import (
 from mango import (
     RoleAgent,
     agent_composed_of,
-    auto_assign,
-    complete_topology,
 )
 from mango.simulation.world import discrete_step_until
 
@@ -60,8 +58,10 @@ from energy_scheduling_benchmark.scenarios._common import (
     collect_generator_refs,
     generator_agent,
     install_standard_recordings,
+    install_topology,
     loss_tolerance,
     make_finish_callback,
+    participant_graph,
     price_sensitivity,
     register_component_agent,
     resolve_loss_rate,
@@ -85,6 +85,7 @@ async def execute_test_case(
     result_retries: int = 12,
     load_timeout: float | None = None,
     max_missing_rounds: int | None = 20,
+    topology: str = "complete",
     name_base: str = "diffusion",
     simulate_days: int = 3,
     max_iter: int = 2000,
@@ -193,6 +194,7 @@ async def execute_test_case(
     # price is far from any fixed default.
     initial_lam = float(np.mean(eps.costs_all)) if eps.costs_all else 10.0
 
+    pgraph = participant_graph(scenario, topology, gen_refs)
     gen_agents: list[RoleAgent] = []
     cost_by_aid: dict[str, float] = {}
     for ref in gen_refs:
@@ -239,6 +241,7 @@ async def execute_test_case(
             round_timeout=lt.round_timeout,
             epsilon=grad_step,
             tol=tol,
+            diameter=pgraph.diameter,
         )
 
         opt_role = DistributedOptimizationRole(participant)
@@ -297,8 +300,7 @@ async def execute_test_case(
         register_component_agent(world, agent, ref)
 
     # Fully-connected diffusion topology across all generator agents.
-    topology = complete_topology(len(gen_agents))
-    auto_assign(topology, gen_agents)
+    install_topology(world, scenario, topology, gen_agents)
 
     # -- Recordings --
     install_standard_recordings(world, behavior)

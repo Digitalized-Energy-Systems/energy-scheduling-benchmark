@@ -270,7 +270,7 @@ class TestBuildWorldCommunication:
         for _ in range(2):
             world, _ = build_world(scenario, delay_s=0.0, loss_rate=0.25, seed=3)
             com_sim = world.container.communication_sim
-            assert com_sim.loss_percent == 0.25
+            assert com_sim.loss_rate == 0.25
             draws.append([com_sim._rng.random() for _ in range(5)])
         assert draws[0] == draws[1]
 

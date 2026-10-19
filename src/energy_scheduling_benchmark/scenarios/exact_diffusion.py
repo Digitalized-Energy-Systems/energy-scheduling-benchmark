@@ -34,8 +34,6 @@ from distributed_resource_optimization.carrier.mango import (
 from mango import (
     RoleAgent,
     agent_composed_of,
-    auto_assign,
-    complete_topology,
 )
 from mango.simulation.world import discrete_step_until
 
@@ -64,8 +62,10 @@ from energy_scheduling_benchmark.scenarios._common import (
     collect_generator_refs,
     generator_agent,
     install_standard_recordings,
+    install_topology,
     loss_tolerance,
     make_finish_callback,
+    participant_graph,
     price_sensitivity,
     register_component_agent,
     resolve_loss_rate,
@@ -76,6 +76,41 @@ from energy_scheduling_benchmark.scenarios._common import (
 # ---------------------------------------------------------------------------
 # Scenario entry point
 # ---------------------------------------------------------------------------
+
+
+def perron_scales(graph: Any, weight_rule: str) -> dict[Any, float]:
+    """Perron entries p_i of the combination matrix (Ces et al. 2025, eq. 31:
+    ε_i = ε / p_i), normalised to sum to N.
+
+    Exactly 1 where the matrix is doubly stochastic: on degree-regular graphs
+    (complete, ring) and for the symmetric rules (Mean Metropolis, Hastings).
+    Otherwise the eigenvalue-1 left eigenvector of the receiver-weight matrix
+    W (λ_i = Σ_j W_ij φ_j); computed centrally like ``n_guess``.
+    """
+    from distributed_resource_optimization.algorithm._weight_rules import (
+        combination_weights,
+    )
+
+    nodes = list(graph.nodes)
+    degrees = dict(graph.degree())
+    if (
+        weight_rule in ("mean_metropolis", "hastings")
+        or len(set(degrees.values())) <= 1
+    ):
+        return dict.fromkeys(nodes, 1.0)
+    index = {node: i for i, node in enumerate(nodes)}
+    w = np.zeros((len(nodes), len(nodes)))
+    for node in nodes:
+        self_w, weights = combination_weights(
+            degrees[node], {nb: degrees[nb] for nb in graph[node]}, weight_rule
+        )
+        w[index[node], index[node]] = self_w
+        for nb, weight in weights.items():
+            w[index[node], index[nb]] = weight
+    values, vectors = np.linalg.eig(w.T)
+    p = np.real(vectors[:, int(np.argmin(np.abs(values - 1.0)))])
+    p = p / p.sum() * len(nodes)
+    return {node: float(p[index[node]]) for node in nodes}
 
 
 async def execute_test_case(
@@ -89,6 +124,7 @@ async def execute_test_case(
     result_retries: int = 12,
     load_timeout: float | None = None,
     max_missing_rounds: int | None = 20,
+    topology: str = "complete",
     name_base: str = "exact_diffusion",
     simulate_days: int = 3,
     weight_rule: str = "averaging",
@@ -210,6 +246,8 @@ async def execute_test_case(
     # price is far from any fixed default.
     initial_lam = float(np.mean(eps.costs_all)) if eps.costs_all else 10.0
 
+    pgraph = participant_graph(scenario, topology, gen_refs)
+    perron = perron_scales(pgraph.graph, weight_rule)
     gen_agents: list[RoleAgent] = []
     cost_by_aid: dict[str, float] = {}
     for ref in gen_refs:
@@ -257,6 +295,8 @@ async def execute_test_case(
             epsilon=grad_step,
             tol=tol,
             weight_rule=weight_rule,
+            perron_scale=perron[ref],
+            diameter=pgraph.diameter,
         )
 
         opt_role = DistributedOptimizationRole(participant)
@@ -317,8 +357,7 @@ async def execute_test_case(
     # Fully-connected exact-diffusion topology across all generator agents.
     # Exact Diffusion requires a degree-regular graph (all nodes share the
     # same degree); the complete topology satisfies this trivially.
-    topology = complete_topology(len(gen_agents))
-    auto_assign(topology, gen_agents)
+    install_topology(world, scenario, topology, gen_agents)
 
     # -- Recordings --
     install_standard_recordings(world, behavior)

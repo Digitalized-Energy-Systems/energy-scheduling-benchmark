@@ -49,6 +49,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_world,
     collect_generator_refs,
     install_standard_recordings,
+    install_topology,
     loss_tolerance,
     register_component_agent,
     resolve_loss_rate,
@@ -228,6 +229,7 @@ async def execute_test_case(
     result_retries: int = 12,
     load_timeout: float | None = None,
     max_missing_rounds: int | None = 20,
+    topology: str = "complete",
     name_base: str = "central_dispatch",
     simulate_days: int = 3,
     balance_tol: float = 0.01,
@@ -309,6 +311,7 @@ async def execute_test_case(
 
     # --- One reporting agent per generator / storage unit ---
     cost_by_aid: dict[str, float] = {}
+    unit_agents: list[Any] = []
     for ref in gen_refs:
         statics = statics_by_ref[ref]
         cost = float(statics.get("marginal_cost", 0.0))
@@ -340,6 +343,9 @@ async def execute_test_case(
         agent = agent_composed_of(UnitReporter(report, leader_addr))
         register_component_agent(world, agent, ref)
         unit_addrs[ref.component_id] = agent.addr
+        unit_agents.append(agent)
+    # Unit reports and requests travel over the chosen topology.
+    install_topology(world, scenario, topology, unit_agents, logical=[])
 
     install_standard_recordings(world, behavior, role_cls=UnitReporter)
 

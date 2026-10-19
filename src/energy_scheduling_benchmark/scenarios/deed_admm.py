@@ -33,8 +33,6 @@ from distributed_resource_optimization.carrier.mango import (
 from mango import (
     RoleAgent,
     agent_composed_of,
-    auto_assign,
-    complete_topology,
 )
 from mango.simulation.world import discrete_step_until
 
@@ -61,8 +59,10 @@ from energy_scheduling_benchmark.scenarios._common import (
     collect_generator_refs,
     generator_agent,
     install_standard_recordings,
+    install_topology,
     loss_tolerance,
     make_finish_callback,
+    participant_graph,
     register_component_agent,
     resolve_loss_rate,
     run_scenario_main,
@@ -87,6 +87,7 @@ async def execute_test_case(
     result_retries: int = 12,
     load_timeout: float | None = None,
     max_missing_rounds: int | None = 20,
+    topology: str = "complete",
     name_base: str = "deed_admm",
     simulate_days: int = 3,
     gamma: float = 0.05,
@@ -184,6 +185,11 @@ async def execute_test_case(
     n_gen_only = max(len(pure_gen_refs), 1)
     d_i_gen = target_series / n_gen_only
 
+    pgraph = participant_graph(scenario, topology, gen_refs)
+    # W = I − βL must be doubly stochastic (Zhu et al. 2025, Assumption 1):
+    # β = 1/n on a complete graph (the default), the max-degree weight
+    # 1/(Δ + 1) on sparser ones (same value on a complete graph).
+    beta = None if topology == "complete" else 1.0 / (pgraph.max_degree + 1)
     gen_agents: list[RoleAgent] = []
     cost_by_aid: dict[str, float] = {}
     for ref in gen_refs:
@@ -209,6 +215,8 @@ async def execute_test_case(
                 round_timeout=lt.round_timeout,
                 tol=tol_ratio * p_nom if tol_ratio else None,
                 n_agents=n_gens,
+                beta=beta,
+                diameter=pgraph.diameter,
             )
         elif ref.element_type == RENEWABLE:
             participant = create_deed_admm_renewable_participant(
@@ -223,6 +231,8 @@ async def execute_test_case(
                 round_timeout=lt.round_timeout,
                 tol=tol_ratio * p_nom if tol_ratio else None,
                 n_agents=n_gens,
+                beta=beta,
+                diameter=pgraph.diameter,
             )
         else:
             p_max_vec = build_p_max_vec(scenario, ref, statics, time_index, horizon)
@@ -240,6 +250,8 @@ async def execute_test_case(
                 round_timeout=lt.round_timeout,
                 tol=tol_ratio * p_nom if tol_ratio else None,
                 n_agents=n_gens,
+                beta=beta,
+                diameter=pgraph.diameter,
             )
 
         opt_role = DistributedOptimizationRole(participant)
@@ -297,8 +309,7 @@ async def execute_test_case(
         register_component_agent(world, agent, ref)
 
     # Fully-connected peer topology across all generator agents.
-    topology = complete_topology(len(gen_agents))
-    auto_assign(topology, gen_agents)
+    install_topology(world, scenario, topology, gen_agents)
 
     # ------------------------------------------------------------------
     # Recordings

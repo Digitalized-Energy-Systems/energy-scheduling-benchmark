@@ -84,11 +84,43 @@ the loss draws, default `0`, so lossy runs are reproducible), `--cost-model`
 (`linear`, the default PyPSA marginal costs, or `quadratic`: thermal units add
 `c₂·P²` with `c₂ = 0.11·marginal_cost/p_nom`, so their marginal cost is 22 % higher
 at full output — k = 0.11 from Wood & Wollenberg's Example 4E; renewables and
-storage stay linear; central dispatch then solves a QP with HiGHS), `--log-level`,
+storage stay linear; central dispatch then solves a QP with HiGHS), `--topology`
+(communication graph, see below; default `complete`), `--log-level`,
 plus `--balance-tol` (max per-timestep |generation − demand| / demand before a
 finished run is flagged as not converged, default `0.01`) and `--strict` (exit
 with an error instead of writing outputs when that check fails, or when the
 distributed schedule never finished).
+
+### Communication topology
+
+`--topology` sets who talks to whom (built by
+`mango_energy_environments...scheduling.topology`):
+
+* `complete` (default): every agent talks to every other one.
+* `ring`: the algorithm's agents form a cycle ordered by component id.
+* `grid`: follows the electrical network. Agents on one bus are all connected;
+  every agent on bus A talks to every agent on bus B when a line, link or
+  transformer joins A and B. Buses without algorithm agents are passed through,
+  and disconnected islands are bridged so the graph stays connected.
+
+In `ring` and `grid` the loads (and units outside the algorithm) attach via their
+bus. The leader (the first load) stays where it is: every message, including
+load reports, kick-off and results, travels the shortest path through the graph
+and takes hops × `--delay-s`, with `--loss-rate` applied per hop. The algorithms
+adapt to sparse graphs:
+
+* diffusion / exact diffusion use per-neighbour weights from the neighbours'
+  degrees; exact diffusion scales its step by the Perron entry (Ces et al. eq. 31)
+  where the weight matrix is not doubly stochastic;
+* DEED-ADMM uses β = 1/(max degree + 1) (W = I − βL stays doubly stochastic);
+* the convergence stops of diffusion, exact diffusion, FDGDM and DEED-ADMM need
+  every agent converged (a "converged radius" reaching the graph diameter);
+  FDGDM and DEED-ADMM then stop in one common round so their pairwise flows
+  stay conserved;
+* consensus followers that are not the leader's neighbours send it their power
+  each round, so the leader still sees the system-wide imbalance ΔP.
+
+With `complete` the outputs are byte-identical to the code before `--topology`.
 
 ### Message loss
 

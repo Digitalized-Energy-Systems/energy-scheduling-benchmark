@@ -31,8 +31,6 @@ from distributed_resource_optimization.carrier.mango import (
 from mango import (
     RoleAgent,
     agent_composed_of,
-    auto_assign,
-    complete_topology,
 )
 from mango.simulation.world import discrete_step_until
 
@@ -61,8 +59,10 @@ from energy_scheduling_benchmark.scenarios._common import (
     collect_generator_refs,
     generator_agent,
     install_standard_recordings,
+    install_topology,
     loss_tolerance,
     make_finish_callback,
+    participant_graph,
     register_component_agent,
     resolve_loss_rate,
     run_scenario_main,
@@ -88,6 +88,7 @@ async def execute_test_case(
     result_retries: int = 12,
     load_timeout: float | None = None,
     max_missing_rounds: int | None = 20,
+    topology: str = "complete",
     name_base: str = "consensus",
     simulate_days: int = 3,
     max_iter: int = 500,
@@ -203,13 +204,21 @@ async def execute_test_case(
 
     if not 0.0 < leader_damping < 2.0:
         raise ValueError(f"leader_damping must be in (0, 2), got {leader_damping!r}")
+    # On a sparse graph the leader's price change needs about one round per
+    # hop to reach every follower, while the leader keeps seeing the same ΔP:
+    # the damping is divided by the graph diameter (1 on the complete graph).
+    # DE-AT 2-bus ring (21 units, diameter 5): 0.5 diverges (79 % gap after
+    # 3000 rounds), 0.5/5 = 0.1 balances in 877 rounds.
+    pgraph = participant_graph(scenario, topology, gen_refs)
+    damping = leader_damping / pgraph.diameter
     price_sensitivity = sum(1.0 / _epsilon(ref) for ref in gen_refs)
     leader_gain = min(
-        leader_damping * len(gen_refs) / max(price_sensitivity, 1e-9),
+        damping * len(gen_refs) / max(price_sensitivity, 1e-9),
         _epsilon(gen_refs[0]),  # the first generator is the leader (below)
     )
 
     gen_agents: list[RoleAgent] = []
+    participants: list[Any] = []
     cost_by_aid: dict[str, float] = {}
     for gen_idx, ref in enumerate(gen_refs):
         statics = statics_by_ref[ref]
@@ -257,6 +266,7 @@ async def execute_test_case(
             is_leader=(gen_idx == 0),
             leader_gain=leader_gain,
         )
+        participants.append(participant)
 
         opt_role = DistributedOptimizationRole(participant)
 
@@ -314,8 +324,14 @@ async def execute_test_case(
         register_component_agent(world, agent, ref)
 
     # Fully-connected consensus topology across all generator agents.
-    topology = complete_topology(len(gen_agents))
-    auto_assign(topology, gen_agents)
+    install_topology(world, scenario, topology, gen_agents)
+    if topology != "complete":
+        # Followers that are not the leader's neighbours report their power
+        # to it each round (the leader needs the system-wide ΔP).
+        addrs = [a.addr for a in gen_agents]
+        participants[0].participants = addrs
+        for participant in participants[1:]:
+            participant.leader = addrs[0]
 
     # -- Recordings --
     install_standard_recordings(world, behavior)
