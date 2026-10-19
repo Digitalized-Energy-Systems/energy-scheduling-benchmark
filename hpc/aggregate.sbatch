@@ -8,8 +8,8 @@
 #SBATCH --partition=rosa.p
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=2G
-#SBATCH --time=00:15:00
+#SBATCH --mem=8G
+#SBATCH --time=02:00:00
 #SBATCH --export=NONE
 
 set -eo pipefail # no -u: /etc/profile, Lmod and venv activate are not nounset-safe

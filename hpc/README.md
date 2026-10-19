@@ -37,6 +37,9 @@ and parallelism on the cluster comes from running many of them at once as SLURM
 | `submit_all.sh` | Submits all scenarios × networks as job arrays plus a dependent `compare_costs.py` job |
 | `run_scenario.sbatch` | The array job: task *N* runs one scenario on line *N* of a network list |
 | `aggregate.sbatch` | Runs `compare_costs.py` after the arrays finish |
+| `make_manifest.py` | Writes the full sweep (topology × cost model × slack × days × loss × seeds, Q9) as one TSV per scenario |
+| `submit_sweep.sh` | Submits a manifest as job arrays (split at `ESB_ARRAY_MAX` lines) plus the aggregate job |
+| `run_manifest.sbatch` | The sweep array job: task *N* runs line *N* (+ offset) of a scenario's manifest |
 
 ---
 
@@ -213,6 +216,30 @@ Output:
 
 A new submission overwrites the files of the same network/scenario in `results/`.
 Move or rename `results/` between experiments you want to keep apart.
+
+### The full sweep
+
+`submit_all.sh` runs one setting per network. The benchmark's full product (decision
+Q9) goes through a manifest instead:
+
+```bash
+cd $WORK/esb
+energy-scheduling-benchmark/hpc/make_manifest.py --all          # → hpc-manifests/<stamp>/<scenario>.tsv, prints run counts
+energy-scheduling-benchmark/hpc/make_manifest.py lower_saxony_2030.nc --days 1 --loss-rates 0   # a slice
+ESB_DRY_RUN=1 energy-scheduling-benchmark/hpc/submit_sweep.sh hpc-manifests/<stamp>
+energy-scheduling-benchmark/hpc/submit_sweep.sh hpc-manifests/<stamp>
+```
+
+Dimensions per network: topology {complete, ring, grid} × cost model {linear,
+quadratic} × slack {off, on} × days {1, 3, 7} × loss {0, 0.01, 0.05, 0.1}; loss 0
+runs once plus one determinism repeat, every loss > 0 cell with 5 seeds. Central
+dispatch has no topology and no loss, so it runs on `complete` at loss 0 only. With
+the 7 bundled networks that is **25,872 runs** (4,284 per distributed scenario, 168
+central dispatch, 2026-10-19). Every run writes `results/<network>/<run_id>-*`
+including `<run_id>-meta.json`; `compare_costs.py` collects all of them into
+`results/runs.csv` (one row per run, keyed by its dimensions). `ESB_ARRAY_MAX`
+(default 1000) splits a scenario's manifest into several arrays — check
+`scontrol show config | grep MaxArraySize` on ROSA.
 
 Alternative for a quick one-off: `run_all_scenarios.sh --all` also works on the cluster
 (it uses the same `.venv`), but it runs everything serially inside one job — wrap it
