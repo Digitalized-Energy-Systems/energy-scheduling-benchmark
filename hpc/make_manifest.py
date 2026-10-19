@@ -23,7 +23,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import itertools
+import json
+import subprocess
 import sys
 from collections.abc import Iterator, Sequence
 from datetime import datetime
@@ -94,6 +97,50 @@ def runs(
                     "run_id": run_id,
                     "args": args,
                 }
+
+
+#: Repository directory (next to energy-scheduling-benchmark/) per Python package,
+#: as named in each run's ``-meta.json`` ``git`` block.
+REPOS = {
+    "energy_scheduling_benchmark": "energy-scheduling-benchmark",
+    "distributed_resource_optimization": "distributed-resource-optimization",
+    "mango_energy_environments": "mango-energy-environments",
+    "mango": "mango",
+}
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _git(repo: Path) -> dict:
+    def run(*cmd: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(repo), *cmd], capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    try:
+        return {
+            "sha": run("rev-parse", "HEAD"),
+            "dirty": bool(run("status", "--porcelain", "--untracked-files=no")),
+        }
+    except (OSError, subprocess.CalledProcessError):
+        return {"sha": None, "dirty": None}
+
+
+def expected_inputs(networks: Sequence[str]) -> dict:
+    """What every run of the sweep must have used (Q19 acceptance test):
+    the network files' SHA-256 and each repository's HEAD at manifest time."""
+    nets = {}
+    for name in networks:
+        path = NETWORKS_DIR / name if (NETWORKS_DIR / name).is_file() else Path(name)
+        nets[name] = _sha256(path) if path.is_file() else None
+    root = ESB_DIR.parent
+    return {"networks": nets, "git": {pkg: _git(root / d) for pkg, d in REPOS.items()}}
 
 
 def write(manifest_dir: Path, all_runs: Sequence[dict]) -> dict[str, int]:
@@ -173,6 +220,13 @@ def main(argv: list[str] | None = None) -> int:
         ESB_DIR.parent / "hpc-manifests" / datetime.now().strftime("%Y%m%d-%H%M%S")
     )
     counts = write(out, all_runs)
+    expected = expected_inputs(networks)
+    (out / "expected.json").write_text(json.dumps(expected, indent=2))
+    dirty = [pkg for pkg, g in expected["git"].items() if g["dirty"]]
+    if dirty:
+        print(
+            f"WARNING: uncommitted changes in {dirty} — the SHAs in expected.json cannot vouch for them; commit before the sweep"
+        )
     print(f"Manifest: {out}")
     for scenario, n in counts.items():
         print(f"  {scenario:18s} {n:6d} runs")

@@ -2002,6 +2002,20 @@ def _run_meta(world: Any, aggregator: Any, total_cost: float) -> dict[str, Any]:
     return meta
 
 
+def file_sha256(path: Any) -> str | None:
+    """SHA-256 of the file *path* (``None`` for built-in networks such as ``toy``)."""
+    import hashlib
+
+    p = Path(str(path))
+    if not p.is_file():
+        return None
+    digest = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _git_state(module: Any) -> dict[str, Any]:
     """HEAD SHA and dirty flag of the git checkout containing *module* (None if none)."""
     try:
@@ -2348,6 +2362,7 @@ def _complete_meta(
         "dimensions": dims,
         **meta,
         "wall_time_s": wall_time_s,
+        "inputs": {"network_sha256": file_sha256(args.network)},
         "git": {
             m.__name__: _git_state(m)
             for m in (

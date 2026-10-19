@@ -40,6 +40,7 @@ and parallelism on the cluster comes from running many of them at once as SLURM
 | `make_manifest.py` | Writes the full sweep (topology × cost model × slack × days × loss × seeds, Q9) as one TSV per scenario |
 | `submit_sweep.sh` | Submits a manifest as job arrays (split at `ESB_ARRAY_MAX` lines) plus the aggregate job |
 | `run_manifest.sbatch` | The sweep array job: task *N* runs line *N* (+ offset) of a scenario's manifest |
+| `verify_inputs.py` | Acceptance test (Q19): every run used the manifest's settings, network files and code SHAs |
 
 ---
 
@@ -300,6 +301,19 @@ with `seff` after the first sweep; smaller requests start sooner.
   Maximum walltime on `rosa.p`/`mpcs.p`/`mpcb.p` is 7 days; `rosa_express.p` is 2 h.
 
 ## 8. Get the results back
+
+First, on the cluster, the acceptance test of a sweep (decision Q19 — inputs only, no
+comparison with local results): every manifest line must have a run whose
+`-meta.json` records the line's settings, the network file's SHA-256 and each
+repository's HEAD as written to `expected.json` when the manifest was made.
+
+```bash
+cd $WORK/esb
+energy-scheduling-benchmark/hpc/verify_inputs.py hpc-manifests/<stamp>    # exit 0 = all inputs correct
+```
+
+Commit all four repositories before `make_manifest.py` (it warns otherwise): rsync
+also copies uncommitted changes, and a SHA cannot vouch for them.
 
 On the workstation:
 
