@@ -43,7 +43,6 @@ from mango import (
     RoleAgent,
     agent_composed_of,
 )
-from mango.simulation.world import discrete_step_until
 
 from energy_scheduling_benchmark import (
     LOAD,
@@ -76,6 +75,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     register_component_agent,
     resolve_loss_rate,
     run_scenario_main,
+    run_simulation,
     thermal_cost_quad,
     write_scenario_outputs,
 )
@@ -572,7 +572,7 @@ async def execute_test_case(
     # anyway; stopping here just avoids simulating an empty final hour.
     sim_end_s = (simulate_days * 24 - 1) * 3600.0 + 1.0
     async with world:
-        await discrete_step_until(world, sim_end_s)
+        await run_simulation(world, sim_end_s)
 
     # -- Output --
     # No clip_target_to_p: the simulation window already ends exactly on the

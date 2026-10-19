@@ -341,6 +341,64 @@ def install_topology(
     auto_assign(graph_topology(logical_graph), algorithm_agents)
 
 
+class AgentError(RuntimeError):
+    """An agent raised during the simulation; the run was aborted."""
+
+
+class _AgentErrorWatch(logging.Handler):
+    """Cancels the running simulation on the first exception mango logs.
+
+    mango only logs exceptions from agents: a failed scheduled task
+    ("got exception in scheduled event") or a failed message handler, which
+    also ends that agent's inbox loop so its peers wait for it forever. Either
+    way the world would keep stepping until the end of the horizon (or never
+    finish a distributed run). Only records that carry an exception count.
+    """
+
+    def __init__(self, task: asyncio.Task) -> None:
+        super().__init__(level=logging.ERROR)
+        self.task = task
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.exc_info is None or record.exc_info[0] is None:
+            return
+        if issubclass(record.exc_info[0], asyncio.CancelledError):
+            return
+        self.records.append(record)
+        if len(self.records) == 1:
+            self.task.cancel()
+
+
+async def run_simulation(world: Any, seconds: float) -> None:
+    """``discrete_step_until(world, seconds)`` that fails fast.
+
+    Steps the world exactly like :func:`mango.simulation.world.discrete_step_until`
+    (results are unchanged) but raises :class:`AgentError` with the first
+    agent exception as soon as mango logs one, instead of simulating on.
+    """
+    from mango.simulation.world import discrete_step_until
+
+    watch = _AgentErrorWatch(asyncio.current_task())
+    mango_logger = logging.getLogger("mango")
+    mango_logger.addHandler(watch)
+    try:
+        await discrete_step_until(world, seconds)
+    except asyncio.CancelledError:
+        if not watch.records:
+            raise
+    finally:
+        mango_logger.removeHandler(watch)
+    if watch.records:
+        first = watch.records[0]
+        exc = first.exc_info[1] if first.exc_info else None
+        raise AgentError(
+            f"agent exception during the simulation (t = "
+            f"{getattr(getattr(world, 'clock', None), 'time', '?')} s): "
+            f"{first.getMessage()}: {exc!r}"
+        ) from exc
+
+
 def build_world(
     scenario: ScenarioData, *, delay_s: float, loss_rate: float = 0.0, seed: int = 0
 ) -> tuple[Any, PyPSABehavior]:
@@ -1382,7 +1440,7 @@ class PowerLoadAggregator(Role):
       ``gather``) until acknowledged; *start_locally* instead starts a run on
       this agent without any message (e.g. an ADMM coordinator role).
     * *generator_addrs* + *result_poll_s*: every *result_poll_s* seconds the
-      leader ``gather``\ s the schedules still missing; after *result_retries*
+      leader requests the schedules still missing with ``gather``; after *result_retries*
       polls a missing generator gets an all-zero schedule and the run is
       marked degraded (:attr:`degraded_generators`), which the balance check
       then reports.

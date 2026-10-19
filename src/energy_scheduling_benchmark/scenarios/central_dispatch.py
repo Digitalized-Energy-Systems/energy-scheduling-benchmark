@@ -31,7 +31,6 @@ from typing import Any
 import numpy as np
 from distributed_resource_optimization.carrier.mango import RoleLocalMessage
 from mango import AgentAddress, Role, RoleAgent, agent_composed_of
-from mango.simulation.world import discrete_step_until
 
 from energy_scheduling_benchmark import LOAD, STORAGE, THERMAL
 from energy_scheduling_benchmark.dispatch import StorageSpec, solve_multiperiod_dispatch
@@ -54,6 +53,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     register_component_agent,
     resolve_loss_rate,
     run_scenario_main,
+    run_simulation,
     thermal_cost_quad,
     write_scenario_outputs,
 )
@@ -350,7 +350,7 @@ async def execute_test_case(
     install_standard_recordings(world, behavior, role_cls=UnitReporter)
 
     async with world:
-        await discrete_step_until(world, simulate_days * 24 * 3600.0)
+        await run_simulation(world, simulate_days * 24 * 3600.0)
 
     write_scenario_outputs(
         world,

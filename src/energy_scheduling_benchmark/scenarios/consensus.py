@@ -32,7 +32,6 @@ from mango import (
     RoleAgent,
     agent_composed_of,
 )
-from mango.simulation.world import discrete_step_until
 
 from energy_scheduling_benchmark import (
     LOAD,
@@ -66,6 +65,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     register_component_agent,
     resolve_loss_rate,
     run_scenario_main,
+    run_simulation,
     write_scenario_outputs,
 )
 
@@ -338,7 +338,7 @@ async def execute_test_case(
 
     # -- Simulate --
     async with world:
-        await discrete_step_until(world, simulate_days * 24 * 3600.0)
+        await run_simulation(world, simulate_days * 24 * 3600.0)
 
     # -- Output --
     write_scenario_outputs(
