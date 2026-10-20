@@ -20,7 +20,6 @@ from energy_scheduling_benchmark.scenarios._common import (
     compute_slack,
     loss_rate_from_args,
     loss_tolerance,
-    require_lossless_transport,
     resolve_loss_rate,
     run_scenario_main,
 )
@@ -53,6 +52,14 @@ class TestBuildPMaxVec:
         scenario.timeseries[ref] = pd.Series([1.0, 0.5, 0.0], index=index)
         p_max = build_p_max_vec(scenario, ref, {"p_nom": 400.0}, index, 3)
         np.testing.assert_allclose(p_max, [400.0, 200.0, 0.0])
+
+    def test_static_p_max_pu_caps_units_without_timeseries(self):
+        scenario = build_toy_network(periods=3)
+        index = next(iter(scenario.timeseries.values())).index
+        ref = ComponentRef(THERMAL, "nuclear")
+        statics = {"p_nom": 1000.0, "p_max_pu": 0.871}
+        p_max = build_p_max_vec(scenario, ref, statics, index, 3)
+        np.testing.assert_allclose(p_max, [871.0] * 3)
 
 
 class TestComputeOverallCost:
@@ -119,6 +126,16 @@ class TestAggregatorSlack:
         agg._generator_aids.append("never-finished")
         np.testing.assert_allclose(agg.schedule_residual(), [6.0, 6.0, 6.0])
 
+    async def test_poll_of_an_earlier_run_does_not_give_up(self):
+        # FDGDM's outer rounds start a new poll chain per run; the first run's
+        # chain must not zero-fill units that are still computing run 2.
+        agg = self._aggregator({"a": [4.0, 4.0, 4.0]})
+        agg._generator_addrs = {"g": object()}
+        agg._result_retries = 1
+        agg.runs = 2
+        await agg._poll_results(1, run=1)
+        assert agg.degraded_generators == []
+
 
 class TestBuildGroupMap:
     def test_carrier_from_cache_load_skipped(self):
@@ -169,15 +186,6 @@ class TestCarrierStyle:
 
     def test_empty_carriers_table(self):
         assert carrier_style(build_toy_network(periods=24).net) == ({}, {})
-
-
-class TestRequireLosslessTransport:
-    def test_zero_loss_passes(self):
-        require_lossless_transport(0.0, "TestAlgo")
-
-    def test_nonzero_loss_raises_with_algorithm_name(self):
-        with pytest.raises(ValueError, match="TestAlgo.*lossless"):
-            require_lossless_transport(0.5, "TestAlgo")
 
 
 class TestOutDir:

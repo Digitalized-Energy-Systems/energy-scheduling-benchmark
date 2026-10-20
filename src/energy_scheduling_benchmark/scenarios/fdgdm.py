@@ -68,9 +68,9 @@ from energy_scheduling_benchmark.scenarios._common import (
     SlackSpec,
     StorageParams,
     _clip_scenario,
-    _lookup_ts,
     build_demand_horizon,
     build_group_map,
+    build_p_max_vec,
     build_toy_network,
     build_world,
     collect_generator_refs,
@@ -237,7 +237,6 @@ async def execute_test_case(
     leader_addr_ref: dict[str, Any | None] = {"addr": None}
     finish_callback = make_finish_callback(
         leader_addr_ref=leader_addr_ref,
-        schedule_by_aid=schedule_by_aid,
         finished_message_type=FDGDMFinishedInfo,
         algorithm_label="FDGDM",
         schedule_attr="actor.P",
@@ -269,13 +268,7 @@ async def execute_test_case(
     for ref in renewable_refs:
         statics = statics_by_ref[ref]
         cost_by_aid[ref.component_id] = float(statics.get("marginal_cost", 0.0))
-        p_nom = float(statics.get("p_nom", 0.0))
-        ts = _lookup_ts(scenario, ref)
-        sched = (
-            np.full(horizon, p_nom, dtype=float)
-            if ts is None
-            else np.asarray(ts.reindex(time_index), dtype=float) * p_nom
-        )
+        sched = build_p_max_vec(scenario, ref, statics, time_index, horizon)
         schedule_by_aid[ref.component_id] = sched
         renewable_gen_ts += sched
 
@@ -284,23 +277,11 @@ async def execute_test_case(
 
     adjusted_target = np.maximum(net_load_ts, 0.0)
 
-    # ------------------------------------------------------------------
-    # Pre-compute per-thermal p_max time series and p_nom values.
-    # p_max_pu from generators_t is per-unit (0–1) and must be scaled by
-    # p_nom to get MW.  This block fixes a bug where the timeseries branch
-    # passed raw per-unit values to LinearCostEconomicDispatchFDGDMActor.
-    # The vectors are reused below for agent creation and initial allocation.
-    # ------------------------------------------------------------------
-    thermal_p_max_vecs: list[np.ndarray] = []
-    for _ref_th in thermal_refs:
-        _statics_th = statics_by_ref[_ref_th]
-        _p_nom_th = float(_statics_th.get("p_nom", 0.0))
-        _ts_th = _lookup_ts(scenario, _ref_th)
-        thermal_p_max_vecs.append(
-            np.full(horizon, _p_nom_th, dtype=float)
-            if _ts_th is None
-            else np.asarray(_ts_th.reindex(time_index), dtype=float) * _p_nom_th
-        )
+    # Per-thermal p_max (MW), reused below for agent creation and initial allocation.
+    thermal_p_max_vecs = [
+        build_p_max_vec(scenario, ref, statics_by_ref[ref], time_index, horizon)
+        for ref in thermal_refs
+    ]
 
     # FDGDM requires ≥ 2 participants: with 0 neighbours the finish callback
     # is never called and the simulation hangs.  When only one thermal exists,

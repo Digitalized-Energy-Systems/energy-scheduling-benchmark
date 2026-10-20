@@ -199,7 +199,6 @@ async def execute_test_case(
     leader_addr_ref: dict[str, Any | None] = {"addr": None}
     finish_callback = make_finish_callback(
         leader_addr_ref=leader_addr_ref,
-        schedule_by_aid=schedule_by_aid,
         finished_message_type=ExactDiffusionFinishedInfo,
         algorithm_label="ExactDiffusion",
         schedule_attr="actor.P",

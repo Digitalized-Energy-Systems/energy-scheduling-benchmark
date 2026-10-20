@@ -85,13 +85,11 @@ __all__ = [
     "_keep_hourly",
     "_write_agent_recordings_csv",
     "compute_overall_cost",
-    "compute_linear_energy_cost",
     "compute_slack",
     "SlackSpec",
     "build_group_map",
     "carrier_style",
     "build_scenario_argparser",
-    "require_lossless_transport",
     "LossTolerance",
     "loss_tolerance",
     "generator_agent",
@@ -277,10 +275,6 @@ class CommunicationTopology:
             return 1
         lengths = nx.single_source_shortest_path_length(self.full, ref)
         return max(1, max(lengths.values(), default=1))
-
-
-#: Kept for callers of the earlier name.
-ParticipantGraph = CommunicationTopology
 
 
 def participant_graph(
@@ -611,15 +605,16 @@ def build_p_max_vec(
 ) -> np.ndarray:
     """Build a per-timestep max-power vector for a generator, aligned to *time_index*.
 
-    Falls back to a constant ``p_nom`` vector when *ref* has no timeseries.
+    Falls back to the static ``p_max_pu * p_nom`` (e.g. nuclear at 0.871) when
+    *ref* has no timeseries; a timeseries overrides it, as in PyPSA.
     The timeseries is a per-unit availability (``generators_t.p_max_pu``,
-    PyPSA convention) and is scaled by ``p_nom`` — for thermal units too, as
-    FDGDM does (e.g. scigrid-de's wind units, classified thermal by carrier).
+    PyPSA convention) and is scaled by ``p_nom`` — for thermal units too
+    (e.g. scigrid-de's wind units, classified thermal by carrier).
     """
     p_nom = float(statics.get("p_nom", 0.0))
     ts = _lookup_ts(scenario, ref)
     if ts is None:
-        return np.full(horizon, p_nom, dtype=float)
+        return np.full(horizon, p_nom * float(statics.get("p_max_pu", 1.0)))
     return np.asarray(ts.reindex(time_index), dtype=float) * p_nom
 
 
@@ -691,15 +686,7 @@ def capacity_scaled_epsilon(
 class StorageParams:
     """Storage actor parameters derived from PyPSA statics.
 
-    Shared by the scenarios whose storage-parameter extraction is otherwise
-    byte-for-byte identical (consensus, ADMM, diffusion, exact diffusion,
-    DEED-ADMM, central dispatch). FDGDM uses materially *different*
-    defaults for some of these fields (``max_hours=6.0`` vs. this helper's
-    ``100.0``, SOC-initial fallback ``0.0`` vs. ``0.5 * e_max``, efficiency
-    fallback ``1.0`` vs. ``0.95`` — see ``fdgdm._schedule_storage_soc``);
-    that is tracked as a known cross-scenario inconsistency, not silently
-    reconciled here, since it would change FDGDM's dispatch numbers on any
-    network with under-specified storage statics.
+    Shared by every scenario, so all of them model the same storage (Q15).
     """
 
     e_max: float
@@ -864,31 +851,6 @@ def loss_tolerance(
     )
 
 
-def require_lossless_transport(loss_rate: float, algorithm_name: str) -> None:
-    """Fail fast instead of deadlocking under simulated packet loss.
-
-    FDGDM, Diffusion, Exact Diffusion, DEED-ADMM, and ADMM all advance a
-    round only once *every* neighbour (or, for ADMM, every participant the
-    coordinator awaits via ``asyncio.gather``) has replied for that round --
-    there is no retry and no partial-quorum fallback. A single dropped
-    message therefore hangs that round (and the whole simulation) forever
-    rather than degrading gracefully, unlike the averaging-consensus
-    algorithm, which has a catch-up path that lets a node skip ahead once
-    any neighbour's message for a later iteration arrives.
-
-    :param loss_rate: The scenario's configured message-loss probability (fraction).
-    :param algorithm_name: Name to include in the error message.
-    :raises ValueError: If *loss_rate* is not exactly zero.
-    """
-    if loss_rate != 0.0:
-        raise ValueError(
-            f"{algorithm_name} requires lossless message delivery (loss_rate=0.0); "
-            f"got {loss_rate!r}. This algorithm waits for every neighbour's reply "
-            "each round with no retry, so any packet loss can deadlock the run instead "
-            "of degrading gracefully. Use --loss-rate 0 (or omit the flag)."
-        )
-
-
 def _clip_scenario(scenario: ScenarioData, simulate_days: int) -> ScenarioData:
     """Return a copy of *scenario* with timeseries trimmed to *simulate_days* × 24 hours.
 
@@ -903,20 +865,8 @@ def _clip_scenario(scenario: ScenarioData, simulate_days: int) -> ScenarioData:
 
 
 def _lookup_ts(scenario: ScenarioData, ref: Any) -> Any | None:
-    """Return the timeseries for *ref*, falling back to attribute-based lookup.
-
-    ComponentRef equality may fail across subclasses, so we also try matching
-    on ``element_type`` and ``component_id`` directly.
-    """
-    ts = scenario.timeseries.get(ref)
-    if ts is not None:
-        return ts
-    for k, v in scenario.timeseries.items():
-        if getattr(k, "element_type", None) == getattr(
-            ref, "element_type", None
-        ) and getattr(k, "component_id", None) == getattr(ref, "component_id", None):
-            return v
-    return None
+    """Return the timeseries for *ref*, or ``None`` if it has none."""
+    return scenario.timeseries.get(ref)
 
 
 def _keep_hourly(
@@ -1042,17 +992,9 @@ def compute_overall_cost(
         quad_vec = np.array([cost_quad_by_aid.get(aid, 0.0) for aid in labels_P])
         step_cost = step_cost + (dispatched**2 * quad_vec).sum(axis=1)
     per_step = pd.Series(step_cost, index=t_arr, name="cost:total")
-    # NB: this is a linear energy cost (Σ marginal_cost * dispatched MW) only —
-    # no startup/no-load/commitment cost. "compute_overall_cost" oversells
-    # that; compute_linear_energy_cost (below) is the clearer name to use in
-    # new code, kept as an alias for now rather than a breaking rename.
+    # NB: energy cost only (Σ marginal cost · MW, + c₂·P²) — no startup /
+    # no-load / commitment cost.
     return float(per_step.sum()), per_step
-
-
-#: Clearer alias for :func:`compute_overall_cost` — same function, see its
-#: docstring for the "linear energy cost only" caveat. Prefer this name in
-#: new code; ``compute_overall_cost`` is kept for existing callers.
-compute_linear_energy_cost = compute_overall_cost
 
 
 def compute_slack(residual: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -1187,7 +1129,6 @@ def build_scenario_argparser(
     *,
     default_name_base: str,
     extra_args: Callable[[argparse.ArgumentParser], None] | None = None,
-    lossless_only: bool = False,
     with_balance_tol: bool = False,
 ) -> argparse.ArgumentParser:
     """Build the CLI parser shared by all scenario entry points.
@@ -1195,11 +1136,6 @@ def build_scenario_argparser(
     *extra_args*, if given, is called with the parser to add algorithm-specific
     flags (e.g. DEED-ADMM's ``--gamma``/``--max-iter``).
 
-    :param lossless_only: If true, this scenario's algorithm advances a round
-        only once every neighbour has replied (no retry/partial-quorum
-        fallback — see :func:`require_lossless_transport`), so
-        ``--loss-rate`` only documents that constraint rather than
-        offering a working knob.
     :param with_balance_tol: If true, add ``--balance-tol`` (the power-balance
         tolerance passed to :class:`PowerLoadAggregator`) and ``--strict``
         (fail the run instead of writing outputs when that check fails).
@@ -1217,19 +1153,13 @@ def build_scenario_argparser(
         ),
     )
     parser.add_argument("--delay-s", type=float, default=0.02, help="Comms delay (s).")
-    lossless_note = (
-        " This scenario waits for every neighbour's reply each round with no "
-        "retry, so any non-zero value raises ValueError instead of running."
-        if lossless_only
-        else ""
-    )
     parser.add_argument(
         "--loss-rate",
         type=_bounded_float(0.0, 1.0),
         default=None,
         help=(
             "Probability that a message is lost, as a fraction in [0, 1] "
-            "(e.g. 0.05 for 5%%; default 0)." + lossless_note
+            "(e.g. 0.05 for 5%%; default 0)."
         ),
     )
     parser.add_argument(
@@ -1697,13 +1627,17 @@ class PowerLoadAggregator(Role):
         if self._result_poll_s is None or not self._generator_addrs:
             return
         self.context.schedule_timestamp_task(
-            self._poll_results(attempt),
+            self._poll_results(attempt, self.runs),
             self.context.current_timestamp + self._result_poll_s,
         )
 
-    async def _poll_results(self, attempt: int) -> None:
-        """Ask the generators whose schedule is still missing for it."""
-        if self._ready:
+    async def _poll_results(self, attempt: int, run: int) -> None:
+        """Ask the generators whose schedule is still missing for it.
+
+        A chain of polls belongs to one *run*; it stops once a later run
+        (FDGDM's outer storage rounds) has started its own chain.
+        """
+        if self._ready or run != self.runs:
             return
         missing = [
             aid for aid in self._generator_addrs if aid not in self._finished_aids
@@ -1717,7 +1651,7 @@ class PowerLoadAggregator(Role):
             )
             for reply in replies.values():
                 self._handle_finished(reply, {})
-        if self._ready:
+        if self._ready or run != self.runs:
             return
         if attempt < self._result_retries:
             self._schedule_result_poll(attempt + 1)
@@ -1938,7 +1872,6 @@ def make_finish_callback(
     finished_message_type: type,
     algorithm_label: str,
     schedule_attr: str = "actor.P",
-    schedule_by_aid: dict[str, np.ndarray] | None = None,
 ) -> Any:
     """Return the ``(algorithm, carrier) -> None`` hook shared by the
     carrier-based algorithms (consensus, diffusion, FDGDM, DEED-ADMM).
@@ -1947,7 +1880,6 @@ def make_finish_callback(
     the finished per-timestep schedule (e.g. ``"actor.P"`` or ``"P"``).  The
     schedule travels to the leader in the finished message and stays on the
     agent's :class:`GeneratorResultRole` for later requests.
-    *schedule_by_aid* is accepted for backwards compatibility and ignored.
     """
 
     def handle_finished(algorithm: Any, carrier: Any) -> None:
@@ -2333,7 +2265,6 @@ def run_scenario_main(
     default_name_base: str,
     extra_args: Callable[[argparse.ArgumentParser], None] | None = None,
     extra_kwargs: Sequence[str] = (),
-    lossless_only: bool = False,
     with_balance_tol: bool = False,
     argv: list[str] | None = None,
 ) -> None:
@@ -2348,7 +2279,6 @@ def run_scenario_main(
         doc,
         default_name_base=default_name_base,
         extra_args=extra_args,
-        lossless_only=lossless_only,
         with_balance_tol=with_balance_tol,
     )
     # Tuned parameters: a first parse finds the network/topology, the file's

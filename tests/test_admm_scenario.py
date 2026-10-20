@@ -23,7 +23,7 @@ from energy_scheduling_benchmark.scenarios.admm import (
 
 
 class TestLookupTs:
-    """_lookup_ts falls back to attribute comparison when dict get fails."""
+    """_lookup_ts returns a unit's series, or None."""
 
     def _scenario(self, ts_dict: dict) -> object:
         scenario = MagicMock()
@@ -34,31 +34,6 @@ class TestLookupTs:
         ref = ComponentRef("thermal", "g0")
         ts = pd.Series([1.0, 2.0])
         assert _lookup_ts(self._scenario({ref: ts}), ref) is ts
-
-    def test_attribute_fallback_when_key_does_not_hash_equal(self):
-        """Covers the case where the stored key and the lookup ref are not equal
-        (e.g. ComponentRef vs. a subclass), but share element_type/component_id."""
-
-        class AltRef:
-            """Stand-in for a ComponentRef subclass that breaks equality."""
-
-            def __init__(self, et: str, cid: str) -> None:
-                self.element_type = et
-                self.component_id = cid
-
-            def __eq__(self, other: object) -> bool:
-                return False
-
-            def __hash__(self) -> int:
-                return id(self)
-
-        real_ref = ComponentRef("thermal", "g0")
-        ts = pd.Series([3.0, 4.0])
-        alt_ref = AltRef("thermal", "g0")
-        # dict.get uses hash+eq, so this won't find real_ref
-        assert self._scenario({real_ref: ts}).timeseries.get(alt_ref) is None
-        # _lookup_ts should still find it via attribute scan
-        assert _lookup_ts(self._scenario({real_ref: ts}), alt_ref) is ts
 
     def test_missing_key_returns_none(self):
         assert (

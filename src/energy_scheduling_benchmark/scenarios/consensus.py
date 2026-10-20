@@ -62,6 +62,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     loss_tolerance,
     make_finish_callback,
     participant_graph,
+    price_sensitivity,
     register_component_agent,
     resolve_loss_rate,
     run_scenario_main,
@@ -160,7 +161,6 @@ async def execute_test_case(
     leader_addr_ref: dict[str, Any | None] = {"addr": None}
     finish_callback = make_finish_callback(
         leader_addr_ref=leader_addr_ref,
-        schedule_by_aid=schedule_by_aid,
         finished_message_type=ConsensusFinishedInfo,
         algorithm_label="Consensus",
         schedule_attr="actor.P",
@@ -217,9 +217,9 @@ async def execute_test_case(
     ).round_timeout
     lt = lt.for_hops(pgraph.hops_from(load_refs[0]))
     damping = leader_damping / pgraph.diameter
-    price_sensitivity = sum(1.0 / _epsilon(ref) for ref in gen_refs)
+    sensitivity = price_sensitivity(eps, gen_refs, statics_by_ref)
     leader_gain = min(
-        damping * len(gen_refs) / max(price_sensitivity, 1e-9),
+        damping * len(gen_refs) / max(sensitivity, 1e-9),
         _epsilon(gen_refs[0]),  # the first generator is the leader (below)
     )
 

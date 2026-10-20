@@ -82,3 +82,30 @@ async def test_caller_task_is_not_left_cancelled(tmp_path, monkeypatch):
         )
     assert asyncio.current_task().cancelling() == 0
     await asyncio.sleep(0)  # no pending cancellation fires here
+
+
+async def test_failing_admm_coordinator_aborts(tmp_path, monkeypatch):
+    """The coordinator's exception lands in a future, which mango never logs."""
+    import energy_scheduling_benchmark.scenarios.admm as admm
+
+    original = admm.create_consensus_target_reach_admm_coordinator
+
+    def broken_coordinator(**kwargs):
+        coordinator = original(**kwargs)
+
+        async def explode(*args, **kwargs):
+            raise ValueError("coordinator exploded")
+
+        coordinator.start_optimization = explode
+        return coordinator
+
+    monkeypatch.setattr(
+        admm, "create_consensus_target_reach_admm_coordinator", broken_coordinator
+    )
+    with pytest.raises(AgentError, match="coordinator exploded"):
+        await admm.execute_test_case(
+            scenario=build_toy_network(periods=24),
+            name_base=str(tmp_path / "admm"),
+            simulate_days=1,
+        )
+    assert not (tmp_path / "admm-df.csv").exists()

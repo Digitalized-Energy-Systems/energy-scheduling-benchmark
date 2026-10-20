@@ -40,9 +40,7 @@ from energy_scheduling_benchmark import (
     THERMAL,
 )
 from energy_scheduling_benchmark.scenarios._common import (
-    OptimizationFinishedInfo as ADMMFinishedInfo,
-)
-from energy_scheduling_benchmark.scenarios._common import (
+    AgentError,
     PowerLoadAggregator,
     PowerLoadMonitoring,
     ScenarioData,
@@ -65,6 +63,9 @@ from energy_scheduling_benchmark.scenarios._common import (
     run_simulation,
     thermal_cost_quad,
     write_scenario_outputs,
+)
+from energy_scheduling_benchmark.scenarios._common import (
+    OptimizationFinishedInfo as ADMMFinishedInfo,
 )
 
 logger = logging.getLogger(__name__)
@@ -282,14 +283,17 @@ async def execute_test_case(
     coord_role = CoordinatorRole(coordinator)
     leader_agent.add_role(coord_role)
 
+    coordinator_runs: list[Any] = []
+
     def start_locally(start: StartCoordinatedDistributedOptimization) -> None:
         # The coordinator lives on the leader agent: start it without a
         # message (which could be lost) and take its results directly.
         done = coord_role.start(start.input)
+        coordinator_runs.append(done)
 
         def deliver(future: Any) -> None:
             if future.cancelled() or future.exception() is not None:
-                return
+                return  # a failure is raised after the simulation
             aggregator.algorithm_stats = {
                 "iterations": coordinator.iterations,
                 "converged": coordinator.converged,
@@ -349,6 +353,13 @@ async def execute_test_case(
     # --- Run simulation ---
     async with world:
         await run_simulation(world, simulate_days * 24 * 3600.0)
+    # The coordinator stores its exception in the future, which mango never
+    # logs, and it can fail during world start-up, before run_simulation watches.
+    for done in coordinator_runs:
+        if done.done() and not done.cancelled() and done.exception() is not None:
+            raise AgentError(
+                f"ADMM coordinator failed: {done.exception()!r}"
+            ) from done.exception()
 
     # --- Write outputs ---
     write_scenario_outputs(
