@@ -246,7 +246,8 @@ async def execute_test_case(
     # price is far from any fixed default.
     initial_lam = float(np.mean(eps.costs_all)) if eps.costs_all else 10.0
 
-    pgraph = participant_graph(scenario, topology, gen_refs)
+    pgraph = participant_graph(scenario, topology, gen_refs, attached=load_refs)
+    lt = lt.for_hops(pgraph.hops_from(load_refs[0]))
     perron = perron_scales(pgraph.graph, weight_rule)
     gen_agents: list[RoleAgent] = []
     cost_by_aid: dict[str, float] = {}
@@ -357,7 +358,7 @@ async def execute_test_case(
     # Fully-connected exact-diffusion topology across all generator agents.
     # Exact Diffusion requires a degree-regular graph (all nodes share the
     # same degree); the complete topology satisfies this trivially.
-    install_topology(world, scenario, topology, gen_agents)
+    install_topology(world, pgraph, gen_agents)
 
     # -- Recordings --
     install_standard_recordings(world, behavior)

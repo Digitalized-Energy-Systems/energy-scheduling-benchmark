@@ -97,7 +97,9 @@ class TestInstallTopology:
         load = ComponentRef(LOAD, str(scenario.net.loads.index[0]))
         load_agent = RoleAgent()
         register_component_agent(world, load_agent, load)
-        install_topology(world, scenario, "ring", agents)
+        install_topology(
+            world, participant_graph(scenario, "ring", refs, attached=[load]), agents
+        )
 
         sim = world.communication_sim
         a0, a1 = agents[0].aid, agents[1].aid
@@ -116,7 +118,11 @@ class TestInstallTopology:
             agent = RoleAgent()
             register_component_agent(world, agent, ref)
             agents.append(agent)
-        install_topology(world, scenario, "complete", agents)
+        install_topology(
+            world,
+            participant_graph(scenario, "complete", _thermal_refs(scenario)),
+            agents,
+        )
         sim = world.communication_sim
         assert all(sim.hops(agents[0].aid, a.aid) == 1 for a in agents[1:])
 
@@ -132,3 +138,63 @@ async def test_consensus_runs_on_sparse_topology(tmp_path, kind):
         topology=kind,
         strict=True,
     )
+
+
+class TestHopsAndDeadlines:
+    def test_hops_from_leader(self):
+        scenario = build_toy_network(periods=24)
+        refs = _thermal_refs(scenario)
+        load = ComponentRef(LOAD, str(scenario.net.loads.index[0]))
+        ring = participant_graph(scenario, "ring", refs, attached=[load])
+        assert ring.hops_from(load) > 1
+        assert (
+            participant_graph(scenario, "complete", refs, attached=[load]).hops_from(
+                load
+            )
+            == 1
+        )
+
+    def test_for_hops_scales_default_deadlines(self):
+        from energy_scheduling_benchmark.scenarios._common import loss_tolerance
+
+        lt = loss_tolerance(0.02, loss_rate=0.05)
+        scaled = lt.for_hops(3)
+        assert scaled.load_timeout == pytest.approx(3 * lt.load_timeout)
+        assert scaled.request_timeout == pytest.approx(3 * lt.request_timeout)
+        assert scaled.round_timeout == lt.round_timeout  # peer rounds: neighbours
+        assert lt.for_hops(3, coordinator=True).round_timeout == pytest.approx(
+            3 * lt.round_timeout
+        )
+        assert lt.for_hops(1) is lt
+
+    def test_for_hops_keeps_explicit_timeouts(self):
+        from energy_scheduling_benchmark.scenarios._common import loss_tolerance
+
+        lt = loss_tolerance(0.02, loss_rate=0.05, round_timeout=1.0, load_timeout=2.0)
+        scaled = lt.for_hops(4, coordinator=True)
+        assert scaled.round_timeout == 1.0 and scaled.load_timeout == 2.0
+
+
+async def test_admm_on_lossy_ring_converges(tmp_path, monkeypatch):
+    """Review fix: on a ring the coordinator's answers take hops x delay; with
+    hop-scaled deadlines ADMM no longer drops every far participant and stops
+    after --max-missing-rounds."""
+    import energy_scheduling_benchmark.scenarios.admm as admm_mod
+
+    coordinators = []
+    real = admm_mod.create_consensus_target_reach_admm_coordinator
+
+    def spy(**kwargs):
+        coordinators.append(real(**kwargs))
+        return coordinators[-1]
+
+    monkeypatch.setattr(admm_mod, "create_consensus_target_reach_admm_coordinator", spy)
+    await admm_mod.execute_test_case(
+        scenario=build_toy_network(periods=24),
+        name_base=str(tmp_path / "admm"),
+        simulate_days=1,
+        topology="ring",
+        loss_rate=0.01,
+        seed=1,
+    )
+    assert coordinators[0].converged

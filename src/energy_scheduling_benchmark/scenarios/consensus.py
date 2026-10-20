@@ -209,7 +209,13 @@ async def execute_test_case(
     # the damping is divided by the graph diameter (1 on the complete graph).
     # DE-AT 2-bus ring (21 units, diameter 5): 0.5 diverges (79 % gap after
     # 3000 rounds), 0.5/5 = 0.1 balances in 877 rounds.
-    pgraph = participant_graph(scenario, topology, gen_refs)
+    pgraph = participant_graph(scenario, topology, gen_refs, attached=load_refs)
+    # The consensus leader (first generator) waits for every follower's
+    # power; on a sparse graph that takes up to hops x delay each way.
+    leader_round_timeout = lt.for_hops(
+        pgraph.hops_from(gen_refs[0]), coordinator=True
+    ).round_timeout
+    lt = lt.for_hops(pgraph.hops_from(load_refs[0]))
     damping = leader_damping / pgraph.diameter
     price_sensitivity = sum(1.0 / _epsilon(ref) for ref in gen_refs)
     leader_gain = min(
@@ -261,7 +267,7 @@ async def execute_test_case(
             finish_callback=finish_callback,
             consensus_actor=actor,
             max_iter=max_iter,
-            round_timeout=lt.round_timeout,
+            round_timeout=leader_round_timeout if gen_idx == 0 else lt.round_timeout,
             alpha=alpha,
             is_leader=(gen_idx == 0),
             leader_gain=leader_gain,
@@ -324,7 +330,7 @@ async def execute_test_case(
         register_component_agent(world, agent, ref)
 
     # Fully-connected consensus topology across all generator agents.
-    install_topology(world, scenario, topology, gen_agents)
+    install_topology(world, pgraph, gen_agents)
     if topology != "complete":
         # Followers that are not the leader's neighbours report their power
         # to it each round (the leader needs the system-wide ΔP).

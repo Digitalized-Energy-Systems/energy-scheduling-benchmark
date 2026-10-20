@@ -13,7 +13,9 @@ SCENARIOS = ["consensus", "admm", "diffusion", "exact_diffusion", "fdgdm", "deed
 
 
 def _capture(monkeypatch, scenario: str, argv: list[str]) -> dict:
-    module = importlib.import_module(f"energy_scheduling_benchmark.scenarios.{scenario}")
+    module = importlib.import_module(
+        f"energy_scheduling_benchmark.scenarios.{scenario}"
+    )
     seen: dict = {}
 
     async def fake(**kwargs):
@@ -26,7 +28,11 @@ def _capture(monkeypatch, scenario: str, argv: list[str]) -> dict:
 
 class TestResolve:
     CONFIG = {
-        "consensus": {"max_iter": 1, "alpha": 0.1, "topology": {"ring": {"max_iter": 2}}},
+        "consensus": {
+            "max_iter": 1,
+            "alpha": 0.1,
+            "topology": {"ring": {"max_iter": 2}},
+        },
         "network": {
             "net": {
                 "consensus": {"alpha": 0.3, "topology": {"ring": {"alpha": 0.4}}},
@@ -35,12 +41,16 @@ class TestResolve:
     }
 
     def test_scenario_defaults(self):
-        values, sources = tuned_params.resolve(self.CONFIG, "consensus", "other", "complete")
+        values, sources = tuned_params.resolve(
+            self.CONFIG, "consensus", "other", "complete"
+        )
         assert values == {"max_iter": 1, "alpha": 0.1}
         assert sources["max_iter"] == "consensus"
 
     def test_precedence(self):
-        values, sources = tuned_params.resolve(self.CONFIG, "consensus", "dir/net.nc", "ring")
+        values, sources = tuned_params.resolve(
+            self.CONFIG, "consensus", "dir/net.nc", "ring"
+        )
         assert values == {"max_iter": 2, "alpha": 0.4}
         assert sources["max_iter"] == "consensus.topology.ring"
         assert sources["alpha"] == 'network."net".consensus.topology.ring'
@@ -54,7 +64,9 @@ class TestResolve:
 def test_packaged_defaults_equal_library_defaults(monkeypatch, tmp_path, scenario):
     """On the complete topology the packaged file reproduces execute_test_case's
     own defaults, so moving the values into the file changes no result."""
-    module = importlib.import_module(f"energy_scheduling_benchmark.scenarios.{scenario}")
+    module = importlib.import_module(
+        f"energy_scheduling_benchmark.scenarios.{scenario}"
+    )
     defaults = {
         name: p.default
         for name, p in inspect.signature(module.execute_test_case).parameters.items()
@@ -67,7 +79,9 @@ def test_packaged_defaults_equal_library_defaults(monkeypatch, tmp_path, scenari
 
 
 def test_topology_section_applies(monkeypatch, tmp_path):
-    seen = _capture(monkeypatch, "consensus", ["--topology", "ring", "--out-dir", str(tmp_path)])
+    seen = _capture(
+        monkeypatch, "consensus", ["--topology", "ring", "--out-dir", str(tmp_path)]
+    )
     assert seen["max_iter"] == 3000
 
 
@@ -93,4 +107,50 @@ def test_unknown_key_rejected(monkeypatch, tmp_path):
     path = tmp_path / "p.toml"
     path.write_text("[admm]\nrhoo = 0.5\n")
     with pytest.raises(SystemExit):
-        _capture(monkeypatch, "admm", ["--tuned-params", str(path), "--out-dir", str(tmp_path)])
+        _capture(
+            monkeypatch,
+            "admm",
+            ["--tuned-params", str(path), "--out-dir", str(tmp_path)],
+        )
+
+
+def test_wrong_choice_in_file_rejected(monkeypatch, tmp_path):
+    path = tmp_path / "p.toml"
+    path.write_text('[exact_diffusion]\nweight_rule = "averageing"\n')
+    with pytest.raises(SystemExit):
+        _capture(
+            monkeypatch,
+            "exact_diffusion",
+            ["--tuned-params", str(path), "--out-dir", str(tmp_path)],
+        )
+
+
+def test_wrong_type_in_file_rejected(monkeypatch, tmp_path):
+    path = tmp_path / "p.toml"
+    path.write_text('[admm]\nmax_iter = "lots"\n')
+    with pytest.raises(SystemExit):
+        _capture(
+            monkeypatch,
+            "admm",
+            ["--tuned-params", str(path), "--out-dir", str(tmp_path)],
+        )
+
+
+def test_explicit_flag_equal_to_file_is_not_attributed(monkeypatch, tmp_path):
+    from energy_scheduling_benchmark.scenarios import _common
+
+    seen_args = {}
+    real = _common._complete_meta
+
+    def spy(path, *, scenario, args, wall_time_s):
+        seen_args.update(vars(args))
+
+    monkeypatch.setattr(_common, "_complete_meta", spy)
+    _capture(
+        monkeypatch,
+        "consensus",
+        ["--topology", "ring", "--max-iter", "3000", "--out-dir", str(tmp_path)],
+    )
+    assert "max_iter" not in seen_args["tuned_from"]
+    assert seen_args["tuned_from"]["alpha"] == "consensus"
+    assert real is not None

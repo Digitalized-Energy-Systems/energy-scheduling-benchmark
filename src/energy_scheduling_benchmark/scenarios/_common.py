@@ -250,10 +250,20 @@ def register_component_agent(world: Any, agent: Any, ref: ComponentRef) -> Any:
 
 
 @dataclass(frozen=True)
-class ParticipantGraph:
-    """The algorithm participants' communication graph (see :func:`participant_graph`)."""
+class CommunicationTopology:
+    """A scenario's communication graph, built once by :func:`participant_graph`.
 
+    ``graph`` holds the algorithm participants only (diameter / degrees for
+    the stop rules, DEED-ADMM's β, exact diffusion's Perron scaling);
+    ``full`` adds every other component that talks (loads, units outside the
+    algorithm) and is what :func:`install_topology` routes messages over.
+    ``full`` is ``None`` for ``complete`` (every pair is one hop).
+    """
+
+    kind: str
     graph: nx.Graph
+    full: nx.Graph | None
+    participants: tuple[ComponentRef, ...]
     diameter: int
     max_degree: int
 
@@ -261,71 +271,100 @@ class ParticipantGraph:
     def degrees(self) -> dict[ComponentRef, int]:
         return dict(self.graph.degree())
 
+    def hops_from(self, ref: ComponentRef) -> int:
+        """Largest number of hops from *ref* to any component (1 on ``complete``)."""
+        if self.full is None or ref not in self.full:
+            return 1
+        lengths = nx.single_source_shortest_path_length(self.full, ref)
+        return max(1, max(lengths.values(), default=1))
+
+
+#: Kept for callers of the earlier name.
+ParticipantGraph = CommunicationTopology
+
 
 def participant_graph(
-    scenario: ScenarioData, kind: str, participants: Sequence[ComponentRef]
-) -> ParticipantGraph:
-    """Graph of *participants* under topology *kind*, known before any agent
-    exists, for graph-dependent algorithm parameters (diameter for the stop
-    rules, DEED-ADMM's β, exact diffusion's Perron scaling). Same edges as
-    :func:`install_topology` later wires."""
+    scenario: ScenarioData,
+    kind: str,
+    participants: Sequence[ComponentRef],
+    attached: Sequence[ComponentRef] = (),
+) -> CommunicationTopology:
+    """Build the communication graph of *participants* (and *attached*
+    components, which connect via their bus) under topology *kind*, before any
+    agent exists. Pass the result to :func:`install_topology`."""
     participants = list(participants)
+    attached = [r for r in attached if r not in set(participants)]
+    if kind not in TOPOLOGIES:
+        raise ValueError(f"unknown topology {kind!r}; choose from {TOPOLOGIES}")
     if kind == "complete":
         graph = nx.complete_graph(participants)
+        full = None
     else:
-        graph = build_communication_graph(kind, scenario.net, participants)
+        full = build_communication_graph(kind, scenario.net, participants, attached)
+        graph = full.subgraph(participants).copy()
     diameter = nx.diameter(graph) if graph.number_of_nodes() > 1 else 1
     max_degree = max((d for _, d in graph.degree()), default=0)
-    return ParticipantGraph(
-        graph=graph, diameter=max(1, diameter), max_degree=max_degree
+    return CommunicationTopology(
+        kind=kind,
+        graph=graph,
+        full=full,
+        participants=tuple(participants),
+        diameter=max(1, diameter),
+        max_degree=max_degree,
     )
 
 
 def install_topology(
     world: Any,
-    scenario: ScenarioData,
-    kind: str,
+    topology: CommunicationTopology,
     participants: Sequence[Any],
     *,
     logical: Sequence[Any] | None = None,
 ) -> None:
-    """Connect the algorithm agents and route every message over *kind*.
+    """Connect the algorithm agents along *topology* and route every message.
 
-    *participants* (agents registered with :func:`register_component_agent`)
-    form the communication graph of :func:`build_communication_graph`
-    (``complete`` / ``ring`` ordered by id / ``grid`` along the buses); every
-    other registered agent (loads, the leader, units outside the algorithm)
-    attaches via its bus. The algorithm's neighbours are the participants'
-    edges, and the world's communication simulation delivers every message
-    (also leader <-> agent) along the shortest path: hops x delay, lost with
+    *participants* are the agents (registered with
+    :func:`register_component_agent`) of ``topology.participants``. The
+    algorithm's neighbours are their edges, and the world's communication
+    simulation delivers every message (also leader <-> agent) along the
+    shortest path of ``topology.full``: hops x delay, lost with
     ``1 - (1 - loss)^hops``. With ``complete`` every pair is one hop and the
     run is unchanged.
 
     :param logical: agents that instead get a complete mango topology among
         themselves (ADMM: the coordinator must reach every participant); the
-        messages still travel over the *kind* graph of *participants*.
+        messages still travel over ``topology.full``.
     """
-    if kind not in TOPOLOGIES:
-        raise ValueError(f"unknown topology {kind!r}; choose from {TOPOLOGIES}")
     algorithm_agents = list(logical if logical is not None else participants)
-    if kind == "complete":
+    if topology.full is None:
         if algorithm_agents:
             auto_assign(complete_topology(len(algorithm_agents)), algorithm_agents)
         return
     refs = _REFS_BY_WORLD.get(world, {})
     part_refs = [refs[a.aid] for a in participants]
-    part_set = set(part_refs)
-    attached = [r for r in refs.values() if r not in part_set]
-    graph = build_communication_graph(kind, scenario.net, part_refs, attached)
+    if set(part_refs) != set(topology.participants):
+        raise ValueError(
+            "install_topology: the agents do not match topology.participants"
+        )
+    unknown = [r for r in refs.values() if r not in topology.full]
+    if unknown:
+        logger.warning(
+            "Topology %s: %d registered components are not in the graph (one hop): %s",
+            topology.kind,
+            len(unknown),
+            unknown[:5],
+        )
     aid_by_ref = {ref: aid for aid, ref in refs.items()}
-    world.communication_sim.set_graph(nx.relabel_nodes(graph, aid_by_ref, copy=True))
+    world.communication_sim.set_graph(
+        nx.relabel_nodes(topology.full, aid_by_ref, copy=True)
+    )
     logger.info(
-        "Topology %s: %d participants, %d attached, %d links, diameter %s",
-        kind,
+        "Topology %s: %d participants (diameter %d), %d components, %d links",
+        topology.kind,
         len(part_refs),
-        len(attached),
-        graph.number_of_edges(),
-        nx.diameter(graph) if nx.is_connected(graph) else "inf",
+        topology.diameter,
+        topology.full.number_of_nodes(),
+        topology.full.number_of_edges(),
     )
     if not algorithm_agents:
         return
@@ -335,9 +374,7 @@ def install_topology(
     index = {ref: i for i, ref in enumerate(part_refs)}
     logical_graph = nx.Graph()
     logical_graph.add_nodes_from(range(len(part_refs)))
-    logical_graph.add_edges_from(
-        (index[u], index[v]) for u, v in graph.subgraph(part_refs).edges
-    )
+    logical_graph.add_edges_from((index[u], index[v]) for u, v in topology.graph.edges)
     auto_assign(graph_topology(logical_graph), algorithm_agents)
 
 
@@ -355,7 +392,7 @@ class _AgentErrorWatch(logging.Handler):
     finish a distributed run). Only records that carry an exception count.
     """
 
-    def __init__(self, task: asyncio.Task) -> None:
+    def __init__(self, task: asyncio.Future) -> None:
         super().__init__(level=logging.ERROR)
         self.task = task
         self.records: list[logging.LogRecord] = []
@@ -379,13 +416,17 @@ async def run_simulation(world: Any, seconds: float) -> None:
     """
     from mango.simulation.world import discrete_step_until
 
-    watch = _AgentErrorWatch(asyncio.current_task())
+    # The stepping runs in a child task, which is what the watch cancels: the
+    # caller's own task is never cancelled, so no cancellation can be left
+    # pending after the error has been turned into AgentError.
+    stepping = asyncio.ensure_future(discrete_step_until(world, seconds))
+    watch = _AgentErrorWatch(stepping)
     mango_logger = logging.getLogger("mango")
     mango_logger.addHandler(watch)
     try:
-        await discrete_step_until(world, seconds)
+        await stepping
     except asyncio.CancelledError:
-        if not watch.records:
+        if not watch.records or not stepping.cancelled():
             raise
     finally:
         mango_logger.removeHandler(watch)
@@ -745,6 +786,40 @@ class LossTolerance:
     #: Consecutive rounds a participant may miss before the ADMM coordinator
     #: stops the run with ``converged = False`` (``None``: never).
     max_missing_rounds: int | None = None
+    #: Whether round / load timeouts were given explicitly (not scaled by
+    #: :meth:`for_hops`).
+    explicit_round_timeout: bool = False
+    explicit_load_timeout: bool = False
+
+    def for_hops(self, hops: int, *, coordinator: bool = False) -> LossTolerance:
+        """Deadlines for messages that travel up to *hops* hops each way.
+
+        On a sparse topology a request from the leader and its reply take
+        ``2 x hops`` message delays, so the default load / request deadlines
+        (and, for a *coordinator* that waits for every participant, the round
+        deadline) are multiplied by *hops*. Peer-to-peer rounds only wait for
+        neighbours one hop away and keep their deadline. Explicitly given
+        timeouts are left as they are.
+        """
+        if hops <= 1:
+            return self
+        round_timeout = self.round_timeout
+        if (
+            coordinator
+            and round_timeout is not None
+            and not self.explicit_round_timeout
+        ):
+            round_timeout = round_timeout * hops
+        return _dataclass_replace(
+            self,
+            round_timeout=round_timeout,
+            load_timeout=(
+                self.load_timeout
+                if self.explicit_load_timeout
+                else self.load_timeout * hops
+            ),
+            request_timeout=self.request_timeout * hops,
+        )
 
 
 def loss_tolerance(
@@ -783,6 +858,8 @@ def loss_tolerance(
         max_missing_rounds=(
             None if max_missing_rounds is None else int(max_missing_rounds)
         ),
+        explicit_round_timeout=round_timeout is not None,
+        explicit_load_timeout=load_timeout is not None,
     )
 
 
@@ -1071,6 +1148,17 @@ def carrier_style(net: Any) -> tuple[dict[str, str], dict[str, str]]:
     return colors, names
 
 
+def _non_negative_int(text: str) -> int:
+    """argparse ``type=`` for an integer ``>= 0``."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not an integer: {text!r}") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0, got {value}")
+    return value
+
+
 def _bounded_float(lo: float, hi: float) -> Callable[[str], float]:
     """argparse ``type=`` that parses a float and rejects values outside ``[lo, hi]``."""
 
@@ -1221,7 +1309,7 @@ def build_scenario_argparser(
     )
     parser.add_argument(
         "--max-missing-rounds",
-        type=int,
+        type=_non_negative_int,
         default=20,
         help=(
             "ADMM only: consecutive rounds a participant may miss before the "
@@ -2270,20 +2358,45 @@ def run_scenario_main(
     tuned, tuned_from = tuned_params.resolve(
         config, default_name_base, first.network, first.topology
     )
-    known = {action.dest for action in parser._actions}
-    unknown = sorted(set(tuned) - known)
+    source = first.tuned_params or tuned_params.DEFAULT_PATH
+    actions = {action.dest: action for action in parser._actions}
+    unknown = sorted(set(tuned) - set(actions))
     if unknown:
         parser.error(
-            f"{first.tuned_params or tuned_params.DEFAULT_PATH}: unknown parameter(s) "
-            f"{unknown} for {default_name_base}"
+            f"{source}: unknown parameter(s) {unknown} for {default_name_base}"
         )
+    # set_defaults() skips argparse's own checks: apply each flag's type and
+    # choices to the file's values here.
+    for key, value in list(tuned.items()):
+        action = actions[key]
+        if action.type is not None:
+            try:
+                value = action.type(str(value))
+            except (argparse.ArgumentTypeError, TypeError, ValueError) as exc:
+                parser.error(f"{source}: {key} = {tuned[key]!r}: {exc}")
+        elif isinstance(action.const, bool) and not isinstance(value, bool):
+            parser.error(f"{source}: {key} must be true or false, got {value!r}")
+        if action.choices is not None and value not in action.choices:
+            parser.error(
+                f"{source}: {key} = {value!r} is not one of {list(action.choices)}"
+            )
+        tuned[key] = value
     parser.set_defaults(**tuned)
     args = parser.parse_args(argv)
-    args.tuned_from = {
-        key: tuned_from[key]
-        for key in tuned
-        if getattr(args, key) == tuned[key]  # not overridden on the command line
-    }
+    # Flags given on the command line: parse once more with every default
+    # suppressed, so only explicit flags appear.
+    saved = [(action, action.default) for action in parser._actions]
+    saved_parser_defaults = dict(parser._defaults)
+    parser._defaults.clear()
+    for action in parser._actions:
+        action.default = argparse.SUPPRESS
+    try:
+        explicit = set(vars(parser.parse_args(argv)))
+    finally:
+        for action, default in saved:
+            action.default = default
+        parser._defaults.update(saved_parser_defaults)
+    args.tuned_from = {key: tuned_from[key] for key in tuned if key not in explicit}
 
     slack = None
     if args.slack:

@@ -50,6 +50,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     install_standard_recordings,
     install_topology,
     loss_tolerance,
+    participant_graph,
     register_component_agent,
     resolve_loss_rate,
     run_scenario_main,
@@ -273,6 +274,8 @@ async def execute_test_case(
     )
 
     gen_refs, statics_by_ref = collect_generator_refs(behavior)
+    pgraph = participant_graph(scenario, topology, gen_refs, attached=load_refs)
+    lt = lt.for_hops(pgraph.hops_from(load_refs[0]))
     cost_quad_by_aid = thermal_cost_quad(gen_refs, statics_by_ref, cost_model)
     if not gen_refs:
         raise RuntimeError("No generators found for central-dispatch scenario.")
@@ -345,7 +348,7 @@ async def execute_test_case(
         unit_addrs[ref.component_id] = agent.addr
         unit_agents.append(agent)
     # Unit reports and requests travel over the chosen topology.
-    install_topology(world, scenario, topology, unit_agents, logical=[])
+    install_topology(world, pgraph, unit_agents, logical=[])
 
     install_standard_recordings(world, behavior, role_cls=UnitReporter)
 

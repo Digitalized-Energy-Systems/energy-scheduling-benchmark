@@ -58,6 +58,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     install_standard_recordings,
     install_topology,
     loss_tolerance,
+    participant_graph,
     register_component_agent,
     resolve_loss_rate,
     run_scenario_main,
@@ -206,6 +207,9 @@ async def execute_test_case(
 
     # --- Generator agent creation ---
     gen_refs, statics_by_ref = collect_generator_refs(behavior)
+    pgraph = participant_graph(scenario, topology, gen_refs, attached=load_refs)
+    # The coordinator (on the leader) waits for every participant each round.
+    lt = lt.for_hops(pgraph.hops_from(load_refs[0]), coordinator=True)
     cost_quad_by_aid = thermal_cost_quad(gen_refs, statics_by_ref, cost_model)
     group_map = build_group_map(gen_refs, statics_by_ref=statics_by_ref)
 
@@ -337,7 +341,7 @@ async def execute_test_case(
     all_opt_agents = gen_agents + [leader_agent]
     # The coordinator (on the leader) reaches every participant; its
     # messages travel over the chosen topology.
-    install_topology(world, scenario, topology, gen_agents, logical=all_opt_agents)
+    install_topology(world, pgraph, gen_agents, logical=all_opt_agents)
 
     # --- Recordings ---
     install_standard_recordings(world, behavior, role_cls=ADMMGeneratorRole)

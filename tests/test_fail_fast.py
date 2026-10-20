@@ -62,3 +62,23 @@ async def test_healthy_run_unaffected(tmp_path):
         simulate_days=1,
     )
     assert (tmp_path / "cd-df.csv").exists()
+
+
+async def test_caller_task_is_not_left_cancelled(tmp_path, monkeypatch):
+    """The watch cancels the stepping child task only, never the caller."""
+    import asyncio
+
+    import energy_scheduling_benchmark.scenarios.central_dispatch as cd
+
+    def broken(*args, **kwargs):
+        raise ValueError("solver exploded")
+
+    monkeypatch.setattr(cd, "solve_multiperiod_dispatch", broken)
+    with pytest.raises(AgentError):
+        await cd.execute_test_case(
+            scenario=build_toy_network(periods=24),
+            name_base=str(tmp_path / "cd"),
+            simulate_days=1,
+        )
+    assert asyncio.current_task().cancelling() == 0
+    await asyncio.sleep(0)  # no pending cancellation fires here

@@ -381,7 +381,10 @@ async def execute_test_case(
     fdgdm_initial_p = adjusted_target / max(n_thermals, 1)
 
     # -- Thermal generator agents (FDGDM participants) --
-    pgraph = participant_graph(scenario, topology, thermal_refs)
+    pgraph = participant_graph(
+        scenario, topology, thermal_refs, attached=[*load_refs, *nonthermal_refs]
+    )
+    lt = lt.for_hops(pgraph.hops_from(load_refs[0]))
     thermal_gen_agents: list[RoleAgent] = []
     thermal_actors: list[LinearCostEconomicDispatchFDGDMActor] = []
     for i, ref in enumerate(thermal_refs):
@@ -565,7 +568,7 @@ async def execute_test_case(
         )
         register_component_agent(world, agent, ref)
 
-    install_topology(world, scenario, topology, gen_agents)
+    install_topology(world, pgraph, gen_agents)
 
     # -- Recordings --
     # "P" is clipped at recording time (max(0, ...)) so storage in charging

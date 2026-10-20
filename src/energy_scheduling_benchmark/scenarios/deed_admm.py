@@ -185,7 +185,8 @@ async def execute_test_case(
     n_gen_only = max(len(pure_gen_refs), 1)
     d_i_gen = target_series / n_gen_only
 
-    pgraph = participant_graph(scenario, topology, gen_refs)
+    pgraph = participant_graph(scenario, topology, gen_refs, attached=load_refs)
+    lt = lt.for_hops(pgraph.hops_from(load_refs[0]))
     # W = I − βL must be doubly stochastic (Zhu et al. 2025, Assumption 1):
     # β = 1/n on a complete graph (the default), the max-degree weight
     # 1/(Δ + 1) on sparser ones (same value on a complete graph).
@@ -309,7 +310,7 @@ async def execute_test_case(
         register_component_agent(world, agent, ref)
 
     # Fully-connected peer topology across all generator agents.
-    install_topology(world, scenario, topology, gen_agents)
+    install_topology(world, pgraph, gen_agents)
 
     # ------------------------------------------------------------------
     # Recordings

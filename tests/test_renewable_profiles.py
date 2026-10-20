@@ -92,3 +92,11 @@ def test_apply_profiles_rejects_missing_hours():
     cf = pd.read_csv(PROFILES, index_col=0, parse_dates=True)
     with pytest.raises(ValueError, match="lack"):
         apply.apply_profiles(n, cf)
+
+
+def test_clipped_hours_counts_both_bounds():
+    raw = pd.DataFrame({"solar": [-0.1, 0.5, 1.0, 1.2], "onwind": [0.0, 0.2, 0.3, 0.4]})
+    assert build.clipped_hours(raw) == {
+        "solar": {"below_0": 1, "above_1": 1},
+        "onwind": {"below_0": 0, "above_1": 0},
+    }

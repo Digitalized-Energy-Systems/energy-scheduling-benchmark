@@ -20,9 +20,18 @@
     }
   },
   "clipped_hours": {
-    "solar": 0,
-    "onwind": 0,
-    "offwind": 0
+    "solar": {
+      "below_0": 0,
+      "above_1": 0
+    },
+    "onwind": {
+      "below_0": 0,
+      "above_1": 0
+    },
+    "offwind": {
+      "below_0": 0,
+      "above_1": 0
+    }
   },
   "mean_capacity_factor": {
     "solar": 0.0985,

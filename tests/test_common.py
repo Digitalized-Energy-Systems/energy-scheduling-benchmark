@@ -204,6 +204,10 @@ class TestOutDir:
         seen = self._run(["--name-base", "run", "--max-missing-rounds", "0"])
         assert seen["max_missing_rounds"] is None
 
+    def test_negative_max_missing_rounds_rejected(self):
+        with pytest.raises(SystemExit):
+            self._run(["--max-missing-rounds", "-1"])
+
     def test_negative_load_timeout_rejected(self):
         with pytest.raises(SystemExit):
             self._run(["--load-timeout", "-1"])

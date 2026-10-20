@@ -92,14 +92,29 @@ def offshore_capacity(index: pd.DatetimeIndex) -> pd.Series:
     return pd.Series(c0 + np.clip(frac, 0.0, 1.0) * (c1 - c0), index=index)
 
 
-def build(series: pd.DataFrame, shares: dict[str, float]) -> pd.DataFrame:
-    """Capacity factors from one year of the OPSD time series (UTC index)."""
+def raw_capacity_factors(
+    series: pd.DataFrame, shares: dict[str, float]
+) -> pd.DataFrame:
+    """Production / capacity before clipping (UTC index)."""
     cf = pd.DataFrame(index=series.index)
     for carrier in ("solar", "onwind"):
         capacity = series[NATIONAL_CAPACITY[carrier]].ffill().bfill() * shares[carrier]
         cf[carrier] = series[GENERATION[carrier]] / capacity
     cf["offwind"] = series[GENERATION["offwind"]] / offshore_capacity(series.index)
-    return cf.clip(lower=0.0, upper=1.0)
+    return cf
+
+
+def build(series: pd.DataFrame, shares: dict[str, float]) -> pd.DataFrame:
+    """Capacity factors from one year of the OPSD time series, clipped to [0, 1]."""
+    return raw_capacity_factors(series, shares).clip(lower=0.0, upper=1.0)
+
+
+def clipped_hours(raw: pd.DataFrame) -> dict[str, dict[str, int]]:
+    """Hours per carrier whose raw capacity factor lies below 0 or above 1."""
+    return {
+        c: {"below_0": int((raw[c] < 0.0).sum()), "above_1": int((raw[c] > 1.0).sum())}
+        for c in raw.columns
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -127,7 +142,8 @@ def main(argv: list[str] | None = None) -> int:
         low_memory=False,
     )
     shares = tennet_shares(plants)
-    cf = build(ts, shares)
+    raw = raw_capacity_factors(ts, shares)
+    cf = raw.clip(lower=0.0, upper=1.0)
     cf.index.name = "utc_timestamp"
     cf.round(6).to_csv(args.out)
 
@@ -140,9 +156,7 @@ def main(argv: list[str] | None = None) -> int:
             name: {"url": URLS[name], "sha256": sha256(args.opsd_dir / name)}
             for name in URLS
         },
-        "clipped_hours": {
-            c: int((build(ts, shares)[c] >= 1.0).sum()) for c in cf.columns
-        },
+        "clipped_hours": clipped_hours(raw),
         "mean_capacity_factor": cf.mean().round(4).to_dict(),
     }
     args.out.with_suffix(".json").write_text(json.dumps(meta, indent=2))
