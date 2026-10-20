@@ -175,6 +175,13 @@ received:
   requests a missing result is given up, the run is logged as degraded and
   the balance check decides whether it is valid.
 
+On `ring` / `grid` topologies a message to or from the leader takes several
+hops, so the default load and request deadlines (and ADMM's coordinator round
+and the consensus leader's round) are multiplied by the leader's largest hop
+distance; peer-to-peer rounds only wait for neighbours one hop away and keep
+3 × `--delay-s`. Explicit `--round-timeout` / `--load-timeout` values are used
+as given.
+
 Without loss none of this changes a run: rounds and requests complete before
 their deadlines, and results match the lossless implementation.
 
