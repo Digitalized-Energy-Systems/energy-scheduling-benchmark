@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 
-from energy_scheduling_benchmark import ComponentRef
+from energy_scheduling_benchmark import THERMAL, ComponentRef
 from energy_scheduling_benchmark.networks import build_toy_network
 from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadAggregator,
     _clip_scenario,
     build_group_map,
+    build_p_max_vec,
     build_scenario_argparser,
     build_world,
     carrier_style,
@@ -39,6 +41,18 @@ class TestClipScenario:
         scenario = build_toy_network(periods=24)
         clipped = _clip_scenario(scenario, simulate_days=3)
         assert all(len(ts) == 24 for ts in clipped.timeseries.values())
+
+
+class TestBuildPMaxVec:
+    def test_thermal_availability_is_scaled_by_p_nom(self):
+        # A thermal unit's timeseries is its per-unit p_max_pu: 0.5 of a
+        # 400 MW unit is 200 MW, not 0.5 MW (scigrid-de's wind units).
+        scenario = build_toy_network(periods=3)
+        index = next(iter(scenario.timeseries.values())).index
+        ref = ComponentRef(THERMAL, "gas")
+        scenario.timeseries[ref] = pd.Series([1.0, 0.5, 0.0], index=index)
+        p_max = build_p_max_vec(scenario, ref, {"p_nom": 400.0}, index, 3)
+        np.testing.assert_allclose(p_max, [400.0, 200.0, 0.0])
 
 
 class TestComputeOverallCost:
@@ -219,6 +233,12 @@ class TestLossTolerance:
         assert lt.load_timeout == pytest.approx(0.06)
         assert lt.round_timeout is None
         assert lt.max_missing_rounds == 20
+
+    def test_no_result_polls_without_loss(self):
+        # A lossless run that needs more than result_retries x result_poll_s
+        # (e.g. consensus on a ring of 430 units) must not be zero-filled.
+        assert loss_tolerance(0.02).result_poll_s is None
+        assert loss_tolerance(0.02, loss_rate=0.05).result_poll_s == 300.0
 
     def test_overrides(self):
         lt = loss_tolerance(0.02, load_timeout=1.5, max_missing_rounds=None)

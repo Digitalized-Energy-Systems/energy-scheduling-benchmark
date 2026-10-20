@@ -612,18 +612,15 @@ def build_p_max_vec(
     """Build a per-timestep max-power vector for a generator, aligned to *time_index*.
 
     Falls back to a constant ``p_nom`` vector when *ref* has no timeseries.
-    For :data:`RENEWABLE` refs, the timeseries is treated as a per-unit
-    availability (PyPSA convention) and scaled by ``p_nom``; other refs use
-    the raw timeseries values directly.
+    The timeseries is a per-unit availability (``generators_t.p_max_pu``,
+    PyPSA convention) and is scaled by ``p_nom`` — for thermal units too, as
+    FDGDM does (e.g. scigrid-de's wind units, classified thermal by carrier).
     """
     p_nom = float(statics.get("p_nom", 0.0))
     ts = _lookup_ts(scenario, ref)
     if ts is None:
         return np.full(horizon, p_nom, dtype=float)
-    values = np.asarray(ts.reindex(time_index), dtype=float)
-    if ref.element_type == RENEWABLE:
-        return values * p_nom
-    return values
+    return np.asarray(ts.reindex(time_index), dtype=float) * p_nom
 
 
 @dataclass
@@ -779,8 +776,10 @@ class LossTolerance:
     load_timeout: float
     #: Timeout of one leader request (kick-off, schedule/report poll).
     request_timeout: float
-    #: Interval between the leader's polls for missing results.
-    result_poll_s: float
+    #: Interval between the leader's polls for missing results. ``None`` in
+    #: lossless runs: nothing can go missing, and a long run must not be
+    #: given up after ``result_retries`` polls.
+    result_poll_s: float | None
     #: Polls before a missing result is given up (degraded run).
     result_retries: int
     #: Consecutive rounds a participant may miss before the ADMM coordinator
@@ -839,7 +838,9 @@ def loss_tolerance(
     still gets a positive deadline. Lossless runs (``loss_rate == 0``) get no
     round deadline unless *round_timeout* is given: the algorithms then run
     the papers' synchronous rounds and plain neighbour mixing (the running-sum
-    flows are only needed under loss). *load_timeout* overrides the default
+    flows are only needed under loss), and no result polls (a run that takes
+    longer than ``result_retries x result_poll_s`` would otherwise be given
+    up and zero-filled). *load_timeout* overrides the default
     load deadline; *max_missing_rounds* is passed to the ADMM coordinator.
     """
     base = max(float(delay_s), 1e-3)
@@ -853,7 +854,7 @@ def loss_tolerance(
         round_timeout=resolved_round_timeout,
         load_timeout=3.0 * base if load_timeout is None else float(load_timeout),
         request_timeout=3.0 * base,
-        result_poll_s=float(result_poll_s),
+        result_poll_s=float(result_poll_s) if loss_rate > 0.0 else None,
         result_retries=int(result_retries),
         max_missing_rounds=(
             None if max_missing_rounds is None else int(max_missing_rounds)
