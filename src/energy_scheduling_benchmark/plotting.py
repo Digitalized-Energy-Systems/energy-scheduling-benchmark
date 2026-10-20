@@ -6,8 +6,7 @@ CairoMakie is replaced by matplotlib.
 For scenario result output see :func:`stacked_area` (carrier-grouped stacked
 power), :func:`per_unit_small_multiples` (per-component detail as a grid of
 per-carrier subplots) and :func:`generation_vs_demand` (supply/demand balance
-diagnostic). :func:`visualize_results` is retained for ad-hoc use but is no
-longer wired into the scenarios.
+diagnostic).
 """
 
 from __future__ import annotations
@@ -15,22 +14,17 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Iterable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
-
-if TYPE_CHECKING:  # pragma: no cover
-    from mango.simulation.world import SimulationWorld
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "visualize_results",
     "stacked_area",
     "per_unit_small_multiples",
     "generation_vs_demand",
     "cost_over_time",
-    "agent_recording_as_plottable",
     "order_carriers",
     "resolve_carrier_colors",
     "CARRIER_ORDER",
@@ -192,36 +186,6 @@ def _aggregate_columns(
     if not cols:
         return np.zeros((n, 0)), []
     return np.column_stack(cols), kept
-
-
-def visualize_results(
-    world: SimulationWorld,
-    *,
-    write_to: str = "observation.pdf",
-    colormap: str = "Paired",
-    annotation: str | None = None,
-) -> Any:
-    """Render a grid of all recordings in *world* to *write_to*.
-
-    Thin wrapper around :func:`mango.simulation.visualization.plot_recordings`.
-    When *annotation* is given (e.g. a total-cost summary), it's added as a
-    figure-level suptitle and the figure is re-saved with it included.
-
-    The figure is closed after saving (matplotlib retains open pyplot figures
-    indefinitely, which leaks memory across batch runs); it is still returned
-    for callers that want to inspect it.
-    """
-    import matplotlib.pyplot as plt
-    from mango.simulation.visualization import plot_recordings
-
-    if annotation is None:
-        fig = plot_recordings(world, colormap=colormap, write_to=write_to)
-    else:
-        fig = plot_recordings(world, colormap=colormap, write_to=None)
-        fig.suptitle(annotation, fontsize=9, y=0.995)
-        fig.savefig(write_to)
-    plt.close(fig)
-    return fig
 
 
 def _dynamic_width(n_points: int) -> float:
@@ -536,39 +500,3 @@ def cost_over_time(
     fig.savefig(write_to)
     plt.close(fig)
     return fig
-
-
-def agent_recording_as_plottable(
-    world: SimulationWorld, key: str
-) -> tuple[list[float], np.ndarray, list[str]]:
-    """Convert an :class:`~mango.simulation.world.AgentsRecording` into arrays.
-
-    Returns ``(time, Y, labels)`` where ``Y`` has shape ``(len(time), n_agents)``.
-    When individual agent series have different lengths they are left-aligned
-    and truncated to the shortest length.
-    """
-    rec = world.data_agent_collections.get(key)
-    if rec is None:
-        raise KeyError(f"No agent recording for key '{key}'")
-
-    if not rec.timeseries:
-        return list(rec.time), np.zeros((0, 0)), []
-
-    min_len = min(len(v) for v in rec.timeseries.values())
-    min_len = min(min_len, len(rec.time))
-
-    labels = list(rec.timeseries.keys())
-    Y = np.zeros((min_len, len(labels)))
-    for j, aid in enumerate(labels):
-        values = rec.timeseries[aid][:min_len]
-        Y[:, j] = [_to_scalar(v) for v in values]
-
-    return list(rec.time[:min_len]), Y, labels
-
-
-def _to_scalar(value: Any) -> float:
-    """Coerce a recording cell to a scalar."""
-    if isinstance(value, (list, tuple)):
-        return float(value[0]) if value else 0.0
-    arr = np.asarray(value).ravel()
-    return float(arr[0]) if arr.size else 0.0

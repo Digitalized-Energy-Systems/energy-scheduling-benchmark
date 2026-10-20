@@ -57,7 +57,6 @@ from energy_scheduling_benchmark.scenarios._common import (
     capacity_scaled_epsilon,
     collect_generator_refs,
     generator_agent,
-    install_standard_recordings,
     install_topology,
     loss_tolerance,
     make_finish_callback,
@@ -338,9 +337,6 @@ async def execute_test_case(
         participants[0].participants = addrs
         for participant in participants[1:]:
             participant.leader = addrs[0]
-
-    # -- Recordings --
-    install_standard_recordings(world, behavior)
 
     # -- Simulate --
     async with world:

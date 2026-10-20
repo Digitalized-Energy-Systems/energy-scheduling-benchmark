@@ -47,7 +47,6 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_toy_network,
     build_world,
     collect_generator_refs,
-    install_standard_recordings,
     install_topology,
     loss_tolerance,
     participant_graph,
@@ -98,8 +97,7 @@ class UnitReporter(Role):
     and again whenever the leader asks for it (:class:`ReportRequest`).
 
     Set-points are applied by the leader through the environment's
-    ``regulate`` action, so this role has nothing else to do; it also marks
-    the agent for the ``"P"`` recording.
+    ``regulate`` action, so this role has nothing else to do.
     """
 
     def __init__(self, report: UnitReport, leader: AgentAddress) -> None:
@@ -349,8 +347,6 @@ async def execute_test_case(
         unit_agents.append(agent)
     # Unit reports and requests travel over the chosen topology.
     install_topology(world, pgraph, unit_agents, logical=[])
-
-    install_standard_recordings(world, behavior, role_cls=UnitReporter)
 
     async with world:
         await run_simulation(world, simulate_days * 24 * 3600.0)

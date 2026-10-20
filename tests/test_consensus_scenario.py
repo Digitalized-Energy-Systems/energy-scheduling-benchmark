@@ -73,6 +73,22 @@ class TestConsensusScenarioIntegration:
         demand = df.filter(like="target:").sum(axis=1)
         assert (generation - demand).abs().max() <= 0.01 * demand.max()
 
+    async def test_run_that_finishes_late_reports_every_hour(self, tmp_path):
+        """Regression: with a 200 s delay the run finishes in hour 7; hours
+        0-6 used to be written with demand 0 and the network's start-up
+        set-points instead of the schedule."""
+        frames = {}
+        for name, delay in (("fast", 0.02), ("slow", 200.0)):
+            await execute_test_case(
+                scenario=build_toy_network(periods=24),
+                delay_s=delay,
+                name_base=str(tmp_path / name),
+                simulate_days=1,
+            )
+            frames[name] = pd.read_csv(tmp_path / f"{name}-df.csv", index_col=0)
+        assert (frames["slow"].filter(like="target:").sum(axis=1) > 0).all()
+        pd.testing.assert_frame_equal(frames["slow"], frames["fast"])
+
     async def test_rejects_unstable_leader_damping(self, tmp_path):
         with pytest.raises(ValueError, match="leader_damping"):
             await execute_test_case(

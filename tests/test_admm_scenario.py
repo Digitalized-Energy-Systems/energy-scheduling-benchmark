@@ -1,6 +1,6 @@
 """Tests for the ADMM scenario.
 
-Covers unit-level helpers (_lookup_ts, _scalar, _make_finish_callback) and an
+Covers unit-level helpers (_lookup_ts, _make_finish_callback) and an
 end-to-end integration smoke test of execute_test_case on the built-in toy network.
 """
 
@@ -15,7 +15,7 @@ import pytest
 from mango_energy_environments import ComponentRef
 
 from energy_scheduling_benchmark.networks import ScenarioData, build_toy_network
-from energy_scheduling_benchmark.scenarios._common import _lookup_ts, _scalar
+from energy_scheduling_benchmark.scenarios._common import _lookup_ts
 from energy_scheduling_benchmark.scenarios.admm import (
     _make_finish_callback,
     execute_test_case,
@@ -51,25 +51,6 @@ class TestLookupTs:
         assert (
             _lookup_ts(self._scenario({ref: ts}), ComponentRef("thermal", "g1")) is None
         )
-
-
-class TestScalar:
-    """_scalar extracts the first element of an array-like as a float."""
-
-    def test_single_element_array(self):
-        assert _scalar(np.array([3.14])) == pytest.approx(3.14)
-
-    def test_plain_float(self):
-        assert _scalar(5.0) == pytest.approx(5.0)
-
-    def test_empty_array_returns_zero(self):
-        assert _scalar(np.array([])) == pytest.approx(0.0)
-
-    def test_takes_first_element_only(self):
-        assert _scalar(np.array([7.0, 8.0, 9.0])) == pytest.approx(7.0)
-
-    def test_two_dimensional_array(self):
-        assert _scalar(np.array([[4.0, 5.0]])) == pytest.approx(4.0)
 
 
 class TestMakeFinishCallback:

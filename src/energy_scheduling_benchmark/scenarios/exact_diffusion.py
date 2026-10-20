@@ -60,7 +60,6 @@ from energy_scheduling_benchmark.scenarios._common import (
     capacity_scaled_epsilon,
     collect_generator_refs,
     generator_agent,
-    install_standard_recordings,
     install_topology,
     loss_tolerance,
     make_finish_callback,
@@ -358,9 +357,6 @@ async def execute_test_case(
     # Exact Diffusion requires a degree-regular graph (all nodes share the
     # same degree); the complete topology satisfies this trivially.
     install_topology(world, pgraph, gen_agents)
-
-    # -- Recordings --
-    install_standard_recordings(world, behavior)
 
     # -- Simulate --
     async with world:

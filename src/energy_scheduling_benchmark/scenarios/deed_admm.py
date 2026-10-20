@@ -57,7 +57,6 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_world,
     collect_generator_refs,
     generator_agent,
-    install_standard_recordings,
     install_topology,
     loss_tolerance,
     make_finish_callback,
@@ -310,11 +309,6 @@ async def execute_test_case(
 
     # Fully-connected peer topology across all generator agents.
     install_topology(world, pgraph, gen_agents)
-
-    # ------------------------------------------------------------------
-    # Recordings
-    # ------------------------------------------------------------------
-    install_standard_recordings(world, behavior)
 
     # ------------------------------------------------------------------
     # Simulate

@@ -16,7 +16,11 @@ import sys
 # ensures the correct package is loaded regardless of CWD.
 # ---------------------------------------------------------------------------
 _path_finder_idx = next(
-    (i for i, f in enumerate(sys.meta_path) if getattr(f, "__name__", "") == "PathFinder"),
+    (
+        i
+        for i, f in enumerate(sys.meta_path)
+        if getattr(f, "__name__", "") == "PathFinder"
+    ),
     None,
 )
 for _ef in list(sys.meta_path):
@@ -28,5 +32,3 @@ for _ef in list(sys.meta_path):
     sys.meta_path.remove(_ef)
     sys.meta_path.insert(_path_finder_idx if _path_finder_idx is not None else 0, _ef)
     break
-
-

@@ -70,5 +70,7 @@ class TestExecuteTestCase:
     async def test_runs_under_message_loss(self, tmp_path):
         """A lost unit report is requested again (mango gather), so with 5%
         message loss the LP still solves with every unit and balances."""
-        df = await self._run(tmp_path, delay_s=0.02, loss_rate=0.05, seed=1, strict=True)
+        df = await self._run(
+            tmp_path, delay_s=0.02, loss_rate=0.05, seed=1, strict=True
+        )
         assert len(df) == 24

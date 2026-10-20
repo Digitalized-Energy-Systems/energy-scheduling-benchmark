@@ -16,7 +16,7 @@ This package is the Python re-implementation of
   economic dispatch.
 * :func:`solve_multiperiod_dispatch` — full-horizon LP with SOC-constrained
   storage, used by the central-dispatch scenario.
-* :func:`stacked_area`, :func:`visualize_results` — matplotlib plotting
+* :func:`stacked_area` — matplotlib plotting
   utilities (replace CairoMakie).
 * Runnable scenarios in :mod:`energy_scheduling_benchmark.scenarios`.
 """
@@ -47,7 +47,6 @@ from .plotting import (
     generation_vs_demand,
     per_unit_small_multiples,
     stacked_area,
-    visualize_results,
 )
 
 __all__ = [
@@ -65,7 +64,6 @@ __all__ = [
     "stacked_area",
     "per_unit_small_multiples",
     "generation_vs_demand",
-    "visualize_results",
     "ScenarioData",
     "available_examples",
     "build_toy_network",

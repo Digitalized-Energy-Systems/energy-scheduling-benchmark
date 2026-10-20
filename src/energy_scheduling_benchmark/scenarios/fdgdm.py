@@ -75,7 +75,6 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_world,
     collect_generator_refs,
     generator_agent,
-    install_standard_recordings,
     install_topology,
     loss_tolerance,
     make_finish_callback,
@@ -551,12 +550,6 @@ async def execute_test_case(
 
     install_topology(world, pgraph, gen_agents)
 
-    # -- Recordings --
-    # "P" is clipped at recording time (max(0, ...)) so storage in charging
-    # mode (negative p_set) does not appear as a downward bar in the stacked
-    # generation plot; compute_overall_cost also clips before costing.
-    install_standard_recordings(world, behavior, clip_negative=True)
-
     # -- Simulate --
     # Run until just past the LAST snapshot inside the window (index
     # simulate_days*24-1). Since _clip_scenario trims the timeseries before
@@ -567,14 +560,11 @@ async def execute_test_case(
         await run_simulation(world, sim_end_s)
 
     # -- Output --
-    # No clip_target_to_p: the simulation window already ends exactly on the
-    # last snapshot, so "P" and "target" are never mismatched in length here.
     write_scenario_outputs(
         world,
         name_base=name_base,
         cost_by_aid=cost_by_aid,
         cost_quad_by_aid=cost_quad_by_aid,
-        clip_target_to_p=False,
         aggregator=aggregator,
         balance_tol=balance_tol,
         strict=strict,

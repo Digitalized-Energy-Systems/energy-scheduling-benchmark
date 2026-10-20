@@ -1,6 +1,6 @@
 """Tests for the FDGDM scenario.
 
-Covers unit-level helpers (_scalar, make_finish_callback) and an
+Covers unit-level helpers (make_finish_callback) and an
 end-to-end integration smoke test of execute_test_case on the built-in toy network.
 """
 
@@ -17,8 +17,6 @@ import pytest
 from energy_scheduling_benchmark.networks import ScenarioData, build_toy_network
 from energy_scheduling_benchmark.scenarios._common import (
     GeneratorResultRole,
-    _keep_hourly,
-    _scalar,
     make_finish_callback,
 )
 from energy_scheduling_benchmark.scenarios.fdgdm import (
@@ -36,25 +34,6 @@ _make_finish_callback = partial(
     algorithm_label="FDGDM",
     schedule_attr="actor.P",
 )
-
-
-class TestScalar:
-    """_scalar extracts the first element of an array-like as a float."""
-
-    def test_single_element_array(self):
-        assert _scalar(np.array([3.14])) == pytest.approx(3.14)
-
-    def test_plain_float(self):
-        assert _scalar(5.0) == pytest.approx(5.0)
-
-    def test_empty_array_returns_zero(self):
-        assert _scalar(np.array([])) == pytest.approx(0.0)
-
-    def test_takes_first_element_only(self):
-        assert _scalar(np.array([7.0, 8.0, 9.0])) == pytest.approx(7.0)
-
-    def test_two_dimensional_array(self):
-        assert _scalar(np.array([[4.0, 5.0]])) == pytest.approx(4.0)
 
 
 class TestMakeFinishCallback:
@@ -329,43 +308,6 @@ class TestCapacityProportionalAllocation:
         allocs = _capacity_proportional_allocation(target, p_max, p_min)
         assert np.allclose(sum(allocs), target)
         assert np.allclose(allocs[0], allocs[1])
-
-
-# ---------------------------------------------------------------------------
-# _keep_hourly unit tests
-# ---------------------------------------------------------------------------
-
-
-class TestKeepHourly:
-    """_keep_hourly retains the last sample within each hour bucket."""
-
-    def test_empty_input_returns_empty(self):
-        t_out, Y_out = _keep_hourly([], np.zeros((0, 2)))
-        assert len(t_out) == 0
-
-    def test_one_sample_per_hour_unchanged(self):
-        t = [0.0, 3600.0, 7200.0]
-        Y = np.array([[1.0], [2.0], [3.0]])
-        t_out, Y_out = _keep_hourly(t, Y)
-        assert np.allclose(t_out, t)
-        assert np.allclose(Y_out, Y)
-
-    def test_last_sample_kept_per_bucket(self):
-        # Two samples per hour; last one should survive.
-        t = [100.0, 3500.0, 3700.0, 7100.0]
-        Y = np.array([[1.0], [2.0], [3.0], [4.0]])
-        t_out, Y_out = _keep_hourly(t, Y)
-        # bucket 0 → last of [100, 3500] → index 1 (value 2)
-        # bucket 1 → last of [3700, 7100] → index 3 (value 4)
-        assert np.allclose(t_out, [3500.0, 7100.0])
-        assert np.allclose(Y_out, [[2.0], [4.0]])
-
-    def test_preserves_multiple_agents(self):
-        t = [0.0, 500.0]
-        Y = np.array([[1.0, 10.0], [2.0, 20.0]])
-        t_out, Y_out = _keep_hourly(t, Y)
-        assert np.allclose(t_out, [500.0])
-        assert np.allclose(Y_out, [[2.0, 20.0]])
 
 
 class TestEq24Stopping:

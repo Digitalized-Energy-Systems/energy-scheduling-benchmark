@@ -34,7 +34,6 @@ from distributed_resource_optimization.carrier.mango import (
     RoleLocalMessage,
 )
 from mango import Role, auto_assign, complete_topology, graph_topology, sender_addr
-from mango.simulation.world import record_agent_having
 from mango_energy_environments.environments.scheduling.topology import (
     TOPOLOGIES,
     TopologyCommunicationSimulation,
@@ -58,9 +57,7 @@ from energy_scheduling_benchmark.networks import (
     build_toy_network,
     load_scenario,
 )
-from energy_scheduling_benchmark.plotting import _to_scalar as _scalar
 from energy_scheduling_benchmark.plotting import (
-    agent_recording_as_plottable,
     cost_over_time,
     generation_vs_demand,
     order_carriers,
@@ -81,9 +78,6 @@ __all__ = [
     "resolve_loss_rate",
     "_clip_scenario",
     "_lookup_ts",
-    "_scalar",
-    "_keep_hourly",
-    "_write_agent_recordings_csv",
     "compute_overall_cost",
     "compute_slack",
     "SlackSpec",
@@ -101,7 +95,6 @@ __all__ = [
     "capacity_scaled_epsilon",
     "EpsilonScaling",
     "StorageParams",
-    "install_standard_recordings",
     "write_scenario_outputs",
     "run_scenario_main",
     "PowerLoadInfo",
@@ -710,7 +703,7 @@ class StorageParams:
     ) -> StorageParams:
         p_min_pu = float(statics.get("p_min_pu", -1.0))
         p_max_pu = float(statics.get("p_max_pu", 1.0))
-        p_charge_max = max(0.0, (-p_min_pu * p_nom) if p_min_pu < 0.0 else p_nom)
+        p_charge_max = max(0.0, -p_min_pu * p_nom)  # p_min_pu >= 0: cannot charge
         p_discharge_max = max(0.0, p_max_pu * p_nom)
 
         max_hours = float(statics.get("max_hours", default_max_hours))
@@ -869,121 +862,25 @@ def _lookup_ts(scenario: ScenarioData, ref: Any) -> Any | None:
     return scenario.timeseries.get(ref)
 
 
-def _keep_hourly(
-    t_list: list | np.ndarray,
-    Y_arr: np.ndarray,
-    step_s: float = 3600.0,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return the last recorded state per hourly snapshot, dropping sub-second noise.
-
-    A "P"/"target" recording ticks on every discrete-event step (report/solve/
-    dispatch round-trips, retries, per-iteration peer rounds), not just once
-    per snapshot. Applying this before plotting keeps stacked-area/cost-over-
-    time charts showing one point per hour instead of intra-hour convergence
-    noise — the same bucket-and-keep-last logic :func:`compute_overall_cost`
-    already applies internally to its own return value.
-    """
-    if len(t_list) == 0:
-        return np.asarray(t_list), Y_arr
-    t = np.asarray(t_list, dtype=float)
-    buckets = (t // step_s).astype(int)
-    # last index of each unique bucket (reverse → find-first → un-reverse)
-    _, first_in_rev = np.unique(buckets[::-1], return_index=True)
-    last_idx = np.sort(len(t) - 1 - first_in_rev)
-    return t[last_idx], Y_arr[last_idx]
-
-
-def _write_agent_recordings_csv(
-    world: Any,
-    path: str,
-    snapshot_step_s: float = 0.0,
-    extra: pd.Series | pd.DataFrame | None = None,
-) -> None:
-    """Write all per-agent recordings to a single wide CSV.
-
-    When *snapshot_step_s* > 0, only the last recorded state per time bucket is
-    kept (e.g. one row per hour), dropping sub-second convergence-phase noise
-    from algorithms that iterate on the simulation clock (see FDGDM).
-
-    *extra*, if given, is one or more additional columns (e.g. the per-timestep
-    total cost from :func:`compute_overall_cost`, plus the slack columns)
-    merged in on the time index.
-    """
-    frames: list[pd.DataFrame] = []
-    for key, rec in world.data_agent_collections.items():
-        if not rec.timeseries:
-            continue
-        length = min([len(rec.time)] + [len(v) for v in rec.timeseries.values()])
-        data = {
-            f"{key}:{aid}": [_scalar(v) for v in values[:length]]
-            for aid, values in rec.timeseries.items()
-        }
-        data["time"] = rec.time[:length]
-        frames.append(pd.DataFrame(data).set_index("time"))
-
-    if not frames:
-        pd.DataFrame().to_csv(path)
-        return
-
-    df = pd.concat(frames, axis=1)
-
-    if snapshot_step_s > 0 and not df.empty:
-        # Deliberately not routed through _keep_hourly: this df is a
-        # multi-column, outer-joined frame where different agents' columns
-        # tick at different raw timestamps, so many cells in any given row are
-        # already NaN. groupby(...).last() keeps each column's own last
-        # non-null value per bucket; picking one row index per bucket (as
-        # _keep_hourly does for a single (t, Y) series) would instead drop
-        # columns that simply didn't tick on that bucket's literal last row.
-        bucket = (df.index.to_series() // snapshot_step_s).astype(int)
-        df = df.groupby(bucket.values).last()
-        df.index.name = "time"
-
-    if extra is not None:
-        if snapshot_step_s > 0:
-            # *extra*'s index is raw seconds too (e.g. from a "P" recording
-            # already de-duplicated to one sample per bucket) — rebucket it
-            # the same way so it lines up with df's now-bucketed integer index
-            # instead of joining on raw timestamps that no longer appear there.
-            bucket = (extra.index.to_series() // snapshot_step_s).astype(int)
-            extra = extra.set_axis(bucket.values)
-        df = df.join(extra, how="outer")
-
-    df.to_csv(path)
-
-
 def compute_overall_cost(
     cost_by_aid: dict[str, float],
     t_P: Sequence[float],
     Y_P: np.ndarray,
     labels_P: Sequence[str],
-    step_s: float = 3600.0,
     cost_quad_by_aid: dict[str, float] | None = None,
 ) -> tuple[float, pd.Series]:
-    """Total linear cost of a "P" recording: sum_t sum_i cost_by_aid[aid_i] * P_i(t).
+    """Total cost of an hourly dispatch: Σ_t Σ_i cost_by_aid[aid_i] · P_i(t).
 
-    A "P" recording ticks on every discrete-event step, not just once per
-    snapshot — e.g. an iterative algorithm's message rounds record the same
-    settled dispatch several times per hour. Summing those raw
-    ticks would multiply-count the same dispatch decision, so *t_P*/*Y_P* are
-    first collapsed to one (the last) sample per *step_s* bucket, same as
-    FDGDM's own de-duplication for its plots.
-
-    Negative recorded power (storage charging) is clipped to zero before
-    weighting: charging is not credited as negative cost at the unit's own
-    marginal cost, so scenarios that record raw charging power (consensus,
-    ADMM, diffusion, DEED-ADMM) and FDGDM (which clamps its "P" recording to
-    ``max(0, ·)``) produce comparable totals.
+    *t_P* / *Y_P* hold one row per hour (see
+    :meth:`PowerLoadAggregator.hourly_dispatch`). Negative power (storage
+    charging) is clipped to zero before weighting: charging is not credited
+    as negative cost, and storage pays its cost on discharge only (Q15).
 
     Returns ``(total, per_step)`` where *per_step* is a ``"cost:total"``
-    series indexed by the de-duplicated *t_P*, suitable for merging into the
-    recordings CSV via :func:`_write_agent_recordings_csv`'s ``extra``
-    parameter.
+    series indexed by *t_P*, merged into the CSV by
+    :func:`write_scenario_outputs`.
     """
     t_arr = np.asarray(t_P, dtype=float)
-    if step_s > 0 and t_arr.size:
-        t_arr, Y_P = _keep_hourly(t_arr, Y_P, step_s)
-
     cost_vec = np.array([cost_by_aid.get(aid, 0.0) for aid in labels_P])
     dispatched = np.maximum(Y_P, 0.0)
     step_cost = (dispatched * cost_vec).sum(axis=1)
@@ -1015,8 +912,7 @@ def _slack_columns(
 ) -> tuple[pd.DataFrame, pd.Series]:
     """Slack import/export and their cost on the hourly rows *t_index*.
 
-    Uses the aggregator's applied schedules, not the "P" recordings: FDGDM
-    clips its recording at zero, which would hide storage charging.
+    From the aggregator's applied schedules (storage charging included).
     """
     by_bucket = aggregator.slack_by_bucket(step_s)
     rows = [by_bucket.get(int(t // step_s), (0.0, 0.0)) for t in t_index]
@@ -1451,9 +1347,8 @@ class PowerLoadAggregator(Role):
     Message loss (all optional; without loss none of it changes a run):
 
     * *load_timeout*: every hour is applied at the latest *load_timeout*
-      seconds after it starts, even if load reports are missing; a missing
-      load counts with its last reported value (the hour's forecast total if
-      a load never reported).
+      seconds after it starts, even if load reports are missing (counted in
+      :attr:`hours_with_missing_loads`).
     * *trigger_addr_is_generator*: the kick-off is a :class:`KickOff` request
       to the trigger generator's :class:`GeneratorResultRole`, retried (mango
       ``gather``) until acknowledged; *start_locally* instead starts a run on
@@ -1533,12 +1428,11 @@ class PowerLoadAggregator(Role):
 
         self._ready: bool = False
         self._finished_aids: set[str] = set()
-        self._pending: dict[int, float] = {}
+        self._pending: set[int] = set()
 
-        self.demand_map: dict[Any, dict[Any, float]] = {}
+        #: Per hour (simulation seconds): the loads that reported it.
+        self.demand_map: dict[Any, set[Any]] = {}
         self._closed_times: set[Any] = set()
-        self._last_load: dict[Any, float] = {}
-        self.target: float = 0.0  # recorded by the world for plotting
         #: Largest per-timestep |Σ schedules − demand| / demand after the
         #: optimization finished; ``None`` until verified (or if no
         #: ``demand_target`` was supplied).
@@ -1692,8 +1586,7 @@ class PowerLoadAggregator(Role):
 
     # -- applying the schedule -------------------------------------------------
 
-    def _apply_schedule_index(self, idx: int, target_total: float) -> None:
-        self.target = float(target_total)
+    def _apply_schedule_index(self, idx: int) -> None:
         for aid in self._generator_aids:
             schedule = self._schedule_by_aid.get(aid)
             if schedule is None:
@@ -1723,7 +1616,7 @@ class PowerLoadAggregator(Role):
             self._ready = True
             self._verify_balance()
             for idx in sorted(self._pending):
-                self._apply_schedule_index(idx, self._pending[idx])
+                self._apply_schedule_index(idx)
             self._pending.clear()
 
     @property
@@ -1803,6 +1696,32 @@ class PowerLoadAggregator(Role):
             total[:n] += arr[:n]
         return self._demand_target - total
 
+    def hourly_dispatch(self) -> tuple[np.ndarray, np.ndarray, list[str], np.ndarray]:
+        """``(seconds, P, aids, demand)`` per hour from the final schedules.
+
+        Not from the simulation's recordings: an hour that starts before the
+        distributed run finishes is applied late, in the same instant as the
+        others, so a recording never shows its set-point. Missing or short
+        schedules count as zero output.
+        """
+        times = sorted(self._time_to_index, key=self._time_to_index.get)
+        idx = np.array([self._time_to_index[t] for t in times], dtype=int)
+        aids = list(self._generator_aids)
+        P = np.zeros((idx.size, len(aids)))
+        for j, aid in enumerate(aids):
+            schedule = self._schedule_by_aid.get(aid)
+            if schedule is None:
+                continue
+            arr = np.asarray(schedule, dtype=float).ravel()
+            ok = idx < arr.size
+            P[ok, j] = arr[idx[ok]]
+        demand = (
+            np.zeros(idx.size)
+            if self._demand_target is None
+            else self._demand_target[idx]
+        )
+        return np.asarray(times, dtype=float), P, aids, demand
+
     def slack_by_bucket(self, step_s: float = 3600.0) -> dict[int, tuple[float, float]]:
         """Slack ``(import, export)`` MW per simulation-time bucket.
 
@@ -1823,47 +1742,32 @@ class PowerLoadAggregator(Role):
     def _handle_load_info(self, message: PowerLoadInfo, meta: dict) -> None:
         sender = sender_addr(meta).aid if meta else None
         key = sender if sender is not None else object()  # unknown sender: own slot
-        self._last_load[key] = float(message.power_load)
         time = round(float(message.time), 6)
         if time in self._closed_times:
-            return  # hour already applied (at its deadline); keep the value only
-        bucket = self.demand_map.setdefault(time, {})
-        bucket.setdefault(key, float(message.power_load))
-        if len(bucket) != self.number_loads:
+            return  # hour already applied (at its deadline)
+        reported = self.demand_map.setdefault(time, set())
+        reported.add(key)
+        if len(reported) != self.number_loads:
             return  # wait until all loads report for this timestep (or the deadline)
-        self._close_hour(time, float(sum(bucket.values())))
+        self._close_hour(time)
 
     async def _close_hour_at_deadline(self, time: Any) -> None:
         if time in self._closed_times:
             return
-        bucket = self.demand_map.get(time, {})
-        missing = self.number_loads - len(bucket)
-        if missing <= 0:
+        if len(self.demand_map.get(time, ())) >= self.number_loads:
             return
         self.hours_with_missing_loads += 1
-        known_others = [v for k, v in self._last_load.items() if k not in bucket]
-        idx = self._time_to_index.get(time)
-        if len(known_others) >= missing:
-            total = float(sum(bucket.values())) + float(sum(known_others[:missing]))
-        elif idx is not None and self._demand_target is not None:
-            total = float(self._demand_target[idx])  # a load never reported
-        else:
-            total = float(sum(bucket.values()))
-        self._close_hour(time, total)
+        self._close_hour(time)
 
-    def _close_hour(self, time: Any, total: float) -> None:
+    def _close_hour(self, time: Any) -> None:
         self._closed_times.add(time)
         idx = self._time_to_index.get(time)
         if idx is None:
             return
-
         if self._ready:
-            self._apply_schedule_index(idx, total)
+            self._apply_schedule_index(idx)
         else:
-            # Optimization run is still in progress; remember what we need to
-            # apply once the schedule is available. Do not update self.target
-            # yet — that keeps P and target aligned in recordings.
-            self._pending[idx] = total
+            self._pending.add(idx)  # applied once the schedule is available
 
 
 def make_finish_callback(
@@ -1936,49 +1840,6 @@ def make_finish_callback(
         )
 
     return handle_finished
-
-
-# ---------------------------------------------------------------------------
-# Recordings + output
-# ---------------------------------------------------------------------------
-
-
-def install_standard_recordings(
-    world: Any,
-    behavior: PyPSABehavior,
-    *,
-    role_cls: type = DistributedOptimizationRole,
-    clip_negative: bool = False,
-) -> None:
-    """Record the leader's ``"target"`` and each generator's ``"P"`` per timestep.
-
-    ``"target"`` is summed by :func:`write_scenario_outputs`; ``"P"`` is
-    summed by :func:`compute_overall_cost`, which itself clips negative
-    values (storage charging) to 0 before costing. *clip_negative* additionally
-    clips at recording time (FDGDM's convention), so a negative set-point
-    never shows as a downward bar in the stacked generation plot either.
-
-    :param role_cls: Role class each generator's "P" is recorded from —
-        must be (a subclass of) :class:`DistributedOptimizationRole`.
-    """
-    record_agent_having(
-        world,
-        "target",
-        PowerLoadAggregator,
-        lambda a: next(
-            (r.target for r in a.roles if isinstance(r, PowerLoadAggregator)), 0.0
-        ),
-    )
-    if clip_negative:
-
-        def _extract(a: Any) -> float:
-            return max(0.0, float(behavior.observe(a.aid, "active_power") or 0.0))
-    else:
-
-        def _extract(a: Any) -> float:
-            return float(behavior.observe(a.aid, "active_power") or 0.0)
-
-    record_agent_having(world, "P", role_cls, _extract)
 
 
 def _run_meta(world: Any, aggregator: Any, total_cost: float) -> dict[str, Any]:
@@ -2067,8 +1928,7 @@ def write_scenario_outputs(
     cost_by_aid: dict[str, float],
     stacked_title: str = "Stacked power",
     cost_title: str = "Cost per timestep",
-    clip_target_to_p: bool = True,
-    aggregator: PowerLoadAggregator | None = None,
+    aggregator: PowerLoadAggregator,
     balance_tol: float | None = None,
     strict: bool = False,
     group_map: dict[str, str] | None = None,
@@ -2079,31 +1939,25 @@ def write_scenario_outputs(
 ) -> float:
     """Write the standard scenario result files and return the total cost.
 
-    Shared by every scenario: read back the "P"/"target" recordings
-    installed by :func:`install_standard_recordings`, collapse them to one
-    sample per hour, compute the overall cost, then emit
+    Shared by every scenario: take one row per hour from the schedules
+    *aggregator* applied (:meth:`PowerLoadAggregator.hourly_dispatch`),
+    compute the overall cost, then emit
     ``<name_base>-{df.csv,stacked.pdf,observation.pdf,balance.pdf,cost.pdf}``:
 
-    * ``df.csv`` — every per-agent recording, one row per hourly snapshot
-      (consumed by ``compare_costs.py``).
+    * ``df.csv`` — ``target:``/``P:`` columns plus cost (and slack), one row
+      per hourly snapshot (consumed by ``compare_costs.py``).
     * ``stacked.pdf`` — generation stacked by carrier, with the demand target.
     * ``observation.pdf`` — per-unit power as a grid of per-carrier subplots.
     * ``balance.pdf`` — total generation vs demand + residual.
     * ``cost.pdf`` — dispatch cost per timestep.
 
-    :param clip_target_to_p: Truncate ``P``/``target`` to the shorter of the
-        two lengths before costing/plotting (every scenario except FDGDM
-        does this; FDGDM's simulation window already ends exactly on its
-        last snapshot, so the two recordings are never mismatched there).
-    :param aggregator: When given together with *strict*, raise instead of
-        writing outputs if ``aggregator.balance_max_rel_gap`` exceeds
-        *balance_tol* -- or was never computed at all (the schedule never
-        finished), which is just as much a failure as an out-of-tolerance
-        gap. Callers with a ``PowerLoadAggregator``-based balance check
-        should pass this instead of hand-rolling the same raise.
+    :param aggregator: The scenario's leader role; its schedules are the
+        output. With *strict*, raise instead of writing outputs if
+        ``aggregator.balance_max_rel_gap`` exceeds *balance_tol* -- or was
+        never computed at all (the schedule never finished), which is just
+        as much a failure as an out-of-tolerance gap.
     :param balance_tol: Tolerance to compare *aggregator*'s gap against;
-        required (and otherwise ignored) when *aggregator* and *strict* are
-        both given.
+        required (and otherwise ignored) with *strict*.
     :param group_map: ``component_id -> carrier`` (see
         :func:`build_group_map`) used to aggregate the plots into carrier
         bands. Without it every component is its own group.
@@ -2114,20 +1968,15 @@ def write_scenario_outputs(
         ``max(0, demand − Σ schedules)`` and exports ``max(0, Σ schedules −
         demand)`` (from *aggregator*'s applied schedules), adds both at their
         prices to ``cost:total`` and writes ``slack:import``/``slack:export``
-        (MW) to the CSV. Requires *aggregator*; cannot be combined with
-        *strict*.
+        (MW) to the CSV. Cannot be combined with *strict*.
     :raises RuntimeError: If *strict* is set and the balance check failed or
         never ran.
-    :raises ValueError: If *slack* is given without *aggregator*, or with
-        *strict*.
+    :raises ValueError: If *slack* is given with *strict*.
     :returns: The total cost (same value logged and used in the annotation).
     """
-    if slack is not None:
-        if aggregator is None:
-            raise ValueError("slack requires the scenario's aggregator.")
-        if strict:
-            raise ValueError("slack cannot be combined with strict.")
-    if aggregator is not None and not aggregator.ready:
+    if slack is not None and strict:
+        raise ValueError("slack cannot be combined with strict.")
+    if not aggregator.ready:
         # Without this a run whose optimization never finished (e.g. a
         # participant's last messages were lost) wrote outputs silently: no
         # schedule was ever applied and the target column stayed at 0.
@@ -2140,7 +1989,7 @@ def write_scenario_outputs(
             len(missing),
             ", ".join(missing) or "(unknown)",
         )
-    if aggregator is not None and strict:
+    if strict:
         gap = aggregator.balance_max_rel_gap
         if gap is None:
             raise RuntimeError(
@@ -2156,18 +2005,7 @@ def write_scenario_outputs(
                 "outputs because --strict was given."
             )
 
-    t_P, Y_P, labels_P = agent_recording_as_plottable(world, "P")
-    t_t, Y_t, _ = agent_recording_as_plottable(world, "target")
-
-    # Drop sub-second convergence-phase noise (iterative algorithms tick
-    # multiple times per hour): keep the last recorded state per hourly
-    # snapshot so the CSV and plots show one row per PyPSA timestep.
-    t_P, Y_P = _keep_hourly(t_P, Y_P)
-    t_t, Y_t = _keep_hourly(t_t, Y_t)
-    target_series = Y_t[:, 0] if Y_t.size else np.zeros(len(t_P))
-    if clip_target_to_p:
-        m = min(len(t_P), len(target_series))
-        t_P, Y_P, target_series = t_P[:m], Y_P[:m], target_series[:m]
+    t_P, Y_P, labels_P, target_series = aggregator.hourly_dispatch()
 
     total_cost, cost_series = compute_overall_cost(
         cost_by_aid, t_P, Y_P, labels_P, cost_quad_by_aid=cost_quad_by_aid
@@ -2194,9 +2032,12 @@ def write_scenario_outputs(
     annotation = f"Total cost: {total_cost:,.2f}{slack_note}"
     suffix = f" – {label}" if label else ""
 
-    _write_agent_recordings_csv(
-        world, f"{name_base}-df.csv", snapshot_step_s=3600.0, extra=extra
-    )
+    df = pd.DataFrame(Y_P, index=t_P, columns=[f"P:{aid}" for aid in labels_P])
+    df.insert(0, f"target:{aggregator.context.aid}", target_series)
+    df = df.join(extra)
+    df.index = (df.index // 3600.0).astype(int)
+    df.index.name = "time"
+    df.to_csv(f"{name_base}-df.csv")
     with open(f"{name_base}-meta.json", "w", encoding="utf-8") as f:
         json.dump(_run_meta(world, aggregator, total_cost), f, indent=2, default=str)
 

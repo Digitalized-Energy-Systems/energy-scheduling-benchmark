@@ -53,7 +53,6 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_toy_network,
     build_world,
     collect_generator_refs,
-    install_standard_recordings,
     install_topology,
     loss_tolerance,
     participant_graph,
@@ -346,9 +345,6 @@ async def execute_test_case(
     # The coordinator (on the leader) reaches every participant; its
     # messages travel over the chosen topology.
     install_topology(world, pgraph, gen_agents, logical=all_opt_agents)
-
-    # --- Recordings ---
-    install_standard_recordings(world, behavior, role_cls=ADMMGeneratorRole)
 
     # --- Run simulation ---
     async with world:

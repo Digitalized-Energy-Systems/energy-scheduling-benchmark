@@ -10,6 +10,7 @@ from energy_scheduling_benchmark import THERMAL, ComponentRef
 from energy_scheduling_benchmark.networks import build_toy_network
 from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadAggregator,
+    StorageParams,
     _clip_scenario,
     build_group_map,
     build_p_max_vec,
@@ -62,6 +63,17 @@ class TestBuildPMaxVec:
         np.testing.assert_allclose(p_max, [871.0] * 3)
 
 
+class TestStorageParams:
+    def test_discharge_only_unit_cannot_charge(self):
+        # PyPSA p_min_pu = 0 (e.g. hydro): no charging, not p_nom.
+        sp = StorageParams.from_statics({"p_min_pu": 0.0, "p_max_pu": 1.0}, 100.0)
+        assert sp.p_charge_max == 0.0
+        assert sp.p_discharge_max == 100.0
+
+    def test_default_charges_at_p_nom(self):
+        assert StorageParams.from_statics({}, 100.0).p_charge_max == 100.0
+
+
 class TestComputeOverallCost:
     def test_sums_cost_weighted_power(self):
         t = [0.0, 3600.0]
@@ -69,14 +81,6 @@ class TestComputeOverallCost:
         total, per_step = compute_overall_cost({"a": 2.0, "b": 4.0}, t, Y, ["a", "b"])
         assert per_step.tolist() == [40.0, 40.0]
         assert total == pytest.approx(80.0)
-
-    def test_deduplicates_to_last_sample_per_hour(self):
-        # Two samples in hour 0 → only the last (2.0) counts.
-        t = [0.0, 100.0, 3600.0]
-        Y = np.array([[1.0], [2.0], [3.0]])
-        total, per_step = compute_overall_cost({"a": 1.0}, t, Y, ["a"])
-        assert per_step.tolist() == [2.0, 3.0]
-        assert total == pytest.approx(5.0)
 
     def test_negative_power_not_credited(self):
         """Storage charging (negative recorded power) must not reduce the total."""
