@@ -602,13 +602,22 @@ def build_p_max_vec(
     *ref* has no timeseries; a timeseries overrides it, as in PyPSA.
     The timeseries is a per-unit availability (``generators_t.p_max_pu``,
     PyPSA convention) and is scaled by ``p_nom`` — for thermal units too
-    (e.g. scigrid-de's wind units, classified thermal by carrier).
+    (e.g. scigrid-de's wind units, classified thermal by carrier) — except
+    where ``extract_timeseries`` fell back to ``generators_t.p_set``, in MW.
     """
     p_nom = float(statics.get("p_nom", 0.0))
     ts = _lookup_ts(scenario, ref)
     if ts is None:
         return np.full(horizon, p_nom * float(statics.get("p_max_pu", 1.0)))
-    return np.asarray(ts.reindex(time_index), dtype=float) * p_nom
+    values = np.asarray(ts.reindex(time_index), dtype=float)
+    gens_t = getattr(scenario.net, "generators_t", None)
+    cid = ref.component_id
+    in_mw = (
+        gens_t is not None
+        and cid in getattr(gens_t, "p_set", pd.DataFrame()).columns
+        and cid not in getattr(gens_t, "p_max_pu", pd.DataFrame()).columns
+    )
+    return values if in_mw else values * p_nom
 
 
 @dataclass

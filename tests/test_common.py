@@ -54,6 +54,22 @@ class TestBuildPMaxVec:
         p_max = build_p_max_vec(scenario, ref, {"p_nom": 400.0}, index, 3)
         np.testing.assert_allclose(p_max, [400.0, 200.0, 0.0])
 
+    def test_p_set_series_is_already_in_mw(self):
+        # extract_timeseries falls back to generators_t.p_set (MW) when a
+        # unit has no p_max_pu series; it must not be scaled by p_nom again.
+        from energy_scheduling_benchmark.networks import load_scenario
+
+        net = build_toy_network(periods=3).net
+        net.generators_t.p_set = pd.DataFrame(
+            {"thermal0": [80.0, 60.0, 40.0]}, index=net.snapshots
+        )
+        scenario = load_scenario(net)
+        ref = ComponentRef(THERMAL, "thermal0")
+        p_max = build_p_max_vec(
+            scenario, ref, {"p_nom": 100.0}, net.snapshots, len(net.snapshots)
+        )
+        np.testing.assert_allclose(p_max, [80.0, 60.0, 40.0])
+
     def test_static_p_max_pu_caps_units_without_timeseries(self):
         scenario = build_toy_network(periods=3)
         index = next(iter(scenario.timeseries.values())).index
