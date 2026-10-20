@@ -231,12 +231,12 @@ ESB_DRY_RUN=1 energy-scheduling-benchmark/hpc/submit_sweep.sh hpc-manifests/<sta
 energy-scheduling-benchmark/hpc/submit_sweep.sh hpc-manifests/<stamp>
 ```
 
-Dimensions per network: topology {complete, ring, grid} × cost model {linear,
+Dimensions per network: topology {complete, ring} × cost model {linear,
 quadratic} × slack {off, on} × days {1, 3, 7} × loss {0, 0.01, 0.05, 0.1}; loss 0
 runs once plus one determinism repeat, every loss > 0 cell with 5 seeds. Central
 dispatch has no topology and no loss, so it runs on `complete` at loss 0 only. With
-the 7 bundled networks that is **25,872 runs** (4,284 per distributed scenario, 168
-central dispatch, 2026-10-19). Every run writes `results/<network>/<run_id>-*`
+the 7 bundled networks that is **17,304 runs** (2,856 per distributed scenario, 168
+central dispatch, 2026-10-20). Every run writes `results/<network>/<run_id>-*`
 including `<run_id>-meta.json`; `compare_costs.py` collects all of them into
 `results/runs.csv` (one row per run, keyed by its dimensions). `ESB_ARRAY_MAX`
 (default 1000) splits a scenario's manifest into several arrays — check

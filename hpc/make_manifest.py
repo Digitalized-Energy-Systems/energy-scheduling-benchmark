@@ -6,7 +6,7 @@ per run: ``run_id``, ``network`` and the scenario's CLI arguments. Every run get
 unique ``--name-base`` inside ``results/<network-stem>/``; ``compare_costs.py``
 groups runs by the dimensions recorded in their ``-meta.json``, not by file name.
 
-Full product per network: 7 scenarios × topology {complete, ring, grid} × cost
+Full product per network: 7 scenarios × topology {complete, ring} × cost
 model {linear, quadratic} × slack {off, on} × simulated days {1, 3, 7} × loss rate
 {0, 0.01, 0.05, 0.1} × seeds. Q9: loss 0 runs once plus one determinism repeat
 (same seed); every loss > 0 cell runs with ``--seeds`` seeds (default 5).
@@ -44,7 +44,7 @@ SCENARIOS = (
     "fdgdm",
     "deed-admm",
 )
-TOPOLOGIES = ("complete", "ring", "grid")
+TOPOLOGIES = ("complete", "ring")
 COST_MODELS = ("linear", "quadratic")
 SLACK = ("off", "on")
 DAYS = (1, 3, 7)

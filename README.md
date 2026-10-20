@@ -125,12 +125,8 @@ Each run's `<name>-meta.json` records the values used and, under
 
 * `complete` (default): every agent talks to every other one.
 * `ring`: the algorithm's agents form a cycle ordered by component id.
-* `grid`: follows the electrical network. Agents on one bus are all connected;
-  every agent on bus A talks to every agent on bus B when a line, link or
-  transformer joins A and B. Buses without algorithm agents are passed through,
-  and disconnected islands are bridged so the graph stays connected.
 
-In `ring` and `grid` the loads (and units outside the algorithm) attach via their
+In `ring` the loads (and units outside the algorithm) attach via their
 bus. The leader (the first load) stays where it is: every message, including
 load reports, kick-off and results, travels the shortest path through the graph
 and takes hops × `--delay-s`, with `--loss-rate` applied per hop. The algorithms
@@ -175,7 +171,7 @@ received:
   requests a missing result is given up, the run is logged as degraded and
   the balance check decides whether it is valid.
 
-On `ring` / `grid` topologies a message to or from the leader takes several
+On the `ring` topology a message to or from the leader takes several
 hops, so the default load and request deadlines (and ADMM's coordinator round
 and the consensus leader's round) are multiplied by the leader's largest hop
 distance; peer-to-peer rounds only wait for neighbours one hop away and keep

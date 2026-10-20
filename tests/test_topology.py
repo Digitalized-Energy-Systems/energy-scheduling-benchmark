@@ -33,13 +33,13 @@ class TestTopologyFlag:
     def test_default_is_complete(self):
         assert _forwarded([])["topology"] == "complete"
 
-    @pytest.mark.parametrize("kind", ["ring", "grid"])
-    def test_forwarded(self, kind):
-        assert _forwarded(["--topology", kind])["topology"] == kind
+    def test_forwarded(self):
+        assert _forwarded(["--topology", "ring"])["topology"] == "ring"
 
-    def test_unknown_rejected(self):
+    @pytest.mark.parametrize("kind", ["grid", "star"])
+    def test_unknown_rejected(self, kind):
         with pytest.raises(SystemExit):
-            _forwarded(["--topology", "star"])
+            _forwarded(["--topology", kind])
 
 
 def _thermal_refs(scenario):
@@ -63,11 +63,6 @@ class TestParticipantGraph:
         pg = participant_graph(scenario, "ring", refs)
         assert pg.diameter == len(refs) // 2
         assert set(pg.degrees.values()) == {2}
-
-    def test_grid_is_connected(self):
-        scenario = build_toy_network(periods=24)
-        pg = participant_graph(scenario, "grid", _thermal_refs(scenario))
-        assert nx.is_connected(pg.graph)
 
 
 class TestPerronScales:
@@ -127,15 +122,14 @@ class TestInstallTopology:
         assert all(sim.hops(agents[0].aid, a.aid) == 1 for a in agents[1:])
 
 
-@pytest.mark.parametrize("kind", ["ring", "grid"])
-async def test_consensus_runs_on_sparse_topology(tmp_path, kind):
+async def test_consensus_runs_on_ring(tmp_path):
     from energy_scheduling_benchmark.scenarios.consensus import execute_test_case
 
     await execute_test_case(
         scenario=build_toy_network(periods=24),
         name_base=str(tmp_path / "c"),
         simulate_days=1,
-        topology=kind,
+        topology="ring",
         strict=True,
     )
 

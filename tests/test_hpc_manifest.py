@@ -15,8 +15,8 @@ _spec.loader.exec_module(mm)
 
 def test_full_product_size_per_network():
     runs = list(mm.runs(["net.nc"]))
-    # Distributed: 3 topologies x 2 cost models x 2 slack x 3 days x (2 lossless + 3 x 5 seeds).
-    per_distributed = 3 * 2 * 2 * 3 * (2 + 3 * 5)
+    # Distributed: 2 topologies x 2 cost models x 2 slack x 3 days x (2 lossless + 3 x 5 seeds).
+    per_distributed = 2 * 2 * 2 * 3 * (2 + 3 * 5)
     # Central dispatch: complete topology and loss 0 only (x 2 for the determinism repeat).
     per_central = 2 * 2 * 3 * 2
     assert len(runs) == 6 * per_distributed + per_central
@@ -58,7 +58,7 @@ def test_write_and_cli(tmp_path):
         == 0
     )
     lines = (tmp_path / "consensus.tsv").read_text().splitlines()
-    assert len(lines) == 3 * 2 * 2 * 2
+    assert len(lines) == 2 * 2 * 2 * 2
     run_id, network, *flags = lines[0].split("\t")
     assert network == "toy" and "--topology" in flags
 

@@ -42,9 +42,6 @@ max_iter = 500
 [consensus.topology.ring]
 max_iter = 3000
 
-[consensus.topology.grid]
-max_iter = 3000
-
 # DEED-ADMM mixes slowly on sparse graphs (W = I − βL, β = 1/(max degree + 1))
 # and its stop rule did not fire on DE-AT. Gap to central dispatch on the DE-AT
 # 2-bus ring by budget (2026-10-19): 500 → +10.5 %, 3000 → +5.6 %,
@@ -52,7 +49,4 @@ max_iter = 3000
 # reaches +0.53 % in 500 rounds; 30000 gives comparable quality.
 
 [deed_admm.topology.ring]
-max_iter = 30000
-
-[deed_admm.topology.grid]
 max_iter = 30000

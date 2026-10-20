@@ -1082,11 +1082,10 @@ def build_scenario_argparser(
         choices=TOPOLOGIES,
         default="complete",
         help=(
-            "Communication graph: 'complete' (default, everyone talks to everyone), "
-            "'ring' (algorithm agents in a cycle ordered by id) or 'grid' (along the "
-            "buses: agents on one bus and on line/link-connected buses are "
-            "neighbours). Loads attach via their bus; every message travels the "
-            "shortest path (hops x --delay-s, loss per hop)."
+            "Communication graph: 'complete' (default, everyone talks to everyone) "
+            "or 'ring' (algorithm agents in a cycle ordered by id). Loads attach "
+            "via their bus; every message travels the shortest path (hops x "
+            "--delay-s, loss per hop)."
         ),
     )
     parser.add_argument(
