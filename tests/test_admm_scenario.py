@@ -1,6 +1,6 @@
 """Tests for the ADMM scenario.
 
-Covers unit-level helpers (_lookup_ts, _make_finish_callback) and an
+Covers the unit-level helper _lookup_ts and an
 end-to-end integration smoke test of execute_test_case on the built-in toy network.
 """
 
@@ -9,17 +9,13 @@ from __future__ import annotations
 import os
 from unittest.mock import MagicMock
 
-import numpy as np
 import pandas as pd
 import pytest
 from mango_energy_environments import ComponentRef
 
 from energy_scheduling_benchmark.networks import ScenarioData, build_toy_network
 from energy_scheduling_benchmark.scenarios._common import _lookup_ts
-from energy_scheduling_benchmark.scenarios.admm import (
-    _make_finish_callback,
-    execute_test_case,
-)
+from energy_scheduling_benchmark.scenarios.admm import execute_test_case
 
 
 class TestLookupTs:
@@ -51,55 +47,6 @@ class TestLookupTs:
         assert (
             _lookup_ts(self._scenario({ref: ts}), ComponentRef("thermal", "g1")) is None
         )
-
-
-class TestMakeFinishCallback:
-    """_make_finish_callback sends the participant's x to the leader."""
-
-    @staticmethod
-    def _role(sends: list):
-        class FakeContext:
-            aid = "gen0"
-
-            def schedule_instant_message(self, msg, addr):
-                sends.append((msg, addr))
-
-        class FakeRole:
-            context = FakeContext()
-
-        return FakeRole()
-
-    async def test_notifies_leader_with_schedule(self):
-        sends: list = []
-        algorithm = MagicMock()
-        algorithm.x = np.array([1.0, 2.0])
-        leader_addr = ("localhost", 5555)
-
-        cb = _make_finish_callback(leader_addr_ref={"addr": leader_addr})
-        cb(algorithm, self._role(sends), "gen0")
-
-        assert len(sends) == 1
-        msg, addr = sends[0]
-        assert msg.aid == "gen0"
-        assert np.allclose(msg.schedule, [1.0, 2.0])
-        assert addr == leader_addr
-
-    async def test_sent_schedule_is_a_copy(self):
-        sends: list = []
-        algorithm = MagicMock()
-        algorithm.x = np.array([1.0, 2.0])
-        cb = _make_finish_callback(leader_addr_ref={"addr": ("localhost", 5555)})
-        cb(algorithm, self._role(sends), "gen0")
-        algorithm.x[0] = 99.0
-        assert sends[0][0].schedule[0] == pytest.approx(1.0)
-
-    async def test_no_notification_when_leader_addr_is_none(self):
-        sends: list = []
-        algorithm = MagicMock()
-        algorithm.x = np.array([1.0])
-        cb = _make_finish_callback(leader_addr_ref={"addr": None})
-        cb(algorithm, self._role(sends), "gen0")
-        assert sends == []
 
 
 class TestADMMScenarioIntegration:

@@ -92,6 +92,7 @@ __all__ = [
     "build_demand_horizon",
     "DemandHorizon",
     "build_p_max_vec",
+    "build_unit_bounds",
     "capacity_scaled_epsilon",
     "EpsilonScaling",
     "StorageParams",
@@ -620,6 +621,29 @@ def build_p_max_vec(
     return values if in_mw else values * p_nom
 
 
+def build_unit_bounds(
+    scenario: ScenarioData,
+    ref: ComponentRef,
+    statics: dict,
+    time_index: pd.Index,
+    horizon: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-timestep ``(p_min, p_max)`` of a generator (MW), the same in every scenario.
+
+    ``p_max`` is :func:`build_p_max_vec`. Only thermal units get a minimum,
+    ``max(0, p_min_pu * p_nom)``, capped at each hour's ``p_max`` so a unit whose
+    availability drops below its minimum stays feasible.
+    """
+    p_max = build_p_max_vec(scenario, ref, statics, time_index, horizon)
+    p_min = np.zeros(horizon, dtype=float)
+    if ref.element_type == THERMAL:
+        p_min_mw = float(statics.get("p_min_pu", 0.0)) * float(
+            statics.get("p_nom", 0.0)
+        )
+        p_min = np.minimum(max(0.0, p_min_mw), p_max)
+    return p_min, p_max
+
+
 @dataclass
 class EpsilonScaling:
     """Result of :func:`capacity_scaled_epsilon`."""
@@ -1024,11 +1048,6 @@ def _bounded_float(lo: float, hi: float) -> Callable[[str], float]:
     return parse
 
 
-def loss_rate_from_args(args: argparse.Namespace) -> float:
-    """The ``--loss-rate`` fraction (``0`` when not given)."""
-    return 0.0 if args.loss_rate is None else args.loss_rate
-
-
 def build_scenario_argparser(
     description: str | None,
     *,
@@ -1061,7 +1080,7 @@ def build_scenario_argparser(
     parser.add_argument(
         "--loss-rate",
         type=_bounded_float(0.0, 1.0),
-        default=None,
+        default=0.0,
         help=(
             "Probability that a message is lost, as a fraction in [0, 1] "
             "(e.g. 0.05 for 5%%; default 0)."
@@ -1929,6 +1948,17 @@ def _git_state(module: Any) -> dict[str, Any]:
         return {"sha": None, "dirty": None}
 
 
+#: Files written by :func:`write_scenario_outputs`, as ``<name_base>-<suffix>``.
+OUTPUT_SUFFIXES = (
+    "df.csv",
+    "meta.json",
+    "stacked.pdf",
+    "observation.pdf",
+    "balance.pdf",
+    "cost.pdf",
+)
+
+
 def write_scenario_outputs(
     world: Any,
     *,
@@ -2203,12 +2233,16 @@ def run_scenario_main(
     # Every output path is derived from name_base, so prefixing it with the
     # output directory routes all CSV/PDF writes there.
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    # A run that fails (crash, timeout, --strict) must not leave the previous
+    # run's outputs behind under its name: compare_costs.py would read them.
+    for suffix in OUTPUT_SUFFIXES:
+        (args.out_dir / f"{args.name_base}-{suffix}").unlink(missing_ok=True)
     started = perf_counter()
     asyncio.run(
         execute_test_case(
             scenario=scenario,
             delay_s=args.delay_s,
-            loss_rate=loss_rate_from_args(args),
+            loss_rate=args.loss_rate,
             seed=args.seed,
             round_timeout=args.round_timeout,
             result_poll_s=args.result_poll_s,
@@ -2248,7 +2282,6 @@ def _complete_meta(
     dims.update(
         {
             "scenario": scenario,
-            "loss_rate": loss_rate_from_args(args),
         }
     )
     meta = {

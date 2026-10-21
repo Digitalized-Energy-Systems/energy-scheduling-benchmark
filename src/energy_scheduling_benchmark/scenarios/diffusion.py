@@ -35,7 +35,6 @@ from mango import (
 from energy_scheduling_benchmark import (
     LOAD,
     STORAGE,
-    THERMAL,
 )
 from energy_scheduling_benchmark.scenarios._common import (
     OptimizationFinishedInfo as DiffusionFinishedInfo,
@@ -50,8 +49,8 @@ from energy_scheduling_benchmark.scenarios._common import (
     apply_cost_model,
     build_demand_horizon,
     build_group_map,
-    build_p_max_vec,
     build_toy_network,
+    build_unit_bounds,
     build_world,
     capacity_scaled_epsilon,
     collect_generator_refs,
@@ -220,11 +219,9 @@ async def execute_test_case(
                 n_guess=n_gens,
             )
         else:
-            p_max_vec = build_p_max_vec(scenario, ref, statics, time_index, horizon)
-            p_min = 0.0
-            if ref.element_type == THERMAL:
-                p_min_pu = float(statics.get("p_min_pu", 0.0))
-                p_min = max(0.0, p_min_pu * p_nom)
+            p_min, p_max_vec = build_unit_bounds(
+                scenario, ref, statics, time_index, horizon
+            )
             actor = LinearCostEconomicDispatchDiffusionActor(
                 cost=cost,
                 p_max=p_max_vec,

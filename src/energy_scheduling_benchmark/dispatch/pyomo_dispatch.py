@@ -1,23 +1,22 @@
 """Centralised economic dispatch via Pyomo.
 
 Minimises generation cost subject to a hard demand-balance constraint and
-per-generator capacity bounds. :func:`solve_central_dispatch` clears a
-single timestep; :func:`solve_multiperiod_dispatch` clears a whole horizon at
-once so storage units can shift energy between timesteps.  The Julia original used JuMP + HiGHS; this
-module uses Pyomo and defaults to the HiGHS appsi backend, with a fallback
-to GLPK when HiGHS is not available.
+per-generator capacity bounds. :func:`solve_multiperiod_dispatch` clears a
+whole horizon at once so storage units can shift energy between timesteps.
+The Julia original used JuMP + HiGHS; this module uses Pyomo and defaults to
+the HiGHS appsi backend, with a fallback to GLPK when HiGHS is not available.
 
 Usage::
 
-    from energy_scheduling_benchmark import solve_central_dispatch
+    from energy_scheduling_benchmark import solve_multiperiod_dispatch
 
-    result = solve_central_dispatch(
-        costs=[10.0, 30.0, 50.0],
-        p_max=[100.0, 80.0, 40.0],
-        demand=150.0,
+    result = solve_multiperiod_dispatch(
+        costs=[10.0, 30.0],
+        p_max=[[5.0, 5.0], [5.0, 5.0]],
+        demand=[4.0, 8.0],
     )
     assert result.success
-    print(result.dispatch)  # per-generator MW output
+    print(result.generation)  # per-generator MW output, shape (N, T)
 """
 
 from __future__ import annotations
@@ -29,23 +28,11 @@ import numpy as np
 import pyomo.environ as pyo
 
 __all__ = [
-    "solve_central_dispatch",
     "solve_multiperiod_dispatch",
-    "DispatchResult",
     "MultiPeriodDispatchResult",
     "SlackSpec",
     "StorageSpec",
 ]
-
-
-@dataclass(frozen=True)
-class DispatchResult:
-    """Outcome of a single economic-dispatch solve."""
-
-    success: bool
-    dispatch: list[float]
-    objective: float
-    solver_status: str
 
 
 _solver_name: str | None = None
@@ -54,8 +41,8 @@ _solver_name: str | None = None
 def _pick_solver() -> pyo.SolverFactory:
     """Pick an available LP solver.  Prefers HiGHS (``highspy``), falls back to GLPK.
 
-    The winning solver name is cached so repeated per-timestep solves skip
-    the availability probes.
+    The winning solver name is cached so repeated solves skip the
+    availability probes.
     """
     global _solver_name
     if _solver_name is not None:
@@ -70,85 +57,6 @@ def _pick_solver() -> pyo.SolverFactory:
             continue
     raise RuntimeError(
         "No Pyomo LP solver available — install `highspy`, GLPK, or CBC."
-    )
-
-
-def solve_central_dispatch(
-    costs: Sequence[float],
-    p_max: Sequence[float],
-    demand: float,
-    p_min: Sequence[float] | None = None,
-) -> DispatchResult:
-    """Solve a copper-plate economic dispatch as an LP.
-
-    Parameters
-    ----------
-    costs:
-        Marginal cost per generator (length *N*).
-    p_max:
-        Upper bound on power output per generator (length *N*).
-    demand:
-        Aggregate load that must be met exactly.
-    p_min:
-        Optional lower bounds (defaults to zero for every generator).
-
-    Returns
-    -------
-    DispatchResult
-        ``success`` is ``True`` when the LP returns an optimal solution;
-        otherwise ``dispatch`` is zero-filled and ``objective`` is NaN.
-    """
-    if len(costs) != len(p_max):
-        raise ValueError("costs and p_max must have the same length")
-    if p_min is not None and len(p_min) != len(costs):
-        raise ValueError("p_min must have the same length as costs")
-
-    n = len(costs)
-    if n == 0:
-        return DispatchResult(
-            success=False,
-            dispatch=[],
-            objective=float("nan"),
-            solver_status="no_generators",
-        )
-
-    p_min_list = list(p_min) if p_min is not None else [0.0] * n
-
-    model = pyo.ConcreteModel()
-    model.G = pyo.RangeSet(0, n - 1)
-    model.p = pyo.Var(
-        model.G,
-        domain=pyo.Reals,
-        bounds=lambda _m, i: (p_min_list[i], p_max[i]),
-    )
-    model.balance = pyo.Constraint(expr=sum(model.p[i] for i in model.G) == demand)
-    model.cost = pyo.Objective(
-        expr=sum(costs[i] * model.p[i] for i in model.G),
-        sense=pyo.minimize,
-    )
-
-    solver = _pick_solver()
-    # appsi solvers raise RuntimeError instead of reporting failure when asked
-    # to auto-load the solution of an infeasible solve — defer loading until
-    # the termination condition is known.
-    results = solver.solve(model, load_solutions=False, tee=False)
-
-    status = str(results.solver.termination_condition)
-    success = status in {"optimal", "locallyOptimal"}
-
-    if not success:
-        return DispatchResult(
-            success=False,
-            dispatch=[0.0] * n,
-            objective=float("nan"),
-            solver_status=status,
-        )
-
-    model.solutions.load_from(results)
-    dispatch = [float(pyo.value(model.p[i])) for i in model.G]
-    objective = float(pyo.value(model.cost))
-    return DispatchResult(
-        success=True, dispatch=dispatch, objective=objective, solver_status=status
     )
 
 
@@ -376,6 +284,9 @@ def solve_multiperiod_dispatch(
         solver.config.solver_options["primal_feasibility_tolerance"] = 1e-6
     else:
         solver = _pick_solver()
+    # appsi solvers raise RuntimeError instead of reporting failure when asked
+    # to auto-load the solution of an infeasible solve — defer loading until
+    # the termination condition is known.
     results = solver.solve(model, load_solutions=False, tee=False)
     status = str(results.solver.termination_condition)
     if status not in {"optimal", "locallyOptimal"}:

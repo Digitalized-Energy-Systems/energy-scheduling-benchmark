@@ -255,7 +255,7 @@ job arrays, follow [`hpc/README.md`](hpc/README.md).
 ```
 src/energy_scheduling_benchmark/
 ├── networks.py         # PyPSA network loaders (examples, files, PYPOWER, toy fixture)
-├── dispatch/           # Pyomo economic dispatch (single-step + full-horizon LP)
+├── dispatch/           # Pyomo economic dispatch (full-horizon LP)
 ├── plotting.py         # matplotlib plotting (replacement for CairoMakie)
 └── scenarios/
     ├── _common.py              # shared scenario skeleton (argparser, roles,

@@ -54,6 +54,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_group_map,
     build_p_max_vec,
     build_toy_network,
+    build_unit_bounds,
     build_world,
     collect_generator_refs,
     generator_agent,
@@ -149,11 +150,9 @@ async def execute_test_case(
     if not load_refs:
         raise RuntimeError("No loads found for DEED-ADMM scenario.")
 
-    # Unlike its siblings, this does not truncate time_index to
-    # simulate_days*24 — kept as-is (relies on _clip_scenario having already
-    # trimmed the timeseries) rather than changed under a behaviour-
-    # preserving refactor.
-    demand = build_demand_horizon(behavior, scenario, load_refs, simulate_days=None)
+    demand = build_demand_horizon(
+        behavior, scenario, load_refs, simulate_days=simulate_days
+    )
     time_index, horizon = demand.time_index, demand.horizon
     target_series = demand.target_series
     time_to_index = demand.time_to_index
@@ -234,9 +233,9 @@ async def execute_test_case(
                 diameter=pgraph.diameter,
             )
         else:
-            p_max_vec = build_p_max_vec(scenario, ref, statics, time_index, horizon)
-            p_min_pu = float(statics.get("p_min_pu", 0.0))
-            p_min_vec = np.minimum(max(0.0, p_min_pu * p_nom), p_max_vec)
+            p_min_vec, p_max_vec = build_unit_bounds(
+                scenario, ref, statics, time_index, horizon
+            )
             participant = create_deed_admm_thermal_participant(
                 finish_callback,
                 cost_quad=cost_quad_by_aid.get(ref.component_id, 0.0),

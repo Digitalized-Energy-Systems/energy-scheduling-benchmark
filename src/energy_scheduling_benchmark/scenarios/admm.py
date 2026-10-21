@@ -16,7 +16,6 @@ being pre-scheduled from a clearing price.
 from __future__ import annotations
 
 import argparse
-import logging
 from typing import Any
 
 import numpy as np
@@ -29,7 +28,6 @@ from distributed_resource_optimization import (
 from distributed_resource_optimization.carrier.mango import (
     CoordinatorRole,
     DistributedOptimizationRole,
-    OptimizationFinishedMessage,
     StartCoordinatedDistributedOptimization,
 )
 from mango import RoleAgent, agent_composed_of
@@ -37,7 +35,6 @@ from mango import RoleAgent, agent_composed_of
 from energy_scheduling_benchmark import (
     LOAD,
     STORAGE,
-    THERMAL,
 )
 from energy_scheduling_benchmark.scenarios._common import (
     AgentError,
@@ -49,8 +46,8 @@ from energy_scheduling_benchmark.scenarios._common import (
     _clip_scenario,
     build_demand_horizon,
     build_group_map,
-    build_p_max_vec,
     build_toy_network,
+    build_unit_bounds,
     build_world,
     collect_generator_refs,
     install_topology,
@@ -66,68 +63,6 @@ from energy_scheduling_benchmark.scenarios._common import (
 from energy_scheduling_benchmark.scenarios._common import (
     OptimizationFinishedInfo as ADMMFinishedInfo,
 )
-
-logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Roles
-# ---------------------------------------------------------------------------
-
-
-class ADMMGeneratorRole(DistributedOptimizationRole):
-    """Generator participant that notifies the leader when its schedule is ready."""
-
-    def __init__(self, algorithm: Any, finish_callback: Any) -> None:
-        super().__init__(algorithm)
-        self._finish_callback = finish_callback
-
-    def setup(self) -> None:
-        super().setup()
-        self.context.subscribe_message(
-            self,
-            self._handle_optimization_finished,
-            lambda c, m: isinstance(c, OptimizationFinishedMessage),
-        )
-
-    def _handle_optimization_finished(
-        self, message: OptimizationFinishedMessage, meta: dict
-    ) -> None:
-        self._finish_callback(self.algorithm, self, self.context.aid)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_finish_callback(
-    *,
-    leader_addr_ref: dict[str, Any | None],
-) -> Any:
-    """Return a callback that sends a generator's schedule to the leader.
-
-    The leader normally has every schedule already (the coordinator runs on
-    its agent, see ``start_locally``); this message is the redundant path.
-
-    ADMM's finish notification is fired directly by :class:`ADMMGeneratorRole`
-    with signature ``(algorithm, role, aid)`` — unlike the carrier-based
-    algorithms (consensus/diffusion/FDGDM/DEED-ADMM) which read the schedule
-    off ``carrier._parent``, so this stays a scenario-specific helper rather
-    than the shared ``_common.make_finish_callback``.
-    """
-
-    def handle_admm_finished(algorithm: Any, role: Any, aid: str) -> None:
-        schedule = np.asarray(algorithm.x, dtype=float).copy()
-        leader_addr = leader_addr_ref.get("addr")
-        if leader_addr is not None:
-            role.context.schedule_instant_message(
-                ADMMFinishedInfo(aid=aid, schedule=schedule), leader_addr
-            )
-        logger.info("ADMM finished for %s (schedule len=%s)", aid, schedule.size)
-
-    return handle_admm_finished
-
 
 # ---------------------------------------------------------------------------
 # Scenario entry point
@@ -216,8 +151,6 @@ async def execute_test_case(
     generator_aids = [ref.component_id for ref in gen_refs]
 
     schedule_by_aid: dict[str, np.ndarray] = {}
-    leader_addr_ref: dict[str, Any | None] = {"addr": None}
-    finish_callback = _make_finish_callback(leader_addr_ref=leader_addr_ref)
 
     gen_agents: list[RoleAgent] = []
     cost_by_aid: dict[str, float] = {}
@@ -246,19 +179,17 @@ async def execute_test_case(
                 discharge_cost=max(0.0, cost),
             )
         else:
-            p_max_vec = build_p_max_vec(scenario, ref, statics, time_index, horizon)
-            lb_vec = np.zeros(horizon, dtype=float)
-            if ref.element_type == THERMAL:
-                p_min_pu = float(statics.get("p_min_pu", 0.0))
-                lb_vec = np.full(horizon, max(0.0, p_min_pu * p_nom), dtype=float)
+            lb_vec, p_max_vec = build_unit_bounds(
+                scenario, ref, statics, time_index, horizon
+            )
             actor = create_admm_flex_actor_box_bounded(
                 lb=lb_vec,
-                u=np.asarray(p_max_vec, dtype=float),
+                u=p_max_vec,
                 S=np.full(horizon, cost, dtype=float),
                 Q=cost_quad_by_aid.get(ref.component_id),
             )
 
-        agent = agent_composed_of(ADMMGeneratorRole(actor, finish_callback))
+        agent = agent_composed_of(DistributedOptimizationRole(actor))
         register_component_agent(world, agent, ref)
         gen_agents.append(agent)
 
@@ -269,7 +200,6 @@ async def execute_test_case(
     leader_agent = RoleAgent()
     register_component_agent(world, leader_agent, load_refs[0])
     leader_addr = leader_agent.addr
-    leader_addr_ref["addr"] = leader_addr
 
     coordinator = create_consensus_target_reach_admm_coordinator(
         rho=rho,

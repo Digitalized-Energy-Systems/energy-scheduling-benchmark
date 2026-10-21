@@ -72,6 +72,7 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_group_map,
     build_p_max_vec,
     build_toy_network,
+    build_unit_bounds,
     build_world,
     collect_generator_refs,
     generator_agent,
@@ -140,7 +141,10 @@ def _capacity_proportional_allocation(
     allocs = []
     for pmax, pmin in zip(p_max_vecs, p_min_vecs):
         slack_i = pmax - pmin
-        share = np.where(total_slack > 0, pmin + residual * slack_i / total_slack, pmin)
+        with np.errstate(divide="ignore", invalid="ignore"):  # masked by np.where
+            share = np.where(
+                total_slack > 0, pmin + residual * slack_i / total_slack, pmin
+            )
         allocs.append(np.clip(share, pmin, pmax))
     return allocs
 
@@ -276,18 +280,23 @@ async def execute_test_case(
 
     adjusted_target = np.maximum(net_load_ts, 0.0)
 
-    # Per-thermal p_max (MW), reused below for agent creation and initial allocation.
-    thermal_p_max_vecs = [
-        build_p_max_vec(scenario, ref, statics_by_ref[ref], time_index, horizon)
+    # Per-thermal (p_min, p_max) in MW, reused below for agent creation and
+    # initial allocation.
+    thermal_bounds = [
+        build_unit_bounds(scenario, ref, statics_by_ref[ref], time_index, horizon)
         for ref in thermal_refs
     ]
+    thermal_p_min_vecs = [p_min for p_min, _ in thermal_bounds]
+    thermal_p_max_vecs = [p_max for _, p_max in thermal_bounds]
 
     # FDGDM requires ≥ 2 participants: with 0 neighbours the finish callback
     # is never called and the simulation hangs.  When only one thermal exists,
     # pre-schedule it directly (min of residual demand and its own p_max) and
     # treat it as a nonthermal for agent setup so n_fdgdm_participants = 0.
     if len(thermal_refs) == 1:
-        _sched_1 = np.minimum(adjusted_target, thermal_p_max_vecs[0])
+        _sched_1 = np.clip(
+            adjusted_target, thermal_p_min_vecs[0], thermal_p_max_vecs[0]
+        )
         schedule_by_aid[thermal_refs[0].component_id] = _sched_1
         cost_by_aid[thermal_refs[0].component_id] = float(
             statics_by_ref[thermal_refs[0]].get("marginal_cost", 0.0)
@@ -295,6 +304,7 @@ async def execute_test_case(
         adjusted_target = np.maximum(adjusted_target - _sched_1, 0.0)
         nonthermal_refs = nonthermal_refs + thermal_refs
         thermal_refs = []
+        thermal_p_min_vecs = []
         thermal_p_max_vecs = []
 
     # ------------------------------------------------------------------
@@ -302,14 +312,15 @@ async def execute_test_case(
     # At fully-renewable hours (adjusted_target ≈ 0) the linear gradient
     # ε·0 + c_i = c_i is non-zero, so without masking FDGDM would push
     # cheap generators above zero (spurious over-generation).  Setting
-    # p_max[t] = 0 forces project() to clip any update back to zero.
+    # p_max[t] = p_min[t] forces project() to clip any update back to the
+    # unit's minimum (zero unless it is must-run).
     # ------------------------------------------------------------------
     thermal_p_max_unmasked = [pmax.copy() for pmax in thermal_p_max_vecs]
     zero_demand_mask = adjusted_target < 1.0
     if zero_demand_mask.any():
         thermal_p_max_vecs = [pmax.copy() for pmax in thermal_p_max_vecs]
-        for pmax in thermal_p_max_vecs:
-            pmax[zero_demand_mask] = 0.0
+        for pmin, pmax in zip(thermal_p_min_vecs, thermal_p_max_vecs):
+            pmax[zero_demand_mask] = pmin[zero_demand_mask]
 
     # ------------------------------------------------------------------
     # Per-agent demand-feasible initial allocations proportional to p_nom.
@@ -319,7 +330,6 @@ async def execute_test_case(
     # ------------------------------------------------------------------
     n_thermals = len(thermal_refs)
     if n_thermals >= 1:
-        thermal_p_min_vecs = [np.zeros(horizon) for _ in thermal_refs]
         fdgdm_initial_p_by_agent = _capacity_proportional_allocation(
             adjusted_target, thermal_p_max_vecs, thermal_p_min_vecs
         )
@@ -384,6 +394,7 @@ async def execute_test_case(
                 p_max=p_max_vec,
                 epsilon=2.0 * c2,
                 curvature_upper_bound=max(2.0 * c2, epsilon_by_agent[i]),
+                p_min=thermal_p_min_vecs[i],
                 initial_schedule=fdgdm_initial_p_by_agent[i].copy(),
             )
         else:
@@ -391,6 +402,7 @@ async def execute_test_case(
                 cost=cost,
                 p_max=p_max_vec,
                 epsilon=epsilon_by_agent[i],
+                p_min=thermal_p_min_vecs[i],
                 initial_schedule=fdgdm_initial_p_by_agent[i].copy(),
             )
         p_nom = float(statics.get("p_nom", 0.0))
@@ -471,8 +483,8 @@ async def execute_test_case(
         for t in range(horizon):
             interior = [
                 g[t]
-                for g, p, pm in zip(grads, P, outer["p_max"])
-                if 1e-6 < p[t] < pm[t] - 1e-6
+                for g, p, lo, hi in zip(grads, P, thermal_p_min_vecs, outer["p_max"])
+                if lo[t] + 1e-6 < p[t] < hi[t] - 1e-6
             ]
             if interior:
                 lam[t] = float(np.mean(interior))
@@ -501,11 +513,9 @@ async def execute_test_case(
         residual = np.maximum(net_load_ts - sum(proposal.values()), 0.0)
         p_max_k = [pmax.copy() for pmax in thermal_p_max_unmasked]
         mask = residual < 1.0
-        for pmax in p_max_k:
-            pmax[mask] = 0.0
-        alloc = _capacity_proportional_allocation(
-            residual, p_max_k, [np.zeros(horizon) for _ in p_max_k]
-        )
+        for pmin, pmax in zip(thermal_p_min_vecs, p_max_k):
+            pmax[mask] = pmin[mask]
+        alloc = _capacity_proportional_allocation(residual, p_max_k, thermal_p_min_vecs)
         for actor, pmax, a in zip(thermal_actors, p_max_k, alloc):
             actor.p_max = pmax
             actor._p_max = np.asarray(pmax, dtype=float)

@@ -15,7 +15,7 @@ Flow
    machinery, including its post-solve power-balance check).
 
 Participants, bounds and storage parameters are built with the same helpers
-the distributed scenarios use (``collect_generator_refs``, ``build_p_max_vec``,
+the distributed scenarios use (``collect_generator_refs``, ``build_unit_bounds``,
 ``StorageParams.from_statics``), and storage uses the same SOC model and
 cyclic terminal condition as their storage actors. The leader sees the same
 full-horizon information as the distributed leaders, so this scenario's cost
@@ -32,7 +32,7 @@ import numpy as np
 from distributed_resource_optimization.carrier.mango import RoleLocalMessage
 from mango import AgentAddress, Role, RoleAgent, agent_composed_of
 
-from energy_scheduling_benchmark import LOAD, STORAGE, THERMAL
+from energy_scheduling_benchmark import LOAD, STORAGE
 from energy_scheduling_benchmark.dispatch import StorageSpec, solve_multiperiod_dispatch
 from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadAggregator,
@@ -43,8 +43,8 @@ from energy_scheduling_benchmark.scenarios._common import (
     _clip_scenario,
     build_demand_horizon,
     build_group_map,
-    build_p_max_vec,
     build_toy_network,
+    build_unit_bounds,
     build_world,
     collect_generator_refs,
     install_topology,
@@ -326,19 +326,15 @@ async def execute_test_case(
                 storage=StorageParams.from_statics(statics, p_nom),
             )
         else:
-            p_max = build_p_max_vec(
+            p_min, p_max = build_unit_bounds(
                 scenario, ref, statics, demand.time_index, demand.horizon
             )
-            p_min = np.zeros(demand.horizon, dtype=float)
-            if ref.element_type == THERMAL:
-                p_min_pu = float(statics.get("p_min_pu", 0.0))
-                p_min[:] = max(0.0, p_min_pu * p_nom)
             report = UnitReport(
                 aid=ref.component_id,
                 cost=cost,
                 cost_quad=cost_quad_by_aid.get(ref.component_id, 0.0),
-                p_min=p_min,
-                p_max=np.nan_to_num(np.asarray(p_max, dtype=float)),
+                p_min=np.nan_to_num(p_min),
+                p_max=np.nan_to_num(p_max),
             )
 
         agent = agent_composed_of(UnitReporter(report, leader_addr))

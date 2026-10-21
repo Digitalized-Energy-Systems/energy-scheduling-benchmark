@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from energy_scheduling_benchmark import THERMAL, ComponentRef
+from energy_scheduling_benchmark import RENEWABLE, THERMAL, ComponentRef
 from energy_scheduling_benchmark.networks import build_toy_network
 from energy_scheduling_benchmark.scenarios._common import (
     PowerLoadAggregator,
@@ -15,11 +15,11 @@ from energy_scheduling_benchmark.scenarios._common import (
     build_group_map,
     build_p_max_vec,
     build_scenario_argparser,
+    build_unit_bounds,
     build_world,
     carrier_style,
     compute_overall_cost,
     compute_slack,
-    loss_rate_from_args,
     loss_tolerance,
     resolve_loss_rate,
     run_scenario_main,
@@ -77,6 +77,28 @@ class TestBuildPMaxVec:
         statics = {"p_nom": 1000.0, "p_max_pu": 0.871}
         p_max = build_p_max_vec(scenario, ref, statics, index, 3)
         np.testing.assert_allclose(p_max, [871.0] * 3)
+
+
+class TestBuildUnitBounds:
+    def test_thermal_minimum_is_capped_at_availability(self):
+        scenario = build_toy_network(periods=3)
+        index = next(iter(scenario.timeseries.values())).index
+        ref = ComponentRef(THERMAL, "gas")
+        scenario.timeseries[ref] = pd.Series([1.0, 0.05, 0.0], index=index)
+        p_min, p_max = build_unit_bounds(
+            scenario, ref, {"p_nom": 100.0, "p_min_pu": 0.1}, index, 3
+        )
+        np.testing.assert_allclose(p_max, [100.0, 5.0, 0.0])
+        np.testing.assert_allclose(p_min, [10.0, 5.0, 0.0])
+
+    def test_renewables_have_no_minimum(self):
+        scenario = build_toy_network(periods=3)
+        index = next(iter(scenario.timeseries.values())).index
+        ref = ComponentRef(RENEWABLE, "wind0")
+        p_min, _ = build_unit_bounds(
+            scenario, ref, {"p_nom": 40.0, "p_min_pu": 0.5}, index, 3
+        )
+        np.testing.assert_allclose(p_min, [0.0, 0.0, 0.0])
 
 
 class TestStorageParams:
@@ -230,6 +252,16 @@ class TestOutDir:
         assert seen["name_base"] == str(out / "run")
         assert out.is_dir()
 
+    def test_previous_outputs_are_removed_before_the_run(self, tmp_path):
+        # A run that fails before writing must not leave the last run's files.
+        stale = [tmp_path / "run-df.csv", tmp_path / "run-meta.json"]
+        other = tmp_path / "run2-df.csv"
+        for path in [*stale, other]:
+            path.write_text("old")
+        self._run(["--name-base", "run", "--out-dir", str(tmp_path)])
+        assert not any(path.exists() for path in stale)
+        assert other.exists()
+
     def test_loss_timeouts_default(self):
         seen = self._run(["--name-base", "run"])
         assert seen["load_timeout"] is None
@@ -292,11 +324,11 @@ class TestLossCli:
 
     def test_default_is_lossless_with_seed_zero(self):
         args = self._parse()
-        assert loss_rate_from_args(args) == 0.0
+        assert args.loss_rate == 0.0
         assert args.seed == 0
 
     def test_loss_rate_is_a_fraction(self):
-        assert loss_rate_from_args(self._parse("--loss-rate", "0.05")) == 0.05
+        assert self._parse("--loss-rate", "0.05").loss_rate == 0.05
 
     @pytest.mark.parametrize(
         "argv",

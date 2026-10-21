@@ -143,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     shares = tennet_shares(plants)
     raw = raw_capacity_factors(ts, shares)
-    cf = raw.clip(lower=0.0, upper=1.0)
+    cf = build(ts, shares)
     cf.index.name = "utc_timestamp"
     cf.round(6).to_csv(args.out)
 

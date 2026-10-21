@@ -36,7 +36,6 @@ from mango import (
 from energy_scheduling_benchmark import (
     LOAD,
     STORAGE,
-    THERMAL,
 )
 from energy_scheduling_benchmark.scenarios._common import (
     OptimizationFinishedInfo as ConsensusFinishedInfo,
@@ -51,8 +50,8 @@ from energy_scheduling_benchmark.scenarios._common import (
     apply_cost_model,
     build_demand_horizon,
     build_group_map,
-    build_p_max_vec,
     build_toy_network,
+    build_unit_bounds,
     build_world,
     capacity_scaled_epsilon,
     collect_generator_refs,
@@ -167,6 +166,8 @@ async def execute_test_case(
 
     # -- Generator agents --
     gen_refs, statics_by_ref = collect_generator_refs(behavior)
+    if not gen_refs:
+        raise RuntimeError("No generator agents found for consensus scenario.")
     group_map = build_group_map(gen_refs, statics_by_ref=statics_by_ref)
     generator_aids = [ref.component_id for ref in gen_refs]
 
@@ -248,11 +249,9 @@ async def execute_test_case(
                 epsilon=eps.target_band / max(p_nom, 1.0),
             )
         else:
-            p_max_vec = build_p_max_vec(scenario, ref, statics, time_index, horizon)
-            p_min = 0.0
-            if ref.element_type == THERMAL:
-                p_min_pu = float(statics.get("p_min_pu", 0.0))
-                p_min = max(0.0, p_min_pu * p_nom)
+            p_min, p_max_vec = build_unit_bounds(
+                scenario, ref, statics, time_index, horizon
+            )
             actor = LinearCostEconomicDispatchConsensusActor(
                 cost=cost,
                 p_max=p_max_vec,
@@ -278,9 +277,6 @@ async def execute_test_case(
         agent = generator_agent(opt_role)
         register_component_agent(world, agent, ref)
         gen_agents.append(agent)
-
-    if not gen_agents:
-        raise RuntimeError("No generator agents found for consensus scenario.")
 
     # -- Load agents (two-pass: register leader first so its addr is known) --
     leader_agent = RoleAgent()
