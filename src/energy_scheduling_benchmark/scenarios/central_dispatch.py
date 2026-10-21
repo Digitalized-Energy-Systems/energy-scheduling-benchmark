@@ -373,7 +373,6 @@ def main(argv: list[str] | None = None) -> None:
         execute_test_case,
         doc=__doc__,
         default_name_base="central_dispatch",
-        with_balance_tol=True,
         argv=argv,
     )
 

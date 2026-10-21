@@ -410,7 +410,6 @@ def main(argv: list[str] | None = None) -> None:
         default_name_base="exact_diffusion",
         extra_args=_add_exact_diffusion_args,
         extra_kwargs=("weight_rule", "max_iter", "tol"),
-        with_balance_tol=True,
         argv=argv,
     )
 

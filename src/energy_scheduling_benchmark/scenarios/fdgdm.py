@@ -615,7 +615,6 @@ def main(argv: list[str] | None = None) -> None:
         default_name_base="fdgdm",
         extra_args=_add_fdgdm_args,
         extra_kwargs=("max_iter", "tol_ratio"),
-        with_balance_tol=True,
         argv=argv,
     )
 

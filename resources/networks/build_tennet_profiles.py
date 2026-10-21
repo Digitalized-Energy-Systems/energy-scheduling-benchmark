@@ -65,11 +65,8 @@ REGISTER_TECHNOLOGY = {
 
 
 def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
     with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(f, "sha256").hexdigest()
 
 
 def tennet_shares(plants: pd.DataFrame) -> dict[str, float]:

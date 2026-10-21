@@ -26,6 +26,7 @@ network keys the ``--network`` value reduced to its file stem (``toy``,
 
 from __future__ import annotations
 
+import argparse
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -78,3 +79,61 @@ def resolve(
             values[key] = value
             sources[key] = name
     return values, sources
+
+
+def apply(
+    parser: argparse.ArgumentParser, argv: list[str] | None, default_name_base: str
+) -> argparse.Namespace:
+    """Parse *argv* with the tuned parameters of *default_name_base* as defaults.
+
+    Explicit flags win over the file. ``args.tuned_from`` maps every value
+    taken from the file to the section it came from (see :func:`resolve`).
+    """
+    # Tuned parameters: a first parse finds the network/topology, the file's
+    # values become the parser defaults, and the second parse lets explicit
+    # flags win.
+    first = parser.parse_args(argv)
+    config = load(first.tuned_params)
+    tuned, tuned_from = resolve(
+        config, default_name_base, first.network, first.topology
+    )
+    source = first.tuned_params or DEFAULT_PATH
+    actions = {action.dest: action for action in parser._actions}
+    unknown = sorted(set(tuned) - set(actions))
+    if unknown:
+        parser.error(
+            f"{source}: unknown parameter(s) {unknown} for {default_name_base}"
+        )
+    # set_defaults() skips argparse's own checks: apply each flag's type and
+    # choices to the file's values here.
+    for key, value in list(tuned.items()):
+        action = actions[key]
+        if action.type is not None:
+            try:
+                value = action.type(str(value))
+            except (argparse.ArgumentTypeError, TypeError, ValueError) as exc:
+                parser.error(f"{source}: {key} = {tuned[key]!r}: {exc}")
+        elif isinstance(action.const, bool) and not isinstance(value, bool):
+            parser.error(f"{source}: {key} must be true or false, got {value!r}")
+        if action.choices is not None and value not in action.choices:
+            parser.error(
+                f"{source}: {key} = {value!r} is not one of {list(action.choices)}"
+            )
+        tuned[key] = value
+    parser.set_defaults(**tuned)
+    args = parser.parse_args(argv)
+    # Flags given on the command line: parse once more with every default
+    # suppressed, so only explicit flags appear.
+    saved = [(action, action.default) for action in parser._actions]
+    saved_parser_defaults = dict(parser._defaults)
+    parser._defaults.clear()
+    for action in parser._actions:
+        action.default = argparse.SUPPRESS
+    try:
+        explicit = set(vars(parser.parse_args(argv)))
+    finally:
+        for action, default in saved:
+            action.default = default
+        parser._defaults.update(saved_parser_defaults)
+    args.tuned_from = {key: tuned_from[key] for key in tuned if key not in explicit}
+    return args

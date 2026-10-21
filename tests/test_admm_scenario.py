@@ -1,52 +1,17 @@
 """Tests for the ADMM scenario.
 
-Covers the unit-level helper _lookup_ts and an
-end-to-end integration smoke test of execute_test_case on the built-in toy network.
+End-to-end integration smoke test of execute_test_case on the built-in toy network.
 """
 
 from __future__ import annotations
 
 import os
-from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
-from mango_energy_environments import ComponentRef
 
 from energy_scheduling_benchmark.networks import ScenarioData, build_toy_network
-from energy_scheduling_benchmark.scenarios._common import _lookup_ts
 from energy_scheduling_benchmark.scenarios.admm import execute_test_case
-
-
-class TestLookupTs:
-    """_lookup_ts returns a unit's series, or None."""
-
-    def _scenario(self, ts_dict: dict) -> object:
-        scenario = MagicMock()
-        scenario.timeseries = ts_dict
-        return scenario
-
-    def test_direct_match(self):
-        ref = ComponentRef("thermal", "g0")
-        ts = pd.Series([1.0, 2.0])
-        assert _lookup_ts(self._scenario({ref: ts}), ref) is ts
-
-    def test_missing_key_returns_none(self):
-        assert (
-            _lookup_ts(self._scenario({}), ComponentRef("thermal", "missing")) is None
-        )
-
-    def test_element_type_mismatch_returns_none(self):
-        ref = ComponentRef("thermal", "g0")
-        ts = pd.Series([1.0])
-        assert _lookup_ts(self._scenario({ref: ts}), ComponentRef("load", "g0")) is None
-
-    def test_component_id_mismatch_returns_none(self):
-        ref = ComponentRef("thermal", "g0")
-        ts = pd.Series([1.0])
-        assert (
-            _lookup_ts(self._scenario({ref: ts}), ComponentRef("thermal", "g1")) is None
-        )
 
 
 class TestADMMScenarioIntegration:

@@ -390,7 +390,6 @@ def main(argv: list[str] | None = None) -> None:
         default_name_base="consensus",
         extra_args=_add_consensus_args,
         extra_kwargs=("max_iter", "alpha", "leader_damping"),
-        with_balance_tol=True,
         argv=argv,
     )
 

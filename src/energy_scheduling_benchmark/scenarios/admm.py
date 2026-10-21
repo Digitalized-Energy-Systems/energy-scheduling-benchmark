@@ -336,7 +336,6 @@ def main(argv: list[str] | None = None) -> None:
         default_name_base="admm",
         extra_args=_add_admm_args,
         extra_kwargs=("rho", "max_iter", "adaptive_rho"),
-        with_balance_tol=True,
         argv=argv,
     )
 

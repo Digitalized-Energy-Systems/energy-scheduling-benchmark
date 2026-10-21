@@ -342,7 +342,6 @@ def main(argv: list[str] | None = None) -> None:
         default_name_base="diffusion",
         extra_args=_add_diffusion_args,
         extra_kwargs=("max_iter", "tol"),
-        with_balance_tol=True,
         argv=argv,
     )
 

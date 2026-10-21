@@ -371,7 +371,6 @@ def main(argv: list[str] | None = None) -> None:
         default_name_base="deed_admm",
         extra_args=_add_deed_admm_args,
         extra_kwargs=("gamma", "max_iter", "tol_ratio"),
-        with_balance_tol=True,
         argv=argv,
     )
 

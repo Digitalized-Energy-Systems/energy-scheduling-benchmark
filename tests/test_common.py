@@ -179,6 +179,60 @@ class TestAggregatorSlack:
         assert agg.degraded_generators == []
 
 
+class TestRunMeta:
+    """Meta-sidecar numbers that sweeps over loss rates and seeds rely on."""
+
+    @staticmethod
+    def _meta(**over):
+        from types import SimpleNamespace
+
+        from energy_scheduling_benchmark.scenarios._common import _run_meta
+
+        aggregator = SimpleNamespace(
+            iterations_by_aid={"a": 5, "b": 7},
+            converged_by_aid={"a": True, "b": True},
+            algorithm_stats={},
+            degraded_generators=[],
+            balance_max_rel_gap=0.0,
+            runs=1,
+            hours_with_missing_loads=0,
+        )
+        for key, value in over.items():
+            setattr(aggregator, key, value)
+        return _run_meta(SimpleNamespace(), aggregator, 1.0)
+
+    def test_degraded_run_is_not_reported_as_converged(self):
+        # A zero-filled unit reports no converged flag; the others did converge.
+        meta = self._meta(degraded_generators=["c"])
+        assert meta["stop_reason"] == "degraded"
+
+    def test_early_stop_without_convergence_is_not_max_iter(self):
+        # ADMM stops as not converged after --max-missing-rounds.
+        meta = self._meta(
+            iterations_by_aid={},
+            converged_by_aid={},
+            algorithm_stats={"converged": False},
+        )
+        assert meta["stop_reason"] == "not_converged"
+
+    def test_iterations_add_up_over_runs(self):
+        # FDGDM reruns once per outer storage round; each run reports again.
+        from energy_scheduling_benchmark.scenarios._common import (
+            OptimizationFinishedInfo,
+        )
+
+        agg = TestAggregatorSlack()._aggregator({"a": [10.0, 10.0, 10.0]})
+        for _ in range(3):
+            agg._finished_aids = set()
+            agg._handle_finished(
+                OptimizationFinishedInfo(
+                    aid="a", schedule=np.full(3, 10.0), iterations=5
+                ),
+                {},
+            )
+        assert agg.iterations_by_aid["a"] == 15
+
+
 class TestBuildGroupMap:
     def test_carrier_from_cache_load_skipped(self):
         r_gas = ComponentRef("thermal", "virtual/1: CCGT")
@@ -205,14 +259,6 @@ class TestBuildGroupMap:
         r = ComponentRef("thermal", "g0")
         group_map = build_group_map([r], statics_by_ref={r: {"carrier": np.nan}})
         assert group_map == {"g0": "thermal"}
-
-    def test_behavior_fallback_when_no_cache(self):
-        class FakeBehavior:
-            def get_statics(self, ref):
-                return {"carrier": "solar"}
-
-        r = ComponentRef("renewable", "s0")
-        assert build_group_map([r], behavior=FakeBehavior()) == {"s0": "solar"}
 
 
 class TestCarrierStyle:

@@ -72,12 +72,10 @@ __all__ = [
     "build_toy_network",
     "load_scenario",
     "resolve_scenario",
-    "build_behavior",
     "build_world",
     "register_component_agent",
     "resolve_loss_rate",
     "_clip_scenario",
-    "_lookup_ts",
     "compute_overall_cost",
     "compute_slack",
     "SlackSpec",
@@ -123,14 +121,6 @@ def resolve_scenario(network: str, *, simulate_days: int) -> ScenarioData:
     if network == "toy":
         return build_toy_network(periods=simulate_days * 24)
     return load_scenario(network)
-
-
-def build_behavior(scenario: ScenarioData) -> PyPSABehavior:
-    """Return the environment behavior driving *scenario*'s PyPSA network.
-
-    :param scenario: Scenario bundle from :func:`resolve_scenario`/:func:`load_scenario`.
-    """
-    return PyPSABehavior.from_scenario(scenario)
 
 
 #: Cost models of ``--cost-model`` (decision Q2).
@@ -451,7 +441,7 @@ def build_world(
     logger.info(
         "Communication: delay %.4g s, loss rate %.4g, seed %d", delay_s, loss_rate, seed
     )
-    behavior = build_behavior(scenario)
+    behavior = PyPSABehavior.from_scenario(scenario)
     # Without a graph (topology "complete") this equals mango's
     # SimpleCommunicationSimulation draw for draw; install_topology sets one.
     com_sim = TopologyCommunicationSimulation(
@@ -478,7 +468,7 @@ def filter_and_cache_statics(
     that need a component's static row more than once should fetch it here
     once and reuse the returned dict instead of calling ``get_statics`` again.
 
-    :param behavior: Environment behavior to query, from :func:`build_behavior`.
+    :param behavior: Environment behavior to query, from :func:`build_world`.
     :param refs: Candidate component refs (e.g. from ``get_components_by_type``).
     """
     statics_by_ref: dict[ComponentRef, dict] = {}
@@ -536,7 +526,6 @@ class DemandHorizon:
     target_series: np.ndarray
     #: Maps rounded mango simulation seconds → index into ``target_series``.
     time_to_index: dict[float, int]
-    start_dt: Any
 
 
 def build_demand_horizon(
@@ -564,7 +553,7 @@ def build_demand_horizon(
     :raises RuntimeError: If the first load's timeseries, or any load's
         timeseries, cannot be found in *scenario*.
     """
-    load_series_0 = _lookup_ts(scenario, load_refs[0])
+    load_series_0 = scenario.timeseries.get(load_refs[0])
     if load_series_0 is None:
         raise RuntimeError("Load timeseries not found in scenario.timeseries.")
 
@@ -575,7 +564,7 @@ def build_demand_horizon(
 
     target_series = np.zeros(horizon, dtype=float)
     for ref in load_refs:
-        s = _lookup_ts(scenario, ref)
+        s = scenario.timeseries.get(ref)
         if s is None:
             raise RuntimeError(f"Load timeseries missing for {ref}.")
         target_series += np.asarray(s.reindex(time_index), dtype=float)
@@ -587,7 +576,7 @@ def build_demand_horizon(
         sim_seconds = (dt - start_dt).total_seconds()
         time_to_index[round(float(sim_seconds), 6)] = i
 
-    return DemandHorizon(time_index, horizon, target_series, time_to_index, start_dt)
+    return DemandHorizon(time_index, horizon, target_series, time_to_index)
 
 
 def build_p_max_vec(
@@ -607,7 +596,7 @@ def build_p_max_vec(
     where ``extract_timeseries`` fell back to ``generators_t.p_set``, in MW.
     """
     p_nom = float(statics.get("p_nom", 0.0))
-    ts = _lookup_ts(scenario, ref)
+    ts = scenario.timeseries.get(ref)
     if ts is None:
         return np.full(horizon, p_nom * float(statics.get("p_max_pu", 1.0)))
     values = np.asarray(ts.reindex(time_index), dtype=float)
@@ -890,11 +879,6 @@ def _clip_scenario(scenario: ScenarioData, simulate_days: int) -> ScenarioData:
     return _dataclass_replace(scenario, timeseries=clipped)
 
 
-def _lookup_ts(scenario: ScenarioData, ref: Any) -> Any | None:
-    """Return the timeseries for *ref*, or ``None`` if it has none."""
-    return scenario.timeseries.get(ref)
-
-
 def compute_overall_cost(
     cost_by_aid: dict[str, float],
     t_P: Sequence[float],
@@ -968,13 +952,11 @@ def _slack_columns(
 def build_group_map(
     refs: Sequence[ComponentRef],
     *,
-    statics_by_ref: dict[ComponentRef, dict] | None = None,
-    behavior: Any | None = None,
+    statics_by_ref: dict[ComponentRef, dict],
 ) -> dict[str, str]:
     """Map ``component_id -> carrier`` for the stacked / per-unit plots.
 
-    The carrier comes from the cached statics row when *statics_by_ref* is
-    given, else from ``behavior.get_statics(ref)``.  Components without a
+    The carrier comes from the cached statics row.  Components without a
     carrier fall back to their ``element_type`` (``"storage"`` etc.), then to
     ``"other"``.  ``LOAD`` refs are skipped (loads never enter the ``"P"``
     recording).  Keys are ``str(component_id)`` so they match the agent AIDs
@@ -984,12 +966,7 @@ def build_group_map(
     for ref in refs:
         if getattr(ref, "element_type", None) == LOAD:
             continue
-        statics: dict | None = None
-        if statics_by_ref is not None:
-            statics = statics_by_ref.get(ref)
-        if statics is None and behavior is not None:
-            statics = behavior.get_statics(ref)
-        carrier = (statics or {}).get("carrier")
+        carrier = statics_by_ref.get(ref, {}).get("carrier")
         if carrier is not None and not pd.isna(carrier) and str(carrier).strip():
             out[str(ref.component_id)] = str(carrier)
         else:
@@ -1053,16 +1030,11 @@ def build_scenario_argparser(
     *,
     default_name_base: str,
     extra_args: Callable[[argparse.ArgumentParser], None] | None = None,
-    with_balance_tol: bool = False,
 ) -> argparse.ArgumentParser:
     """Build the CLI parser shared by all scenario entry points.
 
     *extra_args*, if given, is called with the parser to add algorithm-specific
     flags (e.g. DEED-ADMM's ``--gamma``/``--max-iter``).
-
-    :param with_balance_tol: If true, add ``--balance-tol`` (the power-balance
-        tolerance passed to :class:`PowerLoadAggregator`) and ``--strict``
-        (fail the run instead of writing outputs when that check fails).
     """
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
@@ -1201,29 +1173,25 @@ def build_scenario_argparser(
         default=SlackSpec().export_price,
         help="Price per MWh the slack absorbs, €/MWh (default: %(default)s).",
     )
-    if with_balance_tol:
-        # Dests "balance_tol"/"strict" — keep in sync with the matching
-        # names hardcoded into run_scenario_main's `with_balance_tol` branch
-        # below, which forwards them to execute_test_case.
-        parser.add_argument(
-            "--balance-tol",
-            type=float,
-            default=0.01,
-            help=(
-                "Max allowed per-timestep |generation - demand| / demand "
-                "before a finished run is flagged as not converged (default: "
-                "0.01, i.e. 1%%)."
-            ),
-        )
-        parser.add_argument(
-            "--strict",
-            action="store_true",
-            help=(
-                "Exit with an error instead of writing CSV/PDF outputs if "
-                "the power-balance check fails (default: log a warning and "
-                "write the outputs anyway)."
-            ),
-        )
+    parser.add_argument(
+        "--balance-tol",
+        type=float,
+        default=0.01,
+        help=(
+            "Max allowed per-timestep |generation - demand| / demand "
+            "before a finished run is flagged as not converged (default: "
+            "0.01, i.e. 1%%)."
+        ),
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Exit with an error instead of writing CSV/PDF outputs if "
+            "the power-balance check fails (default: log a warning and "
+            "write the outputs anyway)."
+        ),
+    )
     if extra_args is not None:
         extra_args(parser)
     return parser
@@ -1631,7 +1599,11 @@ class PowerLoadAggregator(Role):
                 schedule, dtype=float
             ).copy()
         self._finished_aids.add(message.aid)
-        self.iterations_by_aid[message.aid] = getattr(message, "iterations", None)
+        iterations = getattr(message, "iterations", None)
+        if iterations is not None:
+            # Summed over runs: FDGDM reruns once per outer storage round.
+            iterations += self.iterations_by_aid.get(message.aid) or 0
+        self.iterations_by_aid[message.aid] = iterations
         self.converged_by_aid[message.aid] = getattr(message, "converged", None)
         if len(self._finished_aids) == self._n_finished_required:
             if self._on_run_finished is not None:
@@ -1878,8 +1850,6 @@ def _run_meta(world: Any, aggregator: Any, total_cost: float) -> dict[str, Any]:
             getattr(getattr(world, "clock", None), "time", 0.0) or 0.0
         ),
     }
-    if aggregator is None:
-        return meta
     iterations = [i for i in aggregator.iterations_by_aid.values() if i is not None]
     converged = [c for c in aggregator.converged_by_aid.values() if c is not None]
     stats = dict(getattr(aggregator, "algorithm_stats", {}) or {})
@@ -1887,8 +1857,11 @@ def _run_meta(world: Any, aggregator: Any, total_cost: float) -> dict[str, Any]:
         iterations = [stats["iterations"]]
     if not converged and stats.get("converged") is not None:
         converged = [stats["converged"]]
-    if converged:
-        stop_reason = "converged" if all(converged) else "max_iter"
+    if aggregator.degraded_generators:
+        stop_reason = "degraded"  # zero-filled units report no converged flag
+    elif converged:
+        # Not "max_iter": ADMM also stops early after --max-missing-rounds.
+        stop_reason = "converged" if all(converged) else "not_converged"
     else:
         stop_reason = "fixed_budget" if iterations else "n/a"
     for key in ("solver_status", "objective"):
@@ -1918,11 +1891,8 @@ def file_sha256(path: Any) -> str | None:
     p = Path(str(path))
     if not p.is_file():
         return None
-    digest = hashlib.sha256()
     with open(p, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(f, "sha256").hexdigest()
 
 
 def _git_state(module: Any) -> dict[str, Any]:
@@ -2144,73 +2114,22 @@ def run_scenario_main(
     default_name_base: str,
     extra_args: Callable[[argparse.ArgumentParser], None] | None = None,
     extra_kwargs: Sequence[str] = (),
-    with_balance_tol: bool = False,
     argv: list[str] | None = None,
 ) -> None:
     """Shared ``main()`` body: parse CLI args, resolve the scenario, run it.
 
-    *extra_kwargs* names CLI args (added via *extra_args*, or ``"balance_tol"``/
-    ``"strict"`` when *with_balance_tol* is set) to forward to
+    *extra_kwargs* names CLI args added via *extra_args* to forward to
     *execute_test_case* verbatim, e.g. ``("gamma", "max_iter")`` for
     DEED-ADMM's ``--gamma``/``--max-iter``.
     """
     parser = build_scenario_argparser(
-        doc,
-        default_name_base=default_name_base,
-        extra_args=extra_args,
-        with_balance_tol=with_balance_tol,
+        doc, default_name_base=default_name_base, extra_args=extra_args
     )
-    # Tuned parameters: a first parse finds the network/topology, the file's
-    # values become the parser defaults, and the second parse lets explicit
-    # flags win.
-    first = parser.parse_args(argv)
-    config = tuned_params.load(first.tuned_params)
-    tuned, tuned_from = tuned_params.resolve(
-        config, default_name_base, first.network, first.topology
-    )
-    source = first.tuned_params or tuned_params.DEFAULT_PATH
-    actions = {action.dest: action for action in parser._actions}
-    unknown = sorted(set(tuned) - set(actions))
-    if unknown:
-        parser.error(
-            f"{source}: unknown parameter(s) {unknown} for {default_name_base}"
-        )
-    # set_defaults() skips argparse's own checks: apply each flag's type and
-    # choices to the file's values here.
-    for key, value in list(tuned.items()):
-        action = actions[key]
-        if action.type is not None:
-            try:
-                value = action.type(str(value))
-            except (argparse.ArgumentTypeError, TypeError, ValueError) as exc:
-                parser.error(f"{source}: {key} = {tuned[key]!r}: {exc}")
-        elif isinstance(action.const, bool) and not isinstance(value, bool):
-            parser.error(f"{source}: {key} must be true or false, got {value!r}")
-        if action.choices is not None and value not in action.choices:
-            parser.error(
-                f"{source}: {key} = {value!r} is not one of {list(action.choices)}"
-            )
-        tuned[key] = value
-    parser.set_defaults(**tuned)
-    args = parser.parse_args(argv)
-    # Flags given on the command line: parse once more with every default
-    # suppressed, so only explicit flags appear.
-    saved = [(action, action.default) for action in parser._actions]
-    saved_parser_defaults = dict(parser._defaults)
-    parser._defaults.clear()
-    for action in parser._actions:
-        action.default = argparse.SUPPRESS
-    try:
-        explicit = set(vars(parser.parse_args(argv)))
-    finally:
-        for action, default in saved:
-            action.default = default
-        parser._defaults.update(saved_parser_defaults)
-    args.tuned_from = {key: tuned_from[key] for key in tuned if key not in explicit}
+    args = tuned_params.apply(parser, argv, default_name_base)
 
     slack = None
     if args.slack:
-        if getattr(args, "strict", False):
+        if args.strict:
             parser.error(
                 "--strict cannot be combined with --slack: the slack closes "
                 "every power-balance gap, so there is nothing left to enforce."
@@ -2224,12 +2143,7 @@ def run_scenario_main(
 
     scenario = resolve_scenario(args.network, simulate_days=args.simulate_days)
 
-    # "balance_tol"/"strict" here must match the --balance-tol/--strict
-    # `dest`s added in build_scenario_argparser's with_balance_tol branch.
-    names = (
-        (*extra_kwargs, "balance_tol", "strict") if with_balance_tol else extra_kwargs
-    )
-    kwargs = {name: getattr(args, name) for name in names}
+    kwargs = {name: getattr(args, name) for name in extra_kwargs}
     # Every output path is derived from name_base, so prefixing it with the
     # output directory routes all CSV/PDF writes there.
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -2254,6 +2168,8 @@ def run_scenario_main(
             cost_model=args.cost_model,
             topology=args.topology,
             slack=slack,
+            balance_tol=args.balance_tol,
+            strict=args.strict,
             **kwargs,
         )
     )
