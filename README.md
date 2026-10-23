@@ -71,7 +71,7 @@ Seven scenario entry points are installed:
 | `esb-consensus`        | Averaging consensus with gradient (Jian et al. 2020)               |
 | `esb-admm`             | Exchange ADMM with proximal actors (Boyd et al. 2011)              |
 | `esb-diffusion`        | Adapt-then-combine diffusion (Ces et al. 2025)                     |
-| `esb-exact-diffusion`  | Bias-corrected exact diffusion (Yuan et al. 2018 / Ces et al. 2025)|
+| `esb-exact-diffusion`  | Bias-corrected exact diffusion (Yuan et al. 2019 / Ces et al. 2025)|
 | `esb-fdgdm`            | Fast distributed gradient descent (Bai et al. 2022)                |
 | `esb-deed-admm`        | DEED-ADMM (Zhu et al. 2025)                                        |
 
@@ -167,8 +167,8 @@ received:
   3 × `--delay-s`) even if load reports are missing, counting a missing load
   with its forecast; lost results
   (schedules, central dispatch's unit reports) are requested again with
-  mango's `gather` every `--result-poll-s` seconds. After `--result-retries`
-  requests a missing result is given up, the run is logged as degraded and
+  mango's `gather` every `--result-poll-s` seconds (default 300). After
+  `--result-retries` requests (default 12) a missing result is given up, the run is logged as degraded and
   the balance check decides whether it is valid.
 
 On the `ring` topology a message to or from the leader takes several
@@ -257,6 +257,8 @@ src/energy_scheduling_benchmark/
 ├── networks.py         # PyPSA network loaders (examples, files, PYPOWER, toy fixture)
 ├── dispatch/           # Pyomo economic dispatch (full-horizon LP)
 ├── plotting.py         # matplotlib plotting (replacement for CairoMakie)
+├── tuned_params.py     # loads tuned_parameters.toml (section precedence, tuned_from)
+├── tuned_parameters.toml  # tuned algorithm parameters per scenario / topology / network
 └── scenarios/
     ├── _common.py              # shared scenario skeleton (argparser, roles,
     │                           #  balance verification, slack, cost computation)
