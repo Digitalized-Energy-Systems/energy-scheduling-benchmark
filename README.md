@@ -260,8 +260,12 @@ src/energy_scheduling_benchmark/
 ├── tuned_params.py     # loads tuned_parameters.toml (section precedence, tuned_from)
 ├── tuned_parameters.toml  # tuned algorithm parameters per scenario / topology / network
 └── scenarios/
-    ├── _common.py              # shared scenario skeleton (argparser, roles,
-    │                           #  balance verification, slack, cost computation)
+    ├── _common.py              # re-exports the shared scenario skeleton below
+    ├── _model.py               # unit bounds, demand horizon, cost model, storage params
+    ├── _world.py               # scenario/world setup, topology, run_simulation, loss
+    ├── _roles.py               # messages, leader (PowerLoadAggregator), result roles
+    ├── _outputs.py             # cost/slack columns, run meta, output files
+    ├── _cli.py                 # shared argparser, run_scenario_main
     ├── central_dispatch.py     # central full-horizon LP (lower bound)
     ├── consensus.py            # averaging consensus
     ├── admm.py                 # exchange ADMM

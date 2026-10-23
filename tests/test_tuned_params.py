@@ -137,15 +137,16 @@ def test_wrong_type_in_file_rejected(monkeypatch, tmp_path):
 
 
 def test_explicit_flag_equal_to_file_is_not_attributed(monkeypatch, tmp_path):
-    from energy_scheduling_benchmark.scenarios import _common
+    from energy_scheduling_benchmark.scenarios import _cli
 
     seen_args = {}
-    real = _common._complete_meta
+    real = _cli._complete_meta
 
     def spy(path, *, scenario, args, wall_time_s):
         seen_args.update(vars(args))
 
-    monkeypatch.setattr(_common, "_complete_meta", spy)
+    # run_scenario_main looks _complete_meta up in _cli, not in the _common re-export.
+    monkeypatch.setattr(_cli, "_complete_meta", spy)
     _capture(
         monkeypatch,
         "consensus",

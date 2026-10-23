@@ -122,7 +122,7 @@ energy-scheduling-benchmark/hpc/submit_all.sh --all -- --slack
 | File | Change |
 |---|---|
 | `dispatch/pyomo_dispatch.py` | `SlackSpec(import_price, export_price)`; slack variables, tie-break and `slack_import`/`slack_export` in `solve_multiperiod_dispatch` |
-| `scenarios/_common.py` | CLI flags; `compute_slack`; `PowerLoadAggregator(slack=...)` with `schedule_residual()` and `slack_by_bucket()`; `write_scenario_outputs(slack=...)` adds cost, CSV columns and annotation |
+| `scenarios/_cli.py`, `_roles.py`, `_outputs.py` | CLI flags (`_cli`); `PowerLoadAggregator(slack=...)` with `schedule_residual()` and `slack_by_bucket()` (`_roles`); `compute_slack` and `write_scenario_outputs(slack=...)`, which adds cost, CSV columns and annotation (`_outputs`) |
 | `scenarios/central_dispatch.py` | Passes the slack to the LP and logs the LP's slack |
 | the other six `scenarios/*.py` | `execute_test_case(..., slack=None)`, passed to the aggregator and outputs |
 | `compare_costs.py` (monorepo root) | Skips the balance exclusion for slack runs; writes `results/slack_usage.csv` |
