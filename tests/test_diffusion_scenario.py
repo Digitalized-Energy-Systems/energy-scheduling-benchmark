@@ -47,6 +47,7 @@ class TestExecuteTestCase:
         total = df[power_cols].fillna(0.0).sum(axis=1).to_numpy()
         target = df[target_cols[0]].fillna(0.0).to_numpy()
         mask = np.abs(target) > 1e-6
+        assert mask.any(), "demand target is zero in every row"
         gap = np.abs(total[mask] - target[mask])
         tol = np.maximum(2.0, 0.05 * np.abs(target[mask]))
         assert np.all(gap <= tol), (
