@@ -21,7 +21,7 @@ LOG_DIR="$ESB_ROOT/hpc-logs"
 
 # Per-scenario requests "memory walltime" for the longest run in the manifest
 # (7 days on lower_saxony_2030). Generous first guesses; tighten with `seff`
-# after the first sweep and from the probe in docs/hpc-oldenburg-plan.md §7.4.
+# after the first sweep and from the probe table in hpc/README.md.
 declare -A RESOURCES=(
     [central-dispatch]="4G 02:00:00"
     [consensus]="32G 24:00:00"

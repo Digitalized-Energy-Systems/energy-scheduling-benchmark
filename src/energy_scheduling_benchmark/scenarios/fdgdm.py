@@ -12,8 +12,9 @@ Flow
 2. Renewables are pre-scheduled at their available capacity.  FDGDM runs
    on the thermals.  Storage (Bai et al. have none) stays outside FDGDM but
    is price-driven: after each FDGDM run the leader takes the converged
-   incremental cost λ*(t), gives every storage unit the exact best response
-   of the shared storage model (decision Q15), and reruns FDGDM on the
+   incremental cost λ*(t), gives every storage unit the price response of the
+   shared storage model (decision Q15; ``price_response``, proximal term
+   centred on zero, so biased toward idling), and reruns FDGDM on the
    remaining demand — a few damped outer rounds.
    FDGDM is run on thermals only for the residual demand.
 3. The epsilon (curvature bound) for thermals is computed from the cost
@@ -261,7 +262,7 @@ async def execute_test_case(
     # Necessary because including zero-cost generators in FDGDM drives thermals
     # to 0 on the first iteration (large w_abs = 1/(n·ε) × cost_diff).
     #
-    # Storage takes part in FDGDM itself (shared storage model, Q15).
+    # Storage stays outside FDGDM: price-driven outer rounds below (shared storage model, Q15).
     # ------------------------------------------------------------------
     renewable_refs = [r for r in nonthermal_refs if r.element_type == RENEWABLE]
     storage_refs = [r for r in nonthermal_refs if r.element_type == STORAGE]
@@ -501,6 +502,8 @@ async def execute_test_case(
         proposal: dict[str, np.ndarray] = {}
         change = 0.0
         for aid, model, eps in storage_units:
+            # Zero-centred response: biased toward idling, unlike the other
+            # algorithms' proximal_response (documented in docs/deviations.md).
             response, _ = model.price_response(lam, eps)
             old = schedule_by_aid[aid]
             new = (1.0 - STORAGE_DAMPING) * old + STORAGE_DAMPING * response

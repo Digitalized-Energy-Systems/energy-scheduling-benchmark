@@ -6,8 +6,9 @@ The scripts in this directory are the cluster counterpart of the local
 `run_all_scenarios.sh`: same networks, same flags, same `results/<network>/` layout, so
 `compare_costs.py` works unchanged.
 
-Background, measurements and the reasoning behind the resource numbers are in the
-design notes at `docs/hpc-oldenburg-plan.md` in the monorepo root. Cluster
+Measured resource numbers are under [About the resource numbers](#about-the-resource-numbers);
+the original port plan (cluster survey, design reasoning) is archived at
+`_archive/docs/hpc-oldenburg-plan.md` in the monorepo root. Cluster
 documentation: <https://hpcwiki.uni-oldenburg.de> (the old `wiki.hpcuser.uni-oldenburg.de`
 describes CARL and is outdated).
 
@@ -300,6 +301,22 @@ with `seff` after the first sweep; smaller requests start sooner.
 * Default limits on ROSA if you do not set them: **2 h walltime** and **6000 MB per CPU**.
   Maximum walltime on `rosa.p`/`mpcs.p`/`mpcb.p` is 7 days; `rosa_express.p` is 2 h.
 
+Probe, 2026-10-19/20: `lower_saxony_2030`, 1 day, lossless, default budgets, on the
+workstation with a 12 GB cap and a 1 h timeout:
+
+| Scenario | Wall time | Peak RSS | Outcome |
+|---|---:|---:|---|
+| central-dispatch | 7 s | 0.46 GB | flat memory |
+| fdgdm | 12 s | 0.64 GB | converged (structural surplus failure, Q24) |
+| admm | 1 m 42 s | 0.49 GB | converged, 267 rounds (no per-iteration memory growth since `record_messages=False`) |
+| diffusion | 37 m 38 s | 1.9 GB | converged, 71 rounds |
+| consensus | > 1 h (timeout) | ≈ 2.1 GB at 23 min | did not finish |
+| exact-diffusion | > 1 h (timeout) | — | did not finish |
+| deed-admm | > 1 h (timeout) | — | did not finish |
+
+3-day runs are substantially heavier on both axes. Replace these with `sacct`/`seff`
+numbers after the first production array.
+
 ## 8. Get the results back
 
 First, on the cluster, the acceptance test of a sweep (decision Q19 — inputs only, no
@@ -346,8 +363,10 @@ cp -r $WORK/esb/results $DATA/esb-results-$(date +%F)
   `$SLURM_SUBMIT_DIR`.
 * **Threads are pinned** (`OMP_NUM_THREADS` etc. = `--cpus-per-task`). Without that,
   BLAS/HiGHS detect all 128 cores and many tasks sharing a node slow each other down.
-* **PyPSA-Eur** (building new networks) is a separate toolchain and not covered here;
-  see `docs/hpc-oldenburg-plan.md` §8.
+* **PyPSA-Eur** (building new networks) is a separate toolchain (`pixi`, not the shared
+  venv) and not covered here; running the scenarios does not need it. On the cluster, put
+  the checkout in `$WORK`, let Snakemake re-download inputs from the login node instead
+  of rsyncing `data/` (~21 GB), and use `snakemake --executor slurm`.
 
 ## References
 
