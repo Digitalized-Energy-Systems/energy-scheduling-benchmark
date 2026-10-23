@@ -24,6 +24,9 @@ from energy_scheduling_benchmark.scenarios._outputs import (
 
 logger = logging.getLogger(__name__)
 
+# Kick-off attempts before the leader gives up; each waits request_timeout for the acks.
+KICK_OFF_RETRIES = 20
+
 
 @dataclass
 class PowerLoadInfo:
@@ -195,7 +198,6 @@ class PowerLoadAggregator(Role):
         request_timeout: float = 1.0,
         result_poll_s: float | None = None,
         result_retries: int = 12,
-        kick_off_retries: int = 20,
         on_run_finished: Callable[[], Any | None] | None = None,
     ) -> None:
         super().__init__()
@@ -237,7 +239,6 @@ class PowerLoadAggregator(Role):
         self._request_timeout = request_timeout
         self._result_poll_s = result_poll_s
         self._result_retries = result_retries
-        self._kick_off_retries = kick_off_retries
 
         self._ready: bool = False
         self._finished_aids: set[str] = set()
@@ -312,7 +313,7 @@ class PowerLoadAggregator(Role):
         pending = (
             [self._trigger] if self.runs == 1 else list(self._generator_addrs.values())
         )
-        for _ in range(self._kick_off_retries):
+        for _ in range(KICK_OFF_RETRIES):
             replies = await self.context.gather(
                 request,
                 pending,
@@ -327,7 +328,7 @@ class PowerLoadAggregator(Role):
             "%s: the kick-off was never acknowledged after %d attempts; the "
             "distributed run did not start.",
             self._balance_label or type(self).__name__,
-            self._kick_off_retries,
+            KICK_OFF_RETRIES,
         )
 
     def _schedule_result_poll(self, attempt: int) -> None:
