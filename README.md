@@ -62,6 +62,11 @@ builds the `lower_saxony_2030.nc` regional extract, and
 `build_tennet_profiles.py` / `apply_renewable_profiles.py` replace its wind and
 solar availability with measured 2019 TenneT capacity factors — see
 `docs/lower-saxony-2030-workflow.md` in the monorepo root).
+All bundled `.nc` files went through `resources/networks/prepare_network.py`
+(run it on any network you add): it drops hydro storage units and zero-capacity
+units, writes `marginal_cost_quadratic` on thermal units, sets storage
+`max_hours` (PHS 6 h, battery 2 h) and an initial SOC of 50 %. Unprepared
+networks still load; the scenarios' runtime fallbacks then apply.
 
 ## Running the scenarios
 
@@ -83,10 +88,12 @@ default: the current directory), `--simulate-days` (default `3`), `--delay-s`
 (comms delay, default `0.02`), `--loss-rate` (probability that a message is lost, a
 fraction from 0 to 1, e.g. `0.05` for 5 %; default `0`), `--seed` (seed for
 the loss draws, default `0`, so lossy runs are reproducible), `--cost-model`
-(`linear`, the default PyPSA marginal costs, or `quadratic`: thermal units add
-`c₂·P²` with `c₂ = 0.11·marginal_cost/p_nom`, so their marginal cost is 22 % higher
+(`quadratic`, the default: thermal units add `c₂·P²` with `c₂` = the network's
+`marginal_cost_quadratic`, or `0.11·marginal_cost/p_nom` when it is not set, so their marginal cost is 22 % higher
 at full output — k = 0.11 from Wood & Wollenberg's Example 4E; renewables and
-storage stay linear; central dispatch then solves a QP with HiGHS), `--topology`
+storage stay linear; central dispatch then solves a QP with HiGHS; or `linear`,
+the PyPSA marginal costs only — FDGDM on the toy needs it, see
+`docs/deviations.md`), `--topology`
 (communication graph, see below; default `complete`), `--tuned-params` (see
 below), `--log-level`,
 plus `--balance-tol` (max per-timestep |generation − demand| / demand before a

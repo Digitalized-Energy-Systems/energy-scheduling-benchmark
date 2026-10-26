@@ -21,7 +21,7 @@ from energy_scheduling_benchmark.networks import build_toy_network
 SCENARIOS = ["consensus", "admm", "diffusion", "exact_diffusion", "fdgdm", "deed_admm"]
 
 
-async def _run(tmp_path, scenario: str) -> tuple[float, float]:
+async def _run(tmp_path, scenario: str, cost_model: str = "quadratic") -> tuple[float, float]:
     """``(total cost, unmet demand in MWh)`` of *scenario* on the toy network."""
     module = importlib.import_module(
         f"energy_scheduling_benchmark.scenarios.{scenario}"
@@ -32,6 +32,7 @@ async def _run(tmp_path, scenario: str) -> tuple[float, float]:
         name_base=str(name_base),
         simulate_days=1,
         strict=True,
+        cost_model=cost_model,
     )
     df = pd.read_csv(f"{name_base}-df.csv", index_col=0)
     gap = df.filter(like="target:").iloc[:, 0] - df.filter(like="P:").sum(axis=1)
@@ -40,8 +41,10 @@ async def _run(tmp_path, scenario: str) -> tuple[float, float]:
 
 @pytest.mark.parametrize("scenario", SCENARIOS)
 async def test_cost_is_not_below_central_dispatch(tmp_path, scenario):
-    central, _ = await _run(tmp_path, "central_dispatch")
-    cost, unmet_mwh = await _run(tmp_path, scenario)
+    # FDGDM breaks ΣP on the quadratic toy (Eq. 16 clipping, deviations.md)
+    cost_model = "linear" if scenario == "fdgdm" else "quadratic"
+    central, _ = await _run(tmp_path, "central_dispatch", cost_model)
+    cost, unmet_mwh = await _run(tmp_path, scenario, cost_model)
     dearest = float(build_toy_network(periods=1).net.generators.marginal_cost.max())
     assert cost + unmet_mwh * dearest >= central * (1 - 1e-6), (
         f"{scenario}: {cost:.1f} + {unmet_mwh:.2f} MWh unmet vs central {central:.1f}"

@@ -91,7 +91,7 @@ async def execute_test_case(
     balance_tol: float = 0.01,
     strict: bool = False,
     slack: SlackSpec | None = None,
-    cost_model: str = "linear",
+    cost_model: str = "quadratic",
 ) -> None:
     """Run the diffusion benchmark once and write out CSV + plots.
 

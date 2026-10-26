@@ -39,14 +39,18 @@ QUADRATIC_K = 0.11
 def quadratic_cost_coefficient(statics: dict, cost_model: str) -> float:
     """``c₂`` (€/MW²h) of one generator for *cost_model* (0 for ``linear``).
 
-    ``c₂ = QUADRATIC_K · max(c₁, 0) / p_nom``; zero-cost units (renewables) and
-    units without ``p_nom`` stay linear. Storage is not passed here (its cost
-    stays linear, decision Q15).
+    The network's ``marginal_cost_quadratic`` if set (``prepare_network.py``
+    writes it), else ``c₂ = QUADRATIC_K · max(c₁, 0) / p_nom``; zero-cost units
+    (renewables) and units without ``p_nom`` stay linear. Storage is not passed
+    here (its cost stays linear, decision Q15).
     """
     if cost_model not in COST_MODELS:
         raise ValueError(f"cost_model must be one of {COST_MODELS}, got {cost_model!r}")
     if cost_model == "linear":
         return 0.0
+    c2 = float(statics.get("marginal_cost_quadratic", 0.0))
+    if c2 > 0:
+        return c2
     c1 = max(float(statics.get("marginal_cost", 0.0)), 0.0)
     p_nom = float(statics.get("p_nom", 0.0))
     return QUADRATIC_K * c1 / p_nom if p_nom > 0 else 0.0

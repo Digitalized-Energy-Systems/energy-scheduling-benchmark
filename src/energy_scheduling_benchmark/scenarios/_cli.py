@@ -120,10 +120,11 @@ def build_scenario_argparser(
     parser.add_argument(
         "--cost-model",
         choices=COST_MODELS,
-        default="linear",
+        default="quadratic",
         help=(
-            "Generator cost: 'linear' (PyPSA marginal cost, default) or 'quadratic' "
-            "(+ c2·P² with c2 = 0.11·marginal_cost/p_nom, decision Q17)."
+            "Generator cost: 'quadratic' (default; + c2·P² on thermal units, c2 = "
+            "the network's marginal_cost_quadratic or 0.11·marginal_cost/p_nom, "
+            "decision Q17) or 'linear' (PyPSA marginal cost only)."
         ),
     )
     parser.add_argument(

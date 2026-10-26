@@ -202,6 +202,7 @@ class TestFDGDMScenarioIntegration:
                 loss_rate=0.0,
                 name_base=name_base,
                 simulate_days=1,
+            cost_model="linear",  # quadratic toy: Eq. 16 clipping breaks ΣP (deviations.md)
             )
         balance_msgs = [r for r in caplog.records if "power balance" in r.getMessage()]
         assert balance_msgs, "expected a balance verification log entry"
@@ -224,6 +225,7 @@ class TestFDGDMScenarioIntegration:
             loss_rate=0.0,
             name_base=name_base,
             simulate_days=1,
+            cost_model="linear",  # quadratic toy: Eq. 16 clipping breaks ΣP (deviations.md)
         )
         df = pd.read_csv(f"{name_base}-df.csv", index_col=0)
         power_cols = [c for c in df.columns if c.startswith("P:")]
@@ -253,6 +255,7 @@ class TestFDGDMScenarioIntegration:
             seed=1,
             name_base=name_base,
             simulate_days=1,
+            cost_model="linear",  # quadratic toy: Eq. 16 clipping breaks ΣP (deviations.md)
             strict=True,
         )
         assert os.path.exists(f"{name_base}-df.csv")

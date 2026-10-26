@@ -463,12 +463,10 @@ class TestCostModel:
         )
         assert total == pytest.approx(2.0 * 30.0 + 0.1 * (100.0 + 400.0))
 
-    def test_cli_default_linear_and_choices(self):
+    def test_cli_default_quadratic_and_choices(self):
         parser = build_scenario_argparser(None, default_name_base="x")
-        assert parser.parse_args([]).cost_model == "linear"
-        assert (
-            parser.parse_args(["--cost-model", "quadratic"]).cost_model == "quadratic"
-        )
+        assert parser.parse_args([]).cost_model == "quadratic"
+        assert parser.parse_args(["--cost-model", "linear"]).cost_model == "linear"
         with pytest.raises(SystemExit):
             parser.parse_args(["--cost-model", "cubic"])
 
