@@ -23,8 +23,9 @@ from pathlib import Path
 
 import numpy as np
 import pypsa
-from energy_scheduling_benchmark.scenarios._model import QUADRATIC_K
 from mango_energy_environments import DEFAULT_RENEWABLE_CARRIERS
+
+from energy_scheduling_benchmark.scenarios._model import QUADRATIC_K
 
 MAX_HOURS = {"PHS": 6.0, "battery": 2.0}
 

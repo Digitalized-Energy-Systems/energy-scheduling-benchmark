@@ -202,7 +202,7 @@ class TestFDGDMScenarioIntegration:
                 loss_rate=0.0,
                 name_base=name_base,
                 simulate_days=1,
-            cost_model="linear",  # quadratic toy: Eq. 16 clipping breaks ΣP (deviations.md)
+                cost_model="linear",  # quadratic toy: Eq. 16 clipping breaks ΣP (deviations.md)
             )
         balance_msgs = [r for r in caplog.records if "power balance" in r.getMessage()]
         assert balance_msgs, "expected a balance verification log entry"

@@ -21,7 +21,9 @@ from energy_scheduling_benchmark.networks import build_toy_network
 SCENARIOS = ["consensus", "admm", "diffusion", "exact_diffusion", "fdgdm", "deed_admm"]
 
 
-async def _run(tmp_path, scenario: str, cost_model: str = "quadratic") -> tuple[float, float]:
+async def _run(
+    tmp_path, scenario: str, cost_model: str = "quadratic"
+) -> tuple[float, float]:
     """``(total cost, unmet demand in MWh)`` of *scenario* on the toy network."""
     module = importlib.import_module(
         f"energy_scheduling_benchmark.scenarios.{scenario}"
