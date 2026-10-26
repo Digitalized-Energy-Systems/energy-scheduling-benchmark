@@ -352,8 +352,9 @@ cp -r $WORK/esb/results $DATA/esb-results-$(date +%F)
   use; to use them in jobs, load each once on the login node
   (`python -c "import pypsa; pypsa.examples.ac_dc_meshed()"`), which caches it under
   `~/.cache/pypsa`, visible to the compute nodes.
-* **Reproducibility.** With `--loss-rate 0` (always passed by these scripts) and the
-  constant `--delay-s`, runs are deterministic, so cluster results should match the
+* **Reproducibility.** With the constant `--delay-s`, runs are deterministic: lossless
+  ones (`submit_all.sh` always passes `--loss-rate 0`) and lossy ones for a given
+  `--seed` (the manifest sweep records it per run), so cluster results should match the
   workstation. Comparing `cost_comparison.csv` for a network you already ran locally is
   a good acceptance test.
 * **`--export=NONE`** is set in the job scripts on purpose (recommended by the HPC team):

@@ -58,7 +58,9 @@ PyPSA `carrier` attribute.
 PyPSA-Eur extracts for benchmarking live in `resources/networks/` (see
 `resources/networks/print_network.py` for how to regenerate them from the
 sibling `pypsa-eur/` workflow; `resources/networks/extract_lower_saxony.py`
-builds the `lower_saxony_2030.nc` regional extract — see
+builds the `lower_saxony_2030.nc` regional extract, and
+`build_tennet_profiles.py` / `apply_renewable_profiles.py` replace its wind and
+solar availability with measured 2019 TenneT capacity factors — see
 `docs/lower-saxony-2030-workflow.md` in the monorepo root).
 
 ## Running the scenarios
