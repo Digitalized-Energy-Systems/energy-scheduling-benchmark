@@ -9,8 +9,8 @@ The package is built on top of:
 * [mango-energy-environments](../mango-energy-environments) — mango environment abstractions (`PyPSABehavior`, component classification)
 * [distributed-resource-optimization](../distributed-resource-optimization) — the distributed algorithms (consensus, ADMM, diffusion, FDGDM, DEED-ADMM, COHDA)
 * [PyPSA](https://pypsa.org) — power-system data model (replaces `PowerSystems.jl`)
-* [Pyomo](https://pyomo.readthedocs.io) — LP modelling layer (replaces JuMP); any
-  Pyomo-compatible LP solver works, but HiGHS (via `highspy`) is preferred.
+* [cvxpy](https://www.cvxpy.org) — modelling layer (replaces JuMP); HiGHS (`highspy`)
+  solves the LP, Clarabel the QP of `--cost-model quadratic`.
 
 ## Install
 
@@ -74,7 +74,7 @@ Seven scenario entry points are installed:
 
 | Entry point            | Algorithm                                                          |
 |------------------------|--------------------------------------------------------------------|
-| `esb-central-dispatch` | Centralised full-horizon Pyomo/HiGHS LP incl. storage (lower bound)|
+| `esb-central-dispatch` | Centralised full-horizon cvxpy LP/QP incl. storage (lower bound)   |
 | `esb-consensus`        | Averaging consensus with gradient (Jian et al. 2020)               |
 | `esb-admm`             | Exchange ADMM with proximal actors (Boyd et al. 2011)              |
 | `esb-diffusion`        | Adapt-then-combine diffusion (Ces et al. 2025)                     |
@@ -91,7 +91,7 @@ the loss draws, default `0`, so lossy runs are reproducible), `--cost-model`
 (`quadratic`, the default: thermal units add `c₂·P²` with `c₂` = the network's
 `marginal_cost_quadratic`, or `0.11·marginal_cost/p_nom` when it is not set, so their marginal cost is 22 % higher
 at full output — k = 0.11 from Wood & Wollenberg's Example 4E; renewables and
-storage stay linear; central dispatch then solves a QP with HiGHS; or `linear`,
+storage stay linear; central dispatch then solves a QP with Clarabel; or `linear`,
 the PyPSA marginal costs only — FDGDM on the toy needs it, see
 `docs/deviations.md`), `--topology`
 (communication graph, see below; default `complete`), `--tuned-params` (see
@@ -264,7 +264,7 @@ job arrays, follow [`hpc/README.md`](hpc/README.md).
 ```
 src/energy_scheduling_benchmark/
 ├── networks.py         # PyPSA network loaders (examples, files, PYPOWER, toy fixture)
-├── dispatch/           # Pyomo economic dispatch (full-horizon LP)
+├── dispatch/           # cvxpy economic dispatch (full-horizon LP/QP)
 ├── plotting.py         # matplotlib plotting (replacement for CairoMakie)
 ├── tuned_params.py     # loads tuned_parameters.toml (section precedence, tuned_from)
 ├── tuned_parameters.toml  # tuned algorithm parameters per scenario / topology / network

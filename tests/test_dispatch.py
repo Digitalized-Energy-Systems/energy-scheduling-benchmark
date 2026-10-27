@@ -1,4 +1,4 @@
-"""Tests for the Pyomo central dispatch."""
+"""Tests for the cvxpy central dispatch."""
 
 from __future__ import annotations
 
@@ -235,7 +235,7 @@ class TestQuadraticDispatch:
         np.testing.assert_array_equal(lp.generation, qp0.generation)
 
     def test_clarabel_qp_matches_the_lp_with_storage_and_slack(self):
-        # A negligible c₂ must leave the Pyomo/HiGHS LP optimum unchanged.
+        # A negligible c₂ must leave the HiGHS LP optimum unchanged.
         kwargs = dict(
             costs=[10.0, 50.0],
             p_max=[[6.0, 6.0, 6.0, 6.0], [3.0, 3.0, 3.0, 3.0]],
@@ -269,7 +269,7 @@ class TestStorageModelConsistency:
     def _pair():
         from distributed_resource_optimization.misc.storage import StorageModel
 
-        from energy_scheduling_benchmark.dispatch.pyomo_dispatch import StorageSpec
+        from energy_scheduling_benchmark.dispatch.cvxpy_dispatch import StorageSpec
 
         params = dict(
             e_max=20.0,

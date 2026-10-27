@@ -6,7 +6,7 @@ Flow
    on ``on_ready``: its marginal cost plus its full-horizon power bounds
    (generators) or its SOC parameters (storage).
 2. Once all units have reported, the leader solves a single multi-period
-   Pyomo LP over the whole horizon
+   cvxpy LP (QP with quadratic costs) over the whole horizon
    (:func:`~energy_scheduling_benchmark.dispatch.solve_multiperiod_dispatch`)
    that meets the aggregated demand at every timestep and co-optimises
    storage charge/discharge timing.

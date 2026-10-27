@@ -1,11 +1,10 @@
 """Economic dispatch (centralised LP).
 
-Replaces the Julia ``JuMP + HiGHS`` dispatch block with a Pyomo model
-solved by the HiGHS backend (``highspy``) or any other Pyomo-compatible
-solver.
+Replaces the Julia ``JuMP + HiGHS`` dispatch block with one cvxpy model
+(HiGHS for the LP, Clarabel for the QP).
 """
 
-from .pyomo_dispatch import (
+from .cvxpy_dispatch import (
     MultiPeriodDispatchResult,
     SlackSpec,
     StorageSpec,
