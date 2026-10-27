@@ -45,8 +45,11 @@ class TestCentralDispatchSlack:
         with_slack = await _run(central_dispatch, tmp_path, "slack", slack=SlackSpec())
         assert set(SLACK_COLS) <= set(with_slack.columns)
         assert with_slack[SLACK_COLS].abs().to_numpy().max() < 1e-6
+        # rtol: the quadratic default is solved by an interior-point method (Clarabel)
         np.testing.assert_allclose(
-            with_slack["cost:total"].to_numpy(), plain["cost:total"].to_numpy()
+            with_slack["cost:total"].to_numpy(),
+            plain["cost:total"].to_numpy(),
+            rtol=1e-5,
         )
 
 

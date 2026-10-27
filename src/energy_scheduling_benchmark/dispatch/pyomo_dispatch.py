@@ -152,8 +152,8 @@ def solve_multiperiod_dispatch(
         Storage units co-optimised over the horizon (see :class:`StorageSpec`).
     costs_quad:
         Optional quadratic cost coefficient per generator (€/MW²h, ≥ 0), adding
-        ``Σ c₂ · p²`` to the objective (``--cost-model quadratic``). Needs a QP
-        solver (HiGHS).
+        ``Σ c₂ · p²`` to the objective (``--cost-model quadratic``). The QP is
+        solved by Clarabel via cvxpy, the LP by HiGHS via Pyomo.
     slack:
         Optional slack node (see :class:`SlackSpec`). Adds import/export
         variables to every timestep's balance, priced in the objective (export
@@ -191,6 +191,23 @@ def solve_multiperiod_dispatch(
 
     if (n == 0 and k == 0) or T == 0:
         return _failure("no_units")
+
+    quad = None if costs_quad is None else np.asarray(costs_quad, dtype=float)
+    if quad is not None and np.any(quad):
+        if quad.shape != (n,) or np.any(quad < 0):
+            raise ValueError("costs_quad must be non-negative, one value per generator")
+        # HiGHS' QP solver fails ("Solve error") or stalls on PyPSA-Eur
+        # networks (base_s_5_elec_2020, lower_saxony_2030); Clarabel does not.
+        return _solve_qp_clarabel(
+            np.asarray(costs, dtype=float),
+            quad,
+            p_min_arr,
+            p_max_arr,
+            demand_arr,
+            storage,
+            slack,
+            _failure,
+        )
 
     model = pyo.ConcreteModel()
     model.G = pyo.RangeSet(0, n - 1) if n else pyo.Set(initialize=[])
@@ -261,29 +278,9 @@ def solve_multiperiod_dispatch(
             + (slack.export_price + _SLACK_EXPORT_TIEBREAK) * model.s_exp[t]
             for t in model.T
         )
-    quad = None if costs_quad is None else np.asarray(costs_quad, dtype=float)
-    if quad is not None and np.any(quad):
-        if quad.shape != (n,) or np.any(quad < 0):
-            raise ValueError("costs_quad must be non-negative, one value per generator")
-        cost_expr += sum(
-            quad[i] * model.p[i, t] * model.p[i, t]
-            for i in model.G
-            for t in model.T
-            if quad[i]
-        )
     model.cost = pyo.Objective(expr=cost_expr, sense=pyo.minimize)
 
-    if quad is not None and np.any(quad):
-        # appsi_highs rejects quadratic objectives (DegreeError); Pyomo's
-        # plain "highs" interface passes the Hessian to HiGHS' QP solver.
-        solver = pyo.SolverFactory("highs")
-        if not solver.available(exception_flag=False):
-            raise RuntimeError("Quadratic costs need the HiGHS QP solver (highspy).")
-        # HiGHS' QP solver otherwise reports "Solve error" for ~5e-7 MW
-        # residuals on badly scaled networks (bounds 1e-6 … 2e6 MW, de-at-storage).
-        solver.config.solver_options["primal_feasibility_tolerance"] = 1e-6
-    else:
-        solver = _pick_solver()
+    solver = _pick_solver()
     # appsi solvers raise RuntimeError instead of reporting failure when asked
     # to auto-load the solution of an infeasible solve — defer loading until
     # the termination condition is known.
@@ -320,4 +317,61 @@ def solve_multiperiod_dispatch(
         solver_status=status,
         slack_import=slack_import,
         slack_export=slack_export,
+    )
+
+
+def _solve_qp_clarabel(
+    costs: np.ndarray,
+    quad: np.ndarray,
+    p_min: np.ndarray,
+    p_max: np.ndarray,
+    demand: np.ndarray,
+    storage: list[StorageSpec],
+    slack: SlackSpec | None,
+    failure,
+) -> MultiPeriodDispatchResult:
+    """The model of :func:`solve_multiperiod_dispatch` as a cvxpy QP, solved by Clarabel."""
+    import cvxpy as cp
+
+    n, T = p_max.shape
+    k = len(storage)
+    p = cp.Variable((n, T))
+    net = cp.sum(p, axis=0)
+    cons = [p >= p_min, p <= p_max]
+    cost = cp.sum(costs @ p) + cp.sum(quad @ cp.square(p))
+    if k:
+        col = lambda attr: np.array([getattr(s, attr) for s in storage])[:, None]  # noqa: E731
+        e0 = np.clip(col("e_initial"), 0.0, 1.0) * col("e_max")
+        p_c, p_d, E = cp.Variable((k, T)), cp.Variable((k, T)), cp.Variable((k, T + 1))
+        cons += [
+            p_c >= 0, p_c <= col("p_charge_max"),
+            p_d >= 0, p_d <= col("p_discharge_max"),
+            E >= 0, E <= col("e_max"),
+            E[:, :1] == e0, E[:, T:] >= e0,
+            E[:, 1:] == E[:, :-1] - cp.multiply(1 / col("eta_discharge"), p_d)
+            + cp.multiply(col("eta_charge"), p_c),
+        ]  # fmt: skip
+        net = net + cp.sum(p_d - p_c, axis=0)
+        cost += cp.sum(
+            cp.multiply(col("discharge_cost"), p_d)
+        ) + _CYCLING_PENALTY * cp.sum(p_c)
+    if slack is not None:
+        s_imp, s_exp = cp.Variable(T, nonneg=True), cp.Variable(T, nonneg=True)
+        net = net + s_imp - s_exp
+        cost += slack.import_price * cp.sum(s_imp) + (
+            slack.export_price + _SLACK_EXPORT_TIEBREAK
+        ) * cp.sum(s_exp)
+    problem = cp.Problem(cp.Minimize(cost), [*cons, net == demand])
+    problem.solve(solver=cp.CLARABEL)
+    if problem.status != cp.OPTIMAL:
+        return failure(problem.status)
+    return MultiPeriodDispatchResult(
+        success=True,
+        generation=p.value,
+        storage=(p_d.value - p_c.value) if k else np.zeros((0, T)),
+        energy=E.value if k else np.zeros((0, T + 1)),
+        objective=float(problem.value),
+        solver_status=problem.status,
+        slack_import=s_imp.value if slack is not None else None,
+        slack_export=s_exp.value if slack is not None else None,
     )

@@ -234,6 +234,24 @@ class TestQuadraticDispatch:
         qp0 = solve_multiperiod_dispatch(costs_quad=[0.0, 0.0], **kwargs)
         np.testing.assert_array_equal(lp.generation, qp0.generation)
 
+    def test_clarabel_qp_matches_the_lp_with_storage_and_slack(self):
+        # A negligible c₂ must leave the Pyomo/HiGHS LP optimum unchanged.
+        kwargs = dict(
+            costs=[10.0, 50.0],
+            p_max=[[6.0, 6.0, 6.0, 6.0], [3.0, 3.0, 3.0, 3.0]],
+            demand=[4.0, 9.0, 10.0, 3.0],
+            storage=[StorageSpec(4.0, 2.0, 2.0, 0.9, 0.9, 0.5, discharge_cost=1.0)],
+            slack=SlackSpec(),
+        )
+        lp = solve_multiperiod_dispatch(**kwargs)
+        qp = solve_multiperiod_dispatch(costs_quad=[1e-9, 1e-9], **kwargs)
+        assert lp.success and qp.success
+        assert qp.objective == pytest.approx(lp.objective, rel=1e-6)
+        balance = (
+            qp.generation.sum(0) + qp.storage.sum(0) + qp.slack_import - qp.slack_export
+        )
+        np.testing.assert_allclose(balance, kwargs["demand"], atol=1e-6)
+
     def test_negative_quadratic_cost_rejected(self):
         with pytest.raises(ValueError, match="non-negative"):
             solve_multiperiod_dispatch(
