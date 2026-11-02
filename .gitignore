@@ -13,3 +13,4 @@ dist/
 !EnergySchedulingBenchmark.jl/*.pdf
 !EnergySchedulingBenchmark.jl/*.csv
 .idea/
+outputs/
