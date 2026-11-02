@@ -1,13 +1,13 @@
 # energy-scheduling-benchmark
 
-Multi-agent energy scheduling benchmark scenarios — Python port of
-[`EnergySchedulingBenchmark.jl`](./EnergySchedulingBenchmark.jl).
+Benchmark of distributed economic-dispatch algorithms (running as mango agents) against the
+central-dispatch optimum on copper-plate networks.
 
 The package is built on top of:
 
 * [mango-agents](../mango) — the agent framework
 * [mango-energy-environments](../mango-energy-environments) — mango environment abstractions
-* [distributed-resource-optimization](../mango-optimization) — COHDA / ADMM / averaging consensus
+* [distributed-resource-optimization](../distributed-resource-optimization) — COHDA / ADMM / averaging consensus
 * [PyPSA](https://pypsa.org) — power-system data model (replaces `PowerSystems.jl`)
 
 ## Scope of this package
@@ -40,80 +40,33 @@ pip install -e .
 The `pyproject.toml` wires the three sibling mango packages in as editable
 local dependencies via `tool.uv.sources`.
 
-## Choosing a network
+## Networks
 
-Scenarios work out of the box on any PyPSA network.  You do not need to
-hand-build one — the loader layer accepts all of the following:
+`datasets.load(name)` loads a raw PyPSA network from `resources/networks/`, applies the benchmark's
+preparation recipe in memory (drop unusable units, quadratic cost, storage defaults) and converts it
+to a copper-plate network. Names: `toy` (tiny built-in 4-bus chain), `base_s_1_elec_2019`,
+`lower_saxony_2030` (built by `resources/networks/build_lower_saxony_2030.py`).
 
-| Source                              | Example                                         |
-|-------------------------------------|-------------------------------------------------|
-| Built-in PyPSA example              | `load_scenario("ac-dc-meshed")`                 |
-| NetCDF file                         | `load_scenario("/path/to/grid.nc")`             |
-| HDF5 file                           | `load_scenario("/path/to/grid.h5")`             |
-| CSV folder                          | `load_scenario("/path/to/csv_folder/")`         |
-| Excel workbook                      | `load_scenario("/path/to/grid.xlsx")`           |
-| PYPOWER IEEE test case              | `load_pypower_case(118)`                        |
-| Existing `pypsa.Network`            | `load_scenario(my_net)`                         |
-| Toy 5-bus fixture (tests / smoke)   | `build_toy_network()`                           |
-
-The loader returns a `ScenarioData` bundle (network + auto-extracted
-timeseries + start datetime).  Feed it straight into the behavior:
-
-```python
-from energy_scheduling_benchmark import (
-    PyPSABehavior,
-    available_examples,
-    load_scenario,
-)
-
-print(available_examples())  # ['ac-dc-meshed', 'model-energy', ...]
-scenario = load_scenario("storage-hvdc")
-behavior = PyPSABehavior.from_scenario(scenario)
-```
-
-Timeseries are pulled automatically from the network's native
-`generators_t.p_max_pu`, `loads_t.p_set`, and `storage_units_t.p_set`
-DataFrames.  Generator classification (thermal vs renewable) follows the
-PyPSA `carrier` attribute.
-
-## Running the scenarios
-
-The consensus scenario mirrors the Julia one (the central-dispatch scenario is being
-rewritten on cvxpy):
+## Running
 
 ```bash
-# Toy 5-bus fixture (default)
-python -m energy_scheduling_benchmark.scenarios.consensus \
-    --name-base consensus_lossless --loss-percent 0.0
-
-# Any PyPSA example by name
-python -m energy_scheduling_benchmark.scenarios.consensus \
-    --network ac-dc-meshed --name-base ac_dc_consensus
-
-# Or load from a file
-python -m energy_scheduling_benchmark.scenarios.consensus \
-    --network /path/to/mynet.nc --name-base mynet_consensus
+esb-run --network lower_saxony_2030 --topology ring --start 2019-01-14 --hours 168 --seed 0
+esb-run --help   # --algorithm, --loss-rate (fraction per hop), --delay-s, --slack, --out, ...
 ```
 
-Or via the installed entry point:
-
-```bash
-esb-consensus --network storage-hvdc --name-base storage_consensus
-```
-
-Each run produces:
-
-* `<name>-observation.pdf` — grid of mango recordings
-* `<name>-stacked.pdf`     — stacked-area dispatch plot
-* `<name>-df.csv`          — per-agent timeseries
+Each run writes `outputs/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_from<start>_<hours>h/`
+with `schedule.csv` (time × unit MW, `slack`, `residual`) and `meta.json` (inputs, network SHA-256,
+total cost, messages sent/delivered/lost, iterations, stop reason, wall time). The only algorithm so
+far is `dummy` (merit order in the leader, a plumbing test).
 
 ## Package layout
 
 ```
 src/energy_scheduling_benchmark/
-├── environment/        # PyPSABehavior — mango Behavior backed by PyPSA
-├── networks.py         # PyPSA network loaders (examples, files, PYPOWER)
-├── plotting.py         # matplotlib replacement for CairoMakie
-└── scenarios/
-    └── consensus.py            # distributed consensus
+├── datasets.py   # benchmark networks + preparation recipe
+├── world.py      # mango world: topologies, counted lossy links, leader/slack
+├── dummy.py      # dummy merit-order algorithm (test fixture)
+├── run.py        # esb-run: one run end-to-end
+├── outputs.py    # schedule.csv + meta.json
+└── plotting.py   # matplotlib plotting utilities
 ```

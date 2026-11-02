@@ -31,7 +31,6 @@ dev = [
 ]
 
 [project.scripts]
-esb-consensus = "energy_scheduling_benchmark.scenarios.consensus:main"
 esb-run = "energy_scheduling_benchmark.run:main"
 
 [tool.uv.sources]
