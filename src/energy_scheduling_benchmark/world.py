@@ -56,6 +56,11 @@ def topology_graph(
     # the current networks has one in the middle — contract such buses when a network needs it.
     graph = connection_graph(network)
     graph.remove_nodes_from(cid for cid, c in components.items() if c.kind == LOAD)
+    if not nx.is_connected(graph):
+        # unroutable agents would be reached directly, bypassing the topology
+        raise ValueError(
+            "grid topology is disconnected (e.g. split at a load-only bus)"
+        )
     first_bus = min(components[cid].bus for cid in agents)
     anchors = [cid for cid in agents if components[cid].bus == first_bus]
     graph.add_edges_from((e, a) for e in extra for a in anchors)

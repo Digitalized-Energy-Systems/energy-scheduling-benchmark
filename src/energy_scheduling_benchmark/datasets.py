@@ -77,7 +77,6 @@ def toy_network(hours: int = 48) -> pypsa.Network:
     )
     n.add("Load", "load0", bus="bus3", p_set=45 + 10 * np.cos(2 * np.pi * hour / 24))
     n.add("Load", "load1", bus="bus1", p_set=30 + 6 * np.cos(2 * np.pi * hour / 24 + 1))
-    n.add(
-        "StorageUnit", "battery", bus="bus0", carrier="battery", p_nom=20, max_hours=4
-    )
+    # max_hours comes from the recipe (STORAGE_MAX_HOURS)
+    n.add("StorageUnit", "battery", bus="bus0", carrier="battery", p_nom=20)
     return n

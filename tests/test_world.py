@@ -30,6 +30,24 @@ def test_complete_and_unknown(toy):
         topology_graph(toy, "star")
 
 
+def test_grid_split_at_load_only_bus(toy):
+    from mango_energy_environments import Component, CopperPlateNetwork
+    from mango_energy_environments.environments.scheduling import LOAD, THERMAL
+
+    one = [1.0]
+    net = CopperPlateNetwork(
+        time_index=toy.time_index[:1],
+        components={
+            "g0": Component(THERMAL, "a", one, one),
+            "d": Component(LOAD, "b", one, one),
+            "g1": Component(THERMAL, "c", one, one),
+        },
+        lines=[("a", "b"), ("b", "c")],
+    )
+    with pytest.raises(ValueError, match="disconnected"):
+        topology_graph(net, "grid")
+
+
 async def test_build_world_and_loss_count(toy):
     world, behavior, agents, comm, routes = build_world(toy, "ring", loss_rate=1.0)
     assert routes["leader"]["gas"] in {"battery", "wind"}  # 2 hops away on the ring
