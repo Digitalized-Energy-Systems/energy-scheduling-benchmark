@@ -12,14 +12,11 @@ This package is the Python re-implementation of
 * :func:`load_scenario` and friends — load PyPSA built-in examples,
   NetCDF/HDF5/Excel files, CSV folders, or IEEE PYPOWER cases into a
   :class:`ScenarioData` bundle ready for the benchmark.
-* :func:`solve_central_dispatch` — Pyomo LP economic dispatch used by
-  the central-dispatch scenario.
 * :func:`stacked_area`, :func:`visualize_results` — matplotlib plotting
   utilities (replace CairoMakie).
 * Runnable scenarios in :mod:`energy_scheduling_benchmark.scenarios`.
 """
 
-from .dispatch import solve_central_dispatch
 from .environment import (
     LOAD,
     RENEWABLE,
@@ -55,7 +52,6 @@ __all__ = [
     "calculate_initial_time",
     "get_possible_components",
     "get_components_by_type",
-    "solve_central_dispatch",
     "stacked_area",
     "visualize_results",
     "ScenarioData",

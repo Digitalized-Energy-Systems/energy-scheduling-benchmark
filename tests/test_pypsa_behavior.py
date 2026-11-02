@@ -108,8 +108,7 @@ class TestObserversAndActions:
         environment = DefaultEnvironment(behavior=behavior)
         world = create_world(start_time=0.0, environment=environment)
         agent = RoleAgent()
-        world.register(agent, suggested_aid="gen-agent")
-        world.environment.install(agent, id=ComponentRef(THERMAL, g0))
+        world.register(agent, suggested_aid="gen-agent", id=ComponentRef(THERMAL, g0))
 
         result = behavior.observe(agent.aid, "statics")
         assert isinstance(result, dict)
@@ -121,8 +120,7 @@ class TestObserversAndActions:
         environment = DefaultEnvironment(behavior=behavior)
         world = create_world(start_time=0.0, environment=environment)
         agent = RoleAgent()
-        world.register(agent, suggested_aid="gen-agent")
-        world.environment.install(agent, id=ComponentRef(THERMAL, g0))
+        world.register(agent, suggested_aid="gen-agent", id=ComponentRef(THERMAL, g0))
 
         assert behavior.observe(agent.aid, "active_power") == pytest.approx(5.0)
 
@@ -132,8 +130,7 @@ class TestObserversAndActions:
         environment = DefaultEnvironment(behavior=behavior)
         world = create_world(start_time=0.0, environment=environment)
         agent = RoleAgent()
-        world.register(agent, suggested_aid="gen-agent")
-        world.environment.install(agent, id=ComponentRef(THERMAL, g0))
+        world.register(agent, suggested_aid="gen-agent", id=ComponentRef(THERMAL, g0))
 
         assert behavior.observe(agent.aid, "max_active_power") == pytest.approx(10.0)
 
@@ -143,8 +140,7 @@ class TestObserversAndActions:
         environment = DefaultEnvironment(behavior=behavior)
         world = create_world(start_time=0.0, environment=environment)
         agent = RoleAgent()
-        world.register(agent, suggested_aid="gen-agent")
-        world.environment.install(agent, id=ComponentRef(THERMAL, g0))
+        world.register(agent, suggested_aid="gen-agent", id=ComponentRef(THERMAL, g0))
 
         assert behavior.has_action(agent.aid, "regulate")
         behavior.act(agent.aid, "regulate", 3.0)
@@ -156,8 +152,7 @@ class TestObserversAndActions:
         environment = DefaultEnvironment(behavior=behavior)
         world = create_world(start_time=0.0, environment=environment)
         agent = RoleAgent()
-        world.register(agent, suggested_aid="load-agent")
-        world.environment.install(agent, id=ComponentRef(LOAD, l0))
+        world.register(agent, suggested_aid="load-agent", id=ComponentRef(LOAD, l0))
 
         assert not behavior.has_action(agent.aid, "regulate")
 
@@ -183,8 +178,9 @@ class TestTimeseriesScheduling:
                     events.append(event)
 
         agent = Capture()
-        world.register(agent, suggested_aid="wind0")
-        world.environment.install(agent, id=ComponentRef(RENEWABLE, "wind0"))
+        world.register(
+            agent, suggested_aid="wind0", id=ComponentRef(RENEWABLE, "wind0")
+        )
 
         async with world:
             await discrete_step_until(world, 3 * 24 * 3600.0)

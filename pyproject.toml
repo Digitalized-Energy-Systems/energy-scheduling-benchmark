@@ -16,8 +16,6 @@ dependencies = [
     "mango-energy-environments>=0.1",
     "distributed-resource-optimization>=0.1",
     "pypsa>=0.29",
-    "pyomo>=6.7",
-    "highspy>=1.5",
     "pandas>=2.0",
     "numpy>=1.24",
     "matplotlib>=3.8",
@@ -33,18 +31,17 @@ dev = [
 
 [project.scripts]
 esb-consensus = "energy_scheduling_benchmark.scenarios.consensus:main"
-esb-central-dispatch = "energy_scheduling_benchmark.scenarios.central_dispatch:main"
 
 [tool.uv.sources]
-mango-agents = { path = "../mango", editable = true }
 mango-energy-environments = { path = "../mango-energy-environments", editable = true }
-distributed-resource-optimization = { path = "../mango-optimization", editable = true }
+distributed-resource-optimization = { path = "../distributed-resource-optimization", editable = true }
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "PIE"]

@@ -245,8 +245,7 @@ async def execute_test_case(
         tracker = GeneratorMaxPowerTracker(behavior, opt_role)
 
         agent = agent_composed_of(opt_role, tracker)
-        world.register(agent, suggested_aid=ref.component_id)
-        world.environment.install(agent, id=ref)
+        world.register(agent, suggested_aid=ref.component_id, id=ref)
         gen_agents.append(agent)
 
     # Fully-connected consensus topology across all generator agents.
@@ -263,8 +262,9 @@ async def execute_test_case(
             trigger=gen_agents[0].addr,
         )
     )
-    world.register(leader_agent, suggested_aid=load_refs[0].component_id)
-    world.environment.install(leader_agent, id=load_refs[0])
+    world.register(
+        leader_agent, suggested_aid=load_refs[0].component_id, id=load_refs[0]
+    )
     leader_addr = leader_agent.addr
 
     leader_agent.add_role(PowerLoadMonitoring(behavior=behavior, target=leader_addr))
@@ -273,8 +273,7 @@ async def execute_test_case(
         agent = agent_composed_of(
             PowerLoadMonitoring(behavior=behavior, target=leader_addr)
         )
-        world.register(agent, suggested_aid=ref.component_id)
-        world.environment.install(agent, id=ref)
+        world.register(agent, suggested_aid=ref.component_id, id=ref)
 
     # -- Recordings --
     record_agent_having(
