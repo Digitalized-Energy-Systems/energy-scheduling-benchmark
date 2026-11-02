@@ -42,3 +42,12 @@ def test_base_s_1_elec_2019():
     assert "DE0 0AC 0 offwind-dc" not in c  # p_nom = 0
     assert c["DE0 0AC biomass"].kind == "gen" and c["DE0 0AC biomass"].cost[1] > 0
     assert c["DE0 0AC PHS"].params["max_hours"] == 6.0
+
+
+def test_lower_saxony_2030():
+    net = datasets.load("lower_saxony_2030")
+    kinds = [c.kind for c in net.components.values()]
+    assert len(net.time_index) == 8760
+    assert kinds.count("load") == 67
+    assert not any(c.params.get("carrier") == "hydro" for c in net.components.values())
+    assert nx.is_connected(connection_graph(net))

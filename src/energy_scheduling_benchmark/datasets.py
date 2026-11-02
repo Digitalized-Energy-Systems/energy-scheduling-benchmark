@@ -20,7 +20,11 @@ from mango_energy_environments import (
 
 # shortcut: path relative to the source checkout (editable install); package data when distributed.
 NETWORKS_DIR = Path(__file__).resolve().parents[2] / "resources" / "networks"
-NETWORKS = {"base_s_1_elec_2019": NETWORKS_DIR / "base_s_1_elec_2019.nc"}
+NETWORKS = {
+    "base_s_1_elec_2019": NETWORKS_DIR / "base_s_1_elec_2019.nc",
+    # built by resources/networks/build_lower_saxony_2030.py
+    "lower_saxony_2030": NETWORKS_DIR / "lower_saxony_2030.nc",
+}
 
 #: Quadratic cost factor k in c₂ = k·c₁/p_nom on thermal units (old decision Q17). No network
 #: provides quadratic coefficients, so they are derived from the marginal cost c₁: k is the mean
