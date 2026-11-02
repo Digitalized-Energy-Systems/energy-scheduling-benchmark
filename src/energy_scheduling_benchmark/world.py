@@ -9,6 +9,7 @@ from __future__ import annotations
 import random
 
 import networkx as nx
+from distributed_resource_optimization.carrier.mango_carrier import next_hops
 from mango import RoleAgent
 from mango.express.topology import AGENT_NODE_KEY, graph_topology
 from mango.simulation.communication import SimpleCommunicationSimulation
@@ -73,7 +74,8 @@ def build_world(
 ):
     """Create the world with one ``RoleAgent`` per topology node; callers add the roles.
 
-    Returns ``(world, behavior, agents, communication)``; ``agents`` maps node id → agent.
+    Returns ``(world, behavior, agents, communication, routes)``; ``agents`` maps node id →
+    agent, ``routes`` maps aid → its routing table for the DRO roles (``routes=routes[aid]``).
     """
     behavior = CopperPlateBehavior(network)
     communication = CountingCommunication(
@@ -93,4 +95,5 @@ def build_world(
     for node, agent in agents.items():
         topo.graph.nodes[node][AGENT_NODE_KEY].add(agent)
     topo.inject()
-    return world, behavior, agents, communication
+    routes = next_hops(nx.relabel_nodes(graph, {n: a.aid for n, a in agents.items()}))
+    return world, behavior, agents, communication, routes

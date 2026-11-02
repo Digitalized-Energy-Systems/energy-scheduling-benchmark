@@ -31,7 +31,8 @@ def test_complete_and_unknown(toy):
 
 
 async def test_build_world_and_loss_count(toy):
-    world, behavior, agents, comm = build_world(toy, "ring", loss_rate=1.0)
+    world, behavior, agents, comm, routes = build_world(toy, "ring", loss_rate=1.0)
+    assert routes["leader"]["gas"] in {"battery", "wind"}  # 2 hops away on the ring
     assert behavior.observe(agents["gas"].aid, "statics")["kind"] == "gen"
     # ring: leader, battery, coal, gas, wind
     assert {a.aid for a in agents[LEADER].neighbors()} == {"battery", "wind"}
