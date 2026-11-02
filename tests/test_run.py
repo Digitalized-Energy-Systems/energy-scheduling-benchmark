@@ -1,0 +1,73 @@
+import argparse
+import json
+
+import numpy as np
+import pandas as pd
+import pytest
+from mango_energy_environments.environments.scheduling import STORAGE, THERMAL
+
+from energy_scheduling_benchmark import datasets
+from energy_scheduling_benchmark.dummy import Offer, merit_order
+from energy_scheduling_benchmark.run import main, run, window
+
+
+def test_merit_order():
+    flat = np.ones(2)
+    offers = [
+        Offer(THERMAL, 50.0, 1 * flat, 10 * flat),
+        Offer(THERMAL, 20.0, 0 * flat, 4 * flat),
+        None,
+        Offer(STORAGE, 0.0, -5 * flat, 5 * flat),
+    ]
+    s = merit_order(offers, np.array([3.0, 8.0]))
+    np.testing.assert_array_equal(
+        s[0], [1.0, 4.0]
+    )  # p_min, then what the cheap one leaves
+    np.testing.assert_array_equal(s[1], [2.0, 4.0])
+    assert s[2] is None
+    np.testing.assert_array_equal(s[3], [0.0, 0.0])  # storage idle
+
+
+def test_window():
+    net = window(datasets.load("toy"), "2024-01-01 06:00", 5)
+    assert net.time_index[0] == pd.Timestamp("2024-01-01 06:00")
+    assert all(len(c.p_max) == 5 for c in net.components.values())
+    with pytest.raises(ValueError):
+        window(datasets.load("toy"), None, 49)
+
+
+@pytest.mark.parametrize("topology", ["grid", "ring", "complete"])
+def test_end_to_end_lossless(tmp_path, topology):
+    main(["--topology", topology, "--hours", "6", "--out", str(tmp_path)])
+    (out,) = tmp_path.glob("toy/dummy/*")
+    csv = pd.read_csv(out / "schedule.csv", index_col="time")
+    np.testing.assert_allclose(
+        csv["residual"], 0.0, atol=1e-9
+    )  # toy has enough capacity
+    meta = json.loads((out / "meta.json").read_text())
+    assert meta["stop_reason"] == "complete"
+    assert meta["messages"]["lost"] == 0
+    assert meta["messages"]["delivered"] == meta["messages"]["sent"] > 0
+    assert meta["total_cost"] > 0
+
+
+async def test_end_to_end_all_lost_times_out(tmp_path):
+    args = argparse.Namespace(
+        network="toy",
+        algorithm="dummy",
+        topology="grid",
+        loss_rate=1.0,
+        delay_s=0.01,
+        seed=0,
+        slack=True,
+        start=None,
+        hours=3,
+        out=str(tmp_path),
+    )
+    out = await run(args)
+    meta = json.loads((out / "meta.json").read_text())
+    assert meta["stop_reason"] == "timeout"
+    assert meta["messages"]["sent"] == meta["messages"]["lost"] > 0
+    csv = pd.read_csv(out / "schedule.csv", index_col="time")
+    assert csv[["gas", "coal", "wind", "battery"]].isna().all().all()
+    np.testing.assert_allclose(csv["residual"], 0.0)  # the slack takes all demand

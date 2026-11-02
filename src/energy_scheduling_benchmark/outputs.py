@@ -24,9 +24,13 @@ def run_dir(
     topology: str,
     loss_rate: float,
     seed: int,
+    start: pd.Timestamp,
+    hours: int,
 ) -> Path:
-    """``<root>/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>`` (reruns overwrite)."""
-    return Path(root) / network / algorithm / f"{topology}_loss{loss_rate:g}_seed{seed}"
+    """``<root>/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_from<start>_<hours>h``
+    (reruns overwrite)."""
+    name = f"{topology}_loss{loss_rate:g}_seed{seed}_from{start:%Y%m%dT%H}_{hours}h"
+    return Path(root) / network / algorithm / name
 
 
 def write_run(
