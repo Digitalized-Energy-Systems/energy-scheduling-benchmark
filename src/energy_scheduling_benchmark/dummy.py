@@ -5,6 +5,8 @@ agent for its offer (cost, p_min/p_max over the horizon), waits up to a timeout,
 puts every unit at p_min and fills the rest of the demand cheapest-c1-first up to p_max
 (c2 only counts in the cost). Storage stays idle. Each schedule goes back as the participant's
 ``OptimizationFinishedMessage``; lost messages simply leave a unit without a schedule.
+``stop_reason`` "complete" only means every offer arrived: schedules lost on the way back
+still show up as empty columns.
 """
 
 from __future__ import annotations

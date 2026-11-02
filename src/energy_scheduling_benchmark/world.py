@@ -23,6 +23,8 @@ from mango_energy_environments import (
 from mango_energy_environments.environments.scheduling import LOAD
 
 LEADER, SLACK = "leader", "slack"
+#: Slack import price (€/MWh), export is free (Q3: SDAC harmonised maximum clearing price).
+SLACK_IMPORT_PRICE = 4000.0
 TOPOLOGIES = ("grid", "complete", "ring")
 
 

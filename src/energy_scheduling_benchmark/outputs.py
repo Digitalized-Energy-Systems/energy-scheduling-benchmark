@@ -12,9 +12,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from mango_energy_environments import CopperPlateBehavior
-from mango_energy_environments.environments.scheduling import LOAD
+from mango_energy_environments.environments.scheduling import LOAD, STORAGE
 
-from .world import SLACK
+from . import storage
+from .world import SLACK, SLACK_IMPORT_PRICE
 
 
 def run_dir(
@@ -36,9 +37,8 @@ def run_dir(
 def write_run(
     out_dir: Path | str,
     behavior: CopperPlateBehavior,
-    world,
-    communication,
     *,
+    messages: dict[str, int],
     inputs: dict,
     network_file: Path | None,
     algorithm: str,
@@ -50,7 +50,10 @@ def write_run(
     """Write ``schedule.csv`` and ``meta.json`` into *out_dir*.
 
     ``schedule.csv``: time × non-load unit MW (empty = the unit never set a schedule), plus
-    ``slack`` (the difference it takes, if enabled) and ``residual`` = gen + slack − demand.
+    ``slack`` (the difference it takes, if enabled), ``residual`` = gen + slack − demand and
+    ``soc:<unit>`` (storage energy at the end of each hour, MWh).
+    ``total_cost`` includes the slack import (also reported separately under ``slack``).
+    ``messages``: sent / delivered / lost counts.
     ``inputs``: all CLI args incl. seed and network name; ``network_file`` None for built-in nets.
     """
     network = behavior.network
@@ -59,29 +62,38 @@ def write_run(
         columns=units
     )
     residual = behavior.balance()
+    slack_p = -residual if slack else np.zeros_like(residual)
     if slack:
-        schedule[SLACK] = -residual
-        residual = residual + schedule[SLACK]
-    schedule["residual"] = residual
+        schedule[SLACK] = slack_p
+    schedule["residual"] = residual + slack_p
+    for cid, c in network.components.items():
+        if c.kind == STORAGE:
+            p = behavior.schedules.get(cid)
+            schedule[f"soc:{cid}"] = np.nan if p is None else storage.soc(c, p)
     schedule.index.name = "time"
 
     total_cost = 0.0
     for cid, p in behavior.schedules.items():
-        c1, c2 = network.components[cid].cost
-        total_cost += float(np.sum(c1 * p + c2 * p**2))
+        c = network.components[cid]
+        if c.kind == STORAGE:
+            total_cost += storage.cost(c, p)
+        else:
+            total_cost += float(np.sum(c.cost[0] * p + c.cost[1] * p**2))
+    slack_import = float(np.maximum(slack_p, 0.0).sum())
+    total_cost += SLACK_IMPORT_PRICE * slack_import
 
-    sent, lost = communication.sent, communication.lost
     meta = {
         "inputs": inputs,
         "network_sha256": network_file
         and hashlib.sha256(Path(network_file).read_bytes()).hexdigest(),
         "algorithm": algorithm,
         "total_cost": total_cost,
-        "messages": {
-            "sent": sent,
-            "delivered": world.messages_delivered_count,
-            "lost": lost,
+        "slack": {
+            "import_mwh": slack_import,
+            "export_mwh": float(np.maximum(-slack_p, 0.0).sum()),
+            "cost": SLACK_IMPORT_PRICE * slack_import,
         },
+        "messages": messages,
         "iterations": iterations,
         "stop_reason": stop_reason,
         "wall_time_s": wall_time_s,

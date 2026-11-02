@@ -20,15 +20,16 @@ from distributed_resource_optimization.carrier.mango_carrier import (
     StartCoordinatedDistributedOptimization,
 )
 from mango import DISCRETE_EVENT
-from mango_energy_environments import CopperPlateNetwork
+from mango_energy_environments import CopperPlateBehavior, CopperPlateNetwork
 from mango_energy_environments.environments.scheduling import LOAD
 
 from . import datasets
+from .central import solve_central
 from .dummy import DummyUnit, MeritOrderCoordinator
 from .outputs import run_dir, write_run
 from .world import LEADER, SLACK, TOPOLOGIES, build_world
 
-ALGORITHMS = ("dummy",)
+ALGORITHMS = ("central", "dummy")
 #: Simulated seconds the dummy leader waits for offers (a ring of ~430 agents at 0.01 s per hop
 #: needs ~5 s for request + reply).
 DUMMY_TIMEOUT_S = 60.0
@@ -36,7 +37,10 @@ DUMMY_TIMEOUT_S = 60.0
 
 def window(network: CopperPlateNetwork, start, hours: int) -> CopperPlateNetwork:
     """Cut *network* to *hours* snapshots from *start* (a snapshot; None = the first)."""
-    i = 0 if start is None else network.time_index.get_loc(pd.Timestamp(start))
+    try:
+        i = 0 if start is None else network.time_index.get_loc(pd.Timestamp(start))
+    except KeyError:
+        raise ValueError(f"--start {start} is not a snapshot of the network") from None
     if i + hours > len(network.time_index):
         raise ValueError(
             f"window of {hours} h from {start} exceeds the network horizon"
@@ -49,8 +53,8 @@ def window(network: CopperPlateNetwork, start, hours: int) -> CopperPlateNetwork
     return CopperPlateNetwork(network.time_index[s], components, network.lines)
 
 
-async def run(args: argparse.Namespace) -> Path:
-    network = window(datasets.load(args.network), args.start, args.hours)
+async def _run_dummy(network, args):
+    """Returns (behavior, messages, stop_reason)."""
     world, behavior, agents, communication, routes = build_world(
         network, args.topology, args.loss_rate, args.delay_s, args.seed, args.slack
     )
@@ -63,15 +67,31 @@ async def run(args: argparse.Namespace) -> Path:
             unit = DummyUnit(None if node == SLACK else behavior, agent.aid)
             role = DistributedOptimizationRole(unit, routes=routes[agent.aid])
         agent.add_role(role)
-
-    began = time.perf_counter()
     async with world:
         # kick-off is local (not sent over the lossy network, not counted)
         agents[LEADER].handle_message(StartCoordinatedDistributedOptimization(None), {})
         while await world.step(DISCRETE_EVENT) is not None:
             pass
+    messages = {
+        "sent": communication.sent,
+        "delivered": world.messages_delivered_count,
+        "lost": communication.lost,
+    }
+    return behavior, messages, coordinator.stop_reason
+
+
+async def run(args: argparse.Namespace) -> Path:
+    network = window(datasets.load(args.network), args.start, args.hours)
+    began = time.perf_counter()
+    if args.algorithm == "central":
+        behavior = CopperPlateBehavior(network)
+        behavior.schedules, stop_reason = solve_central(network, args.slack)
+        messages = {"sent": 0, "delivered": 0, "lost": 0}
+    else:
+        behavior, messages, stop_reason = await _run_dummy(network, args)
     wall_time_s = time.perf_counter() - began
 
+    start = network.time_index[0]
     out = run_dir(
         args.out,
         args.network,
@@ -79,19 +99,18 @@ async def run(args: argparse.Namespace) -> Path:
         args.topology,
         args.loss_rate,
         args.seed,
-        network.time_index[0],
+        start,
         args.hours,
     )
     write_run(
         out,
         behavior,
-        world,
-        communication,
-        inputs=vars(args),
+        messages=messages,
+        inputs={**vars(args), "start": str(start)},
         network_file=datasets.NETWORKS.get(args.network),
         algorithm=args.algorithm,
         iterations=1,
-        stop_reason=coordinator.stop_reason,
+        stop_reason=stop_reason,
         wall_time_s=wall_time_s,
         slack=args.slack,
     )
