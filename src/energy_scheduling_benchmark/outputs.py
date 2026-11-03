@@ -53,7 +53,8 @@ def write_run(
     ``soc:<unit>`` (storage energy at the end of each hour, MWh).
     ``total_cost`` includes the slack import (also reported separately under ``slack``).
     ``messages``: sent / delivered / lost counts.
-    ``inputs``: all CLI args incl. seed and network name; ``network_file`` None for built-in nets.
+    ``inputs``: all CLI args incl. seed and network name; ``network_file``: the prepared ``.nc``
+    the run read (its SHA-256 goes into meta).
     """
     network = behavior.network
     units = [cid for cid, c in network.components.items() if c.kind != LOAD]

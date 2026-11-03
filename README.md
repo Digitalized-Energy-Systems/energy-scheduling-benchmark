@@ -42,20 +42,26 @@ local dependencies via `tool.uv.sources`.
 
 ## Networks
 
-`datasets.load(name)` loads a raw PyPSA network from `resources/networks/`, converts it into an MEE
-`Network` and applies the benchmark's preparation recipe in memory (drop unusable units, quadratic
-cost, storage defaults); the result does not depend on the environment that runs it. Names: `toy` (tiny built-in 4-bus chain), `base_s_1_elec_2019`,
-`lower_saxony_2030` (built by `resources/networks/build_lower_saxony_2030.py`).
+Prepare once, run many times. `esb-prepare --network NAME` loads the raw PyPSA network from
+`resources/networks/`, converts it into an MEE `Network`, applies the benchmark's preparation recipe
+(drop unusable units, quadratic cost, storage defaults) and saves it as NetCDF to
+`resources/prepared/NAME.nc` (committed; the recipe is stored in the file's `meta` attribute). The
+prepared file does not depend on the environment that runs it. Names: `toy` (tiny built-in 4-bus
+chain), `base_s_1_elec_2019`, `lower_saxony_2030` (built by
+`resources/networks/build_lower_saxony_2030.py`). Re-run `esb-prepare` after changing the recipe;
+`--k` and `--out` write a variant (e.g. linear costs) to another file.
 
 ## Running
 
 ```bash
+esb-prepare --network lower_saxony_2030          # once (files for all three are committed)
 esb-run --network lower_saxony_2030 --topology ring --start 2019-01-14 --hours 168 --seed 0
+esb-run --network path/to/prepared.nc ...        # any prepared file
 esb-run --help   # --algorithm, --loss-rate (fraction per hop), --delay-s, --slack, --out, ...
 ```
 
 Each run writes `outputs/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_from<start>_<hours>h/`
-with `schedule.csv` (time × unit MW, `slack`, `residual`) and `meta.json` (inputs, network SHA-256,
+with `schedule.csv` (time × unit MW, `slack`, `residual`) and `meta.json` (inputs, prepared-file SHA-256,
 total cost, messages sent/delivered/lost, iterations, stop reason, wall time). The only algorithm so
 far is `dummy` (merit order in the leader, a plumbing test).
 

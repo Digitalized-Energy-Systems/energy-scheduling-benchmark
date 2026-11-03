@@ -1,11 +1,18 @@
 """Benchmark networks: raw PyPSA input → MEE ``Network`` → the benchmark's preparation recipe.
 
-Preparation runs in memory on every load; the raw files in ``resources/networks`` stay untouched.
-The prepared network does not depend on the environment that later runs it.
+Prepare once, run many times: ``esb-prepare --network NAME`` writes the prepared network to
+``resources/prepared/NAME.nc`` (recipe stored in the file); ``esb-run`` runs from that file. The
+raw files in ``resources/networks`` stay untouched. The prepared network does not depend on the
+environment that later runs it.
+
+Usage::
+
+    esb-prepare --network lower_saxony_2030
 """
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -16,11 +23,14 @@ from mango_energy_environments import (
     add_quadratic_cost,
     drop_unusable_units,
     from_pypsa,
+    save_network,
     set_storage_defaults,
 )
 
 # shortcut: path relative to the source checkout (editable install); package data when distributed.
-NETWORKS_DIR = Path(__file__).resolve().parents[2] / "resources" / "networks"
+RESOURCES = Path(__file__).resolve().parents[2] / "resources"
+NETWORKS_DIR = RESOURCES / "networks"
+PREPARED_DIR = RESOURCES / "prepared"
 NETWORKS = {
     "base_s_1_elec_2019": NETWORKS_DIR / "base_s_1_elec_2019.nc",
     # built by resources/networks/build_lower_saxony_2030.py
@@ -55,6 +65,43 @@ def load(
     add_quadratic_cost(net, k)
     set_storage_defaults(net, storage_max_hours or STORAGE_MAX_HOURS, soc_initial)
     return net
+
+
+def prepare(name: str, *, k: float = QUADRATIC_K, out: Path | None = None) -> Path:
+    """Load + prepare *name* and save it (default ``resources/prepared/<name>.nc``)."""
+    out = Path(out or PREPARED_DIR / f"{name}.nc")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    recipe = {
+        "dataset": name,
+        "source": str(NETWORKS[name].name) if name in NETWORKS else "toy_network()",
+        "quadratic_k": k,
+        "storage_max_hours": STORAGE_MAX_HOURS,
+        "soc_initial": SOC_INITIAL,
+        "drop_storage_carriers": list(DROP_STORAGE_CARRIERS),
+    }
+    save_network(load(name, k=k), out, meta=recipe)
+    return out
+
+
+def prepared_path(network: str) -> Path:
+    """*network* is a prepared ``.nc`` file or a dataset name (→ ``resources/prepared/``)."""
+    path = Path(network) if network.endswith(".nc") else PREPARED_DIR / f"{network}.nc"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} not found; create it with: esb-prepare --network {Path(network).stem}"
+        )
+    return path
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Prepare a benchmark network once.")
+    parser.add_argument("--network", choices=["toy", *NETWORKS], required=True)
+    parser.add_argument("--k", type=float, default=QUADRATIC_K, help="quadratic cost k")
+    parser.add_argument(
+        "--out", help="output .nc (default resources/prepared/<name>.nc)"
+    )
+    args = parser.parse_args(argv)
+    print(prepare(args.network, k=args.k, out=args.out))
 
 
 def toy_network(hours: int = 48) -> pypsa.Network:

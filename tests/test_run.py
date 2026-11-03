@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 
 import numpy as np
@@ -71,3 +72,14 @@ async def test_end_to_end_all_lost_times_out(tmp_path):
     csv = pd.read_csv(out / "schedule.csv", index_col="time")
     assert csv[["gas", "coal", "wind", "battery"]].isna().all().all()
     np.testing.assert_allclose(csv["residual"], 0.0)  # the slack takes all demand
+
+
+def test_prepare_once_run_from_file(tmp_path):
+    path = datasets.prepare("toy", k=0.0, out=tmp_path / "toy_linear.nc")
+    main(["--network", str(path), "--algorithm", "central", "--out", str(tmp_path)])
+    (out,) = tmp_path.glob("toy_linear/central/*")
+    meta = json.loads((out / "meta.json").read_text())
+    assert meta["network_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert meta["stop_reason"] == "optimal"
+    with pytest.raises(FileNotFoundError, match="esb-prepare --network nope"):
+        main(["--network", "nope"])

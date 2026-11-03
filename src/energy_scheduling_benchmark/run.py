@@ -1,6 +1,6 @@
-"""One benchmark run: load network → cut window → mango world → algorithm → outputs.
+"""One benchmark run: load prepared network → cut window → mango world → algorithm → outputs.
 
-Usage::
+Usage (after ``esb-prepare --network lower_saxony_2030``)::
 
     esb-run --network lower_saxony_2030 --topology ring --start 2019-01-14 --hours 168 --slack
 """
@@ -20,7 +20,7 @@ from distributed_resource_optimization.carrier.mango_carrier import (
     StartCoordinatedDistributedOptimization,
 )
 from mango import DISCRETE_EVENT
-from mango_energy_environments import LOAD, CopperPlateBehavior, Network
+from mango_energy_environments import LOAD, CopperPlateBehavior, Network, load_network
 
 from . import datasets
 from .central import solve_central
@@ -80,7 +80,8 @@ async def _run_dummy(network, args):
 
 
 async def run(args: argparse.Namespace) -> Path:
-    network = window(datasets.load(args.network), args.start, args.hours)
+    network_file = datasets.prepared_path(args.network)
+    network = window(load_network(network_file), args.start, args.hours)
     began = time.perf_counter()
     if args.algorithm == "central":
         behavior = CopperPlateBehavior(network)
@@ -93,7 +94,7 @@ async def run(args: argparse.Namespace) -> Path:
     start = network.time_index[0]
     out = run_dir(
         args.out,
-        args.network,
+        network_file.stem,
         args.algorithm,
         args.topology,
         args.loss_rate,
@@ -106,7 +107,7 @@ async def run(args: argparse.Namespace) -> Path:
         behavior,
         messages=messages,
         inputs={**vars(args), "start": str(start)},
-        network_file=datasets.NETWORKS.get(args.network),
+        network_file=network_file,
         algorithm=args.algorithm,
         iterations=1,
         stop_reason=stop_reason,
@@ -118,7 +119,11 @@ async def run(args: argparse.Namespace) -> Path:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--network", choices=["toy", *datasets.NETWORKS], default="toy")
+    parser.add_argument(
+        "--network",
+        default="toy",
+        help="dataset name (its resources/prepared/<name>.nc) or a prepared .nc file",
+    )
     parser.add_argument("--algorithm", choices=ALGORITHMS, default="dummy")
     parser.add_argument("--topology", choices=TOPOLOGIES, default="grid")
     parser.add_argument(
