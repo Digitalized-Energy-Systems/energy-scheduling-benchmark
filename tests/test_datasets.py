@@ -1,6 +1,7 @@
 import networkx as nx
+import numpy as np
 import pytest
-from mango_energy_environments import connection_graph
+from mango_energy_environments import connection_graph, load_network
 
 from energy_scheduling_benchmark import datasets
 
@@ -51,3 +52,20 @@ def test_lower_saxony_2030():
     assert kinds.count("load") == 67
     assert not any(c.params.get("carrier") == "hydro" for c in net.components.values())
     assert nx.is_connected(connection_graph(net))
+
+
+@pytest.mark.parametrize("name", ["toy", *datasets.NETWORKS])
+def test_prepared_file_matches_recipe(name):
+    """Committed resources/prepared/<name>.nc = today's recipe; else rerun esb-prepare."""
+    saved = load_network(datasets.prepared_path(name))
+    fresh = datasets.load(name)
+    stale = f"resources/prepared/{name}.nc is stale: esb-prepare --network {name}"
+    assert saved.time_index.equals(fresh.time_index), stale
+    assert saved.lines == fresh.lines, stale
+    assert list(saved.components) == list(fresh.components), stale
+    for cid, f in fresh.components.items():
+        s = saved.components[cid]
+        for field in ("kind", "bus", "cost", "params"):
+            assert getattr(s, field) == getattr(f, field), stale
+        assert np.array_equal(s.p_min, f.p_min, equal_nan=True), stale
+        assert np.array_equal(s.p_max, f.p_max, equal_nan=True), stale
