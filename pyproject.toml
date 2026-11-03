@@ -18,7 +18,6 @@ dependencies = [
     "pypsa>=0.29",
     "pandas>=2.0",
     "numpy>=1.24",
-    "matplotlib>=3.8",
     "networkx>=3.0",
     "cvxpy>=1.5",
 ]

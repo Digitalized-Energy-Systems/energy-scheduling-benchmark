@@ -69,10 +69,14 @@ far is `dummy` (merit order in the leader, a plumbing test).
 
 ```
 src/energy_scheduling_benchmark/
-├── datasets.py   # benchmark networks + preparation recipe
+├── datasets.py   # benchmark networks + preparation recipe; esb-prepare
+├── central.py    # central dispatch: the reference optimum (cvxpy)
+├── storage.py    # shared storage model (central dispatch + algorithms)
 ├── world.py      # mango world: topologies, counted lossy links, leader/slack
 ├── dummy.py      # dummy merit-order algorithm (test fixture)
 ├── run.py        # esb-run: one run end-to-end
-├── outputs.py    # schedule.csv + meta.json
-└── plotting.py   # matplotlib plotting utilities
+└── outputs.py    # schedule.csv + meta.json
+resources/
+├── networks/     # raw PyPSA inputs + build_lower_saxony_2030.py
+└── prepared/     # prepared networks (esb-prepare), read by esb-run
 ```
