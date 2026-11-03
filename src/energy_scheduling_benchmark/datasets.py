@@ -1,6 +1,7 @@
-"""Benchmark networks: raw PyPSA input + the benchmark's preparation recipe → copper-plate network.
+"""Benchmark networks: raw PyPSA input → MEE ``Network`` → the benchmark's preparation recipe.
 
 Preparation runs in memory on every load; the raw files in ``resources/networks`` stay untouched.
+The prepared network does not depend on the environment that later runs it.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pypsa
 from mango_energy_environments import (
-    CopperPlateNetwork,
+    Network,
     add_quadratic_cost,
     drop_unusable_units,
     from_pypsa,
@@ -47,13 +48,13 @@ def load(
     k: float = QUADRATIC_K,
     storage_max_hours: dict[str, float] | None = None,
     soc_initial: float = SOC_INITIAL,
-) -> CopperPlateNetwork:
-    """Load network *name* (``"toy"`` or a key of :data:`NETWORKS`), prepare it, convert it."""
-    n = toy_network() if name == "toy" else pypsa.Network(NETWORKS[name])
-    drop_unusable_units(n, DROP_STORAGE_CARRIERS)
-    add_quadratic_cost(n, k)
-    set_storage_defaults(n, storage_max_hours or STORAGE_MAX_HOURS, soc_initial)
-    return from_pypsa(n)
+) -> Network:
+    """Load network *name* (``"toy"`` or a key of :data:`NETWORKS`), convert it, prepare it."""
+    net = from_pypsa(toy_network() if name == "toy" else pypsa.Network(NETWORKS[name]))
+    drop_unusable_units(net, DROP_STORAGE_CARRIERS)
+    add_quadratic_cost(net, k)
+    set_storage_defaults(net, storage_max_hours or STORAGE_MAX_HOURS, soc_initial)
+    return net
 
 
 def toy_network(hours: int = 48) -> pypsa.Network:

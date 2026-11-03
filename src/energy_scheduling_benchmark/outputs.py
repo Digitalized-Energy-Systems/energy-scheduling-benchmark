@@ -11,8 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from mango_energy_environments import CopperPlateBehavior
-from mango_energy_environments.environments.scheduling import LOAD, STORAGE
+from mango_energy_environments import LOAD, STORAGE, CopperPlateBehavior
 
 from . import storage
 from .world import SLACK, SLACK_IMPORT_PRICE

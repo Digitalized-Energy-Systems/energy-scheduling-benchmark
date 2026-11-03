@@ -10,15 +10,14 @@ from __future__ import annotations
 
 import cvxpy as cp
 import numpy as np
-from mango_energy_environments import CopperPlateNetwork
-from mango_energy_environments.environments.scheduling import LOAD, STORAGE
+from mango_energy_environments import LOAD, STORAGE, Network
 
 from . import storage
 from .world import SLACK_IMPORT_PRICE
 
 
 def solve_central(
-    network: CopperPlateNetwork, slack: bool = False
+    network: Network, slack: bool = False
 ) -> tuple[dict[str, np.ndarray], str]:
     """Return ``({component id: MW per hour}, solver status)``; no schedules unless optimal."""
     steps = len(network.time_index)

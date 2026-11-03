@@ -22,7 +22,7 @@ from distributed_resource_optimization.algorithm.core import (
 from distributed_resource_optimization.carrier.mango_carrier import (
     OptimizationFinishedMessage,
 )
-from mango_energy_environments.environments.scheduling import STORAGE
+from mango_energy_environments import STORAGE
 
 
 @dataclass

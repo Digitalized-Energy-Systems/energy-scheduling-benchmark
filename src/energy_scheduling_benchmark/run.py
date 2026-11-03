@@ -20,8 +20,7 @@ from distributed_resource_optimization.carrier.mango_carrier import (
     StartCoordinatedDistributedOptimization,
 )
 from mango import DISCRETE_EVENT
-from mango_energy_environments import CopperPlateBehavior, CopperPlateNetwork
-from mango_energy_environments.environments.scheduling import LOAD
+from mango_energy_environments import LOAD, CopperPlateBehavior, Network
 
 from . import datasets
 from .central import solve_central
@@ -35,7 +34,7 @@ ALGORITHMS = ("central", "dummy")
 DUMMY_TIMEOUT_S = 60.0
 
 
-def window(network: CopperPlateNetwork, start, hours: int) -> CopperPlateNetwork:
+def window(network: Network, start, hours: int) -> Network:
     """Cut *network* to *hours* snapshots from *start* (a snapshot; None = the first)."""
     try:
         i = 0 if start is None else network.time_index.get_loc(pd.Timestamp(start))
@@ -50,7 +49,7 @@ def window(network: CopperPlateNetwork, start, hours: int) -> CopperPlateNetwork
         cid: replace(c, p_min=c.p_min[s], p_max=c.p_max[s])
         for cid, c in network.components.items()
     }
-    return CopperPlateNetwork(network.time_index[s], components, network.lines)
+    return Network(network.time_index[s], components, network.lines)
 
 
 async def _run_dummy(network, args):

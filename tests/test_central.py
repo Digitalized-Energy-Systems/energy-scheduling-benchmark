@@ -3,8 +3,7 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
-from mango_energy_environments import Component, CopperPlateNetwork
-from mango_energy_environments.environments.scheduling import LOAD, STORAGE, THERMAL
+from mango_energy_environments import LOAD, STORAGE, THERMAL, Component, Network
 
 from energy_scheduling_benchmark import datasets, storage
 from energy_scheduling_benchmark.central import solve_central
@@ -23,7 +22,7 @@ def net(*extra, demand=(4.0, 8.0)):
         "dear": Component(THERMAL, "b", flat(0), flat(5), cost=(30.0, 0.0)),
         "load": Component(LOAD, "b", np.array(demand), np.array(demand)),
     }
-    return CopperPlateNetwork(IDX, components | dict(extra), [])
+    return Network(IDX, components | dict(extra), [])
 
 
 def test_merit_order_lp():

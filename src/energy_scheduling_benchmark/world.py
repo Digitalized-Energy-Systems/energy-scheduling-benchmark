@@ -16,11 +16,11 @@ from mango.simulation.communication import SimpleCommunicationSimulation
 from mango.simulation.environment import DefaultEnvironment
 from mango.simulation.world import create_world
 from mango_energy_environments import (
+    LOAD,
     CopperPlateBehavior,
-    CopperPlateNetwork,
+    Network,
     connection_graph,
 )
-from mango_energy_environments.environments.scheduling import LOAD
 
 LEADER, SLACK = "leader", "slack"
 #: Slack import price (€/MWh), export is free (Q3: SDAC harmonised maximum clearing price).
@@ -41,9 +41,7 @@ class CountingCommunication(SimpleCommunicationSimulation):
         return result
 
 
-def topology_graph(
-    network: CopperPlateNetwork, kind: str, slack: bool = False
-) -> nx.Graph:
+def topology_graph(network: Network, kind: str, slack: bool = False) -> nx.Graph:
     """Agent graph: component ids (no loads) + leader (+ slack) at the first bus / position 0."""
     components = network.components
     agents = sorted(cid for cid, c in components.items() if c.kind != LOAD)
@@ -72,7 +70,7 @@ def topology_graph(
 
 
 def build_world(
-    network: CopperPlateNetwork,
+    network: Network,
     topology: str = "grid",
     loss_rate: float = 0.0,
     delay_s: float = 0.01,

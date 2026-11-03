@@ -4,7 +4,7 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
-from mango_energy_environments.environments.scheduling import STORAGE, THERMAL
+from mango_energy_environments import STORAGE, THERMAL
 
 from energy_scheduling_benchmark import datasets
 from energy_scheduling_benchmark.dummy import Offer, merit_order

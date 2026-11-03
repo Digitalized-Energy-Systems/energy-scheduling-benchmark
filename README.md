@@ -42,9 +42,9 @@ local dependencies via `tool.uv.sources`.
 
 ## Networks
 
-`datasets.load(name)` loads a raw PyPSA network from `resources/networks/`, applies the benchmark's
-preparation recipe in memory (drop unusable units, quadratic cost, storage defaults) and converts it
-to a copper-plate network. Names: `toy` (tiny built-in 4-bus chain), `base_s_1_elec_2019`,
+`datasets.load(name)` loads a raw PyPSA network from `resources/networks/`, converts it into an MEE
+`Network` and applies the benchmark's preparation recipe in memory (drop unusable units, quadratic
+cost, storage defaults); the result does not depend on the environment that runs it. Names: `toy` (tiny built-in 4-bus chain), `base_s_1_elec_2019`,
 `lower_saxony_2030` (built by `resources/networks/build_lower_saxony_2030.py`).
 
 ## Running

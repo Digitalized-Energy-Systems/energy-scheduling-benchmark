@@ -31,11 +31,10 @@ def test_complete_and_unknown(toy):
 
 
 def test_grid_split_at_load_only_bus(toy):
-    from mango_energy_environments import Component, CopperPlateNetwork
-    from mango_energy_environments.environments.scheduling import LOAD, THERMAL
+    from mango_energy_environments import LOAD, THERMAL, Component, Network
 
     one = [1.0]
-    net = CopperPlateNetwork(
+    net = Network(
         time_index=toy.time_index[:1],
         components={
             "g0": Component(THERMAL, "a", one, one),
