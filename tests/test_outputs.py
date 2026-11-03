@@ -66,3 +66,20 @@ async def test_write_run(tmp_path, slack):
     assert meta["messages"] == messages
     assert meta["network_sha256"] is None
     assert meta["inputs"] == {"network": "toy", "seed": 0}
+
+
+async def test_no_schedules_writes_null_cost(tmp_path):
+    _, behavior, _, _, _ = build_world(datasets.load("toy"))
+    write_run(
+        tmp_path,
+        behavior,
+        messages={},
+        inputs={},
+        network_file=None,
+        algorithm="central",
+        iterations=0,
+        stop_reason="infeasible",
+        wall_time_s=0.0,
+    )
+    meta = json.loads((tmp_path / "meta.json").read_text())
+    assert meta["total_cost"] is None and meta["slack"]["cost"] is None

@@ -51,7 +51,8 @@ def write_run(
     ``schedule.csv``: time × non-load unit MW (empty = the unit never set a schedule), plus
     ``slack`` (the difference it takes, if enabled), ``residual`` = gen + slack − demand and
     ``soc:<unit>`` (storage energy at the end of each hour, MWh).
-    ``total_cost`` includes the slack import (also reported separately under ``slack``).
+    ``total_cost`` includes the slack import (also reported separately under ``slack``);
+    both are ``null`` when no unit has a schedule (e.g. an infeasible central run).
     ``messages``: sent / delivered / lost counts.
     ``inputs``: all CLI args incl. seed and network name; ``network_file``: the prepared ``.nc``
     the run read (its SHA-256 goes into meta).
@@ -80,7 +81,10 @@ def write_run(
         else:
             total_cost += float(np.sum(c.cost[0] * p + c.cost[1] * p**2))
     slack_import = float(np.maximum(slack_p, 0.0).sum())
-    total_cost += SLACK_IMPORT_PRICE * slack_import
+    slack_cost = SLACK_IMPORT_PRICE * slack_import
+    total_cost += slack_cost
+    if not behavior.schedules:  # 0 would look like the cheapest run
+        total_cost = slack_cost = None
 
     meta = {
         "inputs": inputs,
@@ -91,7 +95,7 @@ def write_run(
         "slack": {
             "import_mwh": slack_import,
             "export_mwh": float(np.maximum(-slack_p, 0.0).sum()),
-            "cost": SLACK_IMPORT_PRICE * slack_import,
+            "cost": slack_cost,
         },
         "messages": messages,
         "iterations": iterations,
