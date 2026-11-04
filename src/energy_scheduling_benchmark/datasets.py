@@ -44,6 +44,17 @@ NETWORKS = {
 #: rounded to 0.11. The marginal cost then rises from c₁ at zero output to (1 + 2k)·c₁ ≈ 1.22·c₁
 #: at full output. ``k = 0`` is the linear cost model.
 QUADRATIC_K = 0.11
+#: Curvature band (€/MWh) for renewables, storage and free thermal units: c₂ = band/(2·p_nom),
+#: so their marginal cost rises by the band from zero to full output (decision 2026-11-04,
+#: `docs/consensus-plan.md` Q2). Why: price-responding algorithms (consensus + innovations,
+#: Kar & Hug 2012 / Hug, Kar & Wu 2015) need a strictly convex cost — with c₂ = 0 the answer to a
+#: price is all-or-nothing and flips every iteration. It is in the problem itself (central and
+#: every algorithm), so no algorithm gets a method-made gap. It is a modelling device, not a
+#: physical cost: kept as cheap as possible — 1 €/MWh is far below the cheapest thermal c₁
+#: (~20 €/MWh), so merit order is unchanged and renewables still run first; it only decides how a
+#: surplus is curtailed (by capacity) and adds ≤ 0.5 €/MWh to renewable/storage energy at full
+#: output. ``band = 0`` (with ``k = 0``) is the linear cost model again.
+CURVATURE_BAND = 1.0
 #: Storage energy capacity in hours of p_nom per carrier (old Q25); others keep the network's.
 STORAGE_MAX_HOURS = {"PHS": 6.0, "battery": 2.0}
 #: Initial state of charge as a fraction of the energy capacity (old Q25).
@@ -56,18 +67,25 @@ def load(
     name: str,
     *,
     k: float = QUADRATIC_K,
+    band: float = CURVATURE_BAND,
     storage_max_hours: dict[str, float] | None = None,
     soc_initial: float = SOC_INITIAL,
 ) -> Network:
     """Load network *name* (``"toy"`` or a key of :data:`NETWORKS`), convert it, prepare it."""
     net = from_pypsa(toy_network() if name == "toy" else pypsa.Network(NETWORKS[name]))
     drop_unusable_units(net, DROP_STORAGE_CARRIERS)
-    add_quadratic_cost(net, k)
+    add_quadratic_cost(net, k, band)
     set_storage_defaults(net, storage_max_hours or STORAGE_MAX_HOURS, soc_initial)
     return net
 
 
-def prepare(name: str, *, k: float = QUADRATIC_K, out: Path | None = None) -> Path:
+def prepare(
+    name: str,
+    *,
+    k: float = QUADRATIC_K,
+    band: float = CURVATURE_BAND,
+    out: Path | None = None,
+) -> Path:
     """Load + prepare *name* and save it (default ``resources/prepared/<name>.nc``)."""
     out = Path(out or PREPARED_DIR / f"{name}.nc")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -75,11 +93,12 @@ def prepare(name: str, *, k: float = QUADRATIC_K, out: Path | None = None) -> Pa
         "dataset": name,
         "source": str(NETWORKS[name].name) if name in NETWORKS else "toy_network()",
         "quadratic_k": k,
+        "curvature_band": band,
         "storage_max_hours": STORAGE_MAX_HOURS,
         "soc_initial": SOC_INITIAL,
         "drop_storage_carriers": list(DROP_STORAGE_CARRIERS),
     }
-    save_network(load(name, k=k), out, meta=recipe)
+    save_network(load(name, k=k, band=band), out, meta=recipe)
     return out
 
 
@@ -98,10 +117,16 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--network", choices=["toy", *NETWORKS], required=True)
     parser.add_argument("--k", type=float, default=QUADRATIC_K, help="quadratic cost k")
     parser.add_argument(
+        "--band",
+        type=float,
+        default=CURVATURE_BAND,
+        help="curvature band €/MWh for renewables/storage (0 = linear)",
+    )
+    parser.add_argument(
         "--out", help="output .nc (default resources/prepared/<name>.nc)"
     )
     args = parser.parse_args(argv)
-    print(prepare(args.network, k=args.k, out=args.out))
+    print(prepare(args.network, k=args.k, band=args.band, out=args.out))
 
 
 def toy_network(hours: int = 48) -> pypsa.Network:

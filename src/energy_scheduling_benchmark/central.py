@@ -30,7 +30,7 @@ def solve_central(
             p_c, p_d = cp.Variable(steps), cp.Variable(steps)
             cons += storage.constraints(c, p_c, p_d)
             p = p_d - p_c
-            cost += c.cost[0] * cp.sum(p_d)
+            cost += c.cost[0] * cp.sum(p_d) + c.cost[1] * cp.sum_squares(p)
         else:
             p = cp.Variable(steps)
             cons += [p >= c.p_min, p <= c.p_max]

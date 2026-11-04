@@ -20,7 +20,10 @@ def test_toy_through_pipeline():
     assert len(net.time_index) == 48
     assert nx.is_connected(connection_graph(net))
     assert net.components["gas"].cost == pytest.approx((30.0, 0.11 * 30 / 100))
-    assert net.components["wind"].cost[1] == 0.0
+    wind = net.components["wind"]
+    assert wind.cost[1] == pytest.approx(
+        datasets.CURVATURE_BAND / (2 * wind.params["p_nom"])
+    )
     # the recipe overrides the toy's 4 h
     assert net.components["battery"].params["max_hours"] == 2.0
     assert net.components["battery"].params["state_of_charge_initial"] == 20.0
@@ -28,9 +31,9 @@ def test_toy_through_pipeline():
 
 def test_recipe_overrides():
     net = datasets.load(
-        "toy", k=0.0, storage_max_hours={"battery": 3.0}, soc_initial=0.0
+        "toy", k=0.0, band=0.0, storage_max_hours={"battery": 3.0}, soc_initial=0.0
     )
-    assert net.components["gas"].cost[1] == 0.0
+    assert all(c.cost[1] == 0.0 for c in net.components.values())  # linear model
     assert net.components["battery"].params["max_hours"] == 3.0
     assert net.components["battery"].params["state_of_charge_initial"] == 0.0
 
@@ -52,6 +55,19 @@ def test_lower_saxony_2030():
     assert kinds.count("load") == 67
     assert not any(c.params.get("carrier") == "hydro" for c in net.components.values())
     assert nx.is_connected(connection_graph(net))
+
+
+@pytest.mark.parametrize("name", ["toy", *datasets.NETWORKS])
+def test_curvature_band_keeps_merit_order(name):
+    """Renewables/storage at full output stay cheaper than the cheapest priced thermal unit."""
+    comps = datasets.load(name).components.values()
+    cheapest = min(c.cost[0] for c in comps if c.kind == "gen" and c.cost[0] > 0)
+    top = max(
+        c.cost[0] + datasets.CURVATURE_BAND
+        for c in comps
+        if c.kind in ("sgen", "storage")
+    )
+    assert top < cheapest
 
 
 @pytest.mark.parametrize("name", ["toy", *datasets.NETWORKS])

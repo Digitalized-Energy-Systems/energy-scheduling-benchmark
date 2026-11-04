@@ -2,7 +2,8 @@
 
 ``E[t+1] = E[t] + η_store·p_c[t] − p_d[t]/η_dispatch``, ``0 ≤ E ≤ p_nom·max_hours``,
 ``E[0] = state_of_charge_initial``, terminal ``E[T] ≥ E[0]``; charge ≤ −p_min, discharge ≤ p_max.
-Only discharge is priced (c₁·p_d). Schedules are net power p = p_d − p_c.
+Cost c₁·p_d (discharge only) + c₂·p² on the net power (curvature band, `datasets.CURVATURE_BAND`).
+Schedules are net power p = p_d − p_c.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ def soc(c: Component, p: np.ndarray) -> np.ndarray:
 
 
 def cost(c: Component, p: np.ndarray) -> float:
-    return float(c.cost[0] * np.maximum(p, 0.0).sum())
+    return float(c.cost[0] * np.maximum(p, 0.0).sum() + c.cost[1] * np.sum(p**2))
 
 
 def constraints(c: Component, p_c: cp.Variable, p_d: cp.Variable) -> list:

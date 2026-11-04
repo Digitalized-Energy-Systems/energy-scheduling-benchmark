@@ -59,6 +59,7 @@ async def test_write_run(tmp_path, slack):
     meta = json.loads((tmp_path / "meta.json").read_text())
     gas, coal = net.components["gas"].cost, net.components["coal"].cost
     per_step = gas[0] * 50 + gas[1] * 50**2 + coal[0] * 10 + coal[1] * 10**2
+    per_step += battery.cost[1] * 1.0**2  # curvature band on the net power
     imported = np.maximum(-behavior.balance(), 0).sum() if slack else 0.0
     assert meta["slack"]["import_mwh"] == pytest.approx(imported)
     assert meta["slack"]["cost"] == pytest.approx(4000 * imported)
