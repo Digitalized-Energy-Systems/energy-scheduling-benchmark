@@ -51,8 +51,11 @@ def write_run(
     ``schedule.csv``: time × non-load unit MW (empty = the unit never set a schedule), plus
     ``slack`` (the difference it takes, if enabled), ``residual`` = gen + slack − demand and
     ``soc:<unit>`` (storage energy at the end of each hour, MWh).
-    ``total_cost`` includes the slack import (also reported separately under ``slack``);
-    both are ``null`` when no unit has a schedule (e.g. an infeasible central run).
+    ``total_cost`` includes the slack import (also reported separately under ``slack``,
+    with ``import_share`` = import / total demand); the costs and all ``slack`` fields are
+    ``null`` (CSV ``slack`` empty) when the central solve is not optimal. Distributed runs always
+    report their cost, also over only the units that got a schedule; ``imbalance`` = shortfall /
+    surplus MWh of the final ``residual``.
     ``messages``: sent / delivered / lost counts.
     ``inputs``: all CLI args incl. seed and network name; ``network_file``: the prepared ``.nc``
     the run read (its SHA-256 goes into meta).
@@ -62,11 +65,13 @@ def write_run(
     schedule = pd.DataFrame(behavior.schedules, index=network.time_index).reindex(
         columns=units
     )
+    failed = algorithm == "central" and stop_reason != "optimal"
     residual = behavior.balance()
-    slack_p = -residual if slack else np.zeros_like(residual)
+    slack_p = -residual if slack and not failed else np.zeros_like(residual)
     if slack:
-        schedule[SLACK] = slack_p
-    schedule["residual"] = residual + slack_p
+        schedule[SLACK] = np.nan if failed else slack_p
+    residual = residual + slack_p
+    schedule["residual"] = residual
     for cid, c in network.components.items():
         if c.kind == STORAGE:
             p = behavior.schedules.get(cid)
@@ -80,11 +85,20 @@ def write_run(
             total_cost += storage.cost(c, p)
         else:
             total_cost += float(np.sum(c.cost[0] * p + c.cost[1] * p**2))
+    demand = sum(
+        float(c.p_max.sum()) for c in network.components.values() if c.kind == LOAD
+    )
     slack_import = float(np.maximum(slack_p, 0.0).sum())
-    slack_cost = SLACK_IMPORT_PRICE * slack_import
-    total_cost += slack_cost
-    if not behavior.schedules:  # 0 would look like the cheapest run
-        total_cost = slack_cost = None
+    slack_meta = {
+        "import_mwh": slack_import,
+        "export_mwh": float(np.maximum(-slack_p, 0.0).sum()),
+        "import_share": slack_import / demand if demand else 0.0,
+        "cost": SLACK_IMPORT_PRICE * slack_import,
+    }
+    total_cost += slack_meta["cost"]
+    if failed:  # no valid result; 0 would look like the cheapest run
+        total_cost = None
+        slack_meta = dict.fromkeys(slack_meta)
 
     meta = {
         "inputs": inputs,
@@ -92,10 +106,10 @@ def write_run(
         and hashlib.sha256(Path(network_file).read_bytes()).hexdigest(),
         "algorithm": algorithm,
         "total_cost": total_cost,
-        "slack": {
-            "import_mwh": slack_import,
-            "export_mwh": float(np.maximum(-slack_p, 0.0).sum()),
-            "cost": slack_cost,
+        "slack": slack_meta,
+        "imbalance": {
+            "shortfall_mwh": float(np.maximum(-residual, 0.0).sum()),
+            "surplus_mwh": float(np.maximum(residual, 0.0).sum()),
         },
         "messages": messages,
         "iterations": iterations,

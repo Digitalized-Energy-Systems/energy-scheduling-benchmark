@@ -62,24 +62,49 @@ async def test_write_run(tmp_path, slack):
     imported = np.maximum(-behavior.balance(), 0).sum() if slack else 0.0
     assert meta["slack"]["import_mwh"] == pytest.approx(imported)
     assert meta["slack"]["cost"] == pytest.approx(4000 * imported)
+    demand = sum(c.p_max.sum() for c in net.components.values() if c.kind == "load")
+    assert meta["slack"]["import_share"] == pytest.approx(imported / demand)
+    final = csv["residual"]
+    assert meta["imbalance"]["shortfall_mwh"] == pytest.approx(
+        np.maximum(-final, 0).sum()
+    )
+    assert meta["imbalance"]["surplus_mwh"] == pytest.approx(np.maximum(final, 0).sum())
     assert meta["total_cost"] == pytest.approx(steps * per_step + 4000 * imported)
     assert meta["messages"] == messages
     assert meta["network_sha256"] is None
     assert meta["inputs"] == {"network": "toy", "seed": 0}
 
 
-async def test_no_schedules_writes_null_cost(tmp_path):
-    _, behavior, _, _, _ = build_world(datasets.load("toy"))
+def _write_empty(tmp_path, algorithm, stop_reason):
+    _, behavior, _, _, _ = build_world(datasets.load("toy"), slack=True)
     write_run(
         tmp_path,
         behavior,
         messages={},
         inputs={},
         network_file=None,
-        algorithm="central",
+        algorithm=algorithm,
         iterations=0,
-        stop_reason="infeasible",
+        stop_reason=stop_reason,
         wall_time_s=0.0,
+        slack=True,
     )
-    meta = json.loads((tmp_path / "meta.json").read_text())
-    assert meta["total_cost"] is None and meta["slack"]["cost"] is None
+    csv = pd.read_csv(tmp_path / "schedule.csv", index_col="time")
+    return json.loads((tmp_path / "meta.json").read_text()), csv, behavior
+
+
+async def test_failed_central_writes_null_cost_and_slack(tmp_path):
+    meta, csv, behavior = _write_empty(tmp_path, "central", "infeasible")
+    assert meta["total_cost"] is None
+    assert all(v is None for v in meta["slack"].values())
+    assert csv["slack"].isna().all()
+    np.testing.assert_allclose(csv["residual"], behavior.balance())  # = −demand, not 0
+
+
+async def test_lossy_run_without_schedules_keeps_slack_cost(tmp_path):
+    meta, csv, behavior = _write_empty(tmp_path, "dummy", "timeout")
+    demand = -behavior.balance().sum()
+    assert meta["slack"]["import_mwh"] == pytest.approx(demand)
+    assert meta["slack"]["import_share"] == pytest.approx(1.0)
+    assert meta["total_cost"] == pytest.approx(4000 * demand)
+    assert meta["imbalance"] == {"shortfall_mwh": 0.0, "surplus_mwh": 0.0}
