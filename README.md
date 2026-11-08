@@ -5,10 +5,10 @@ central-dispatch optimum on copper-plate networks.
 
 The package is built on top of:
 
-* [mango-agents](../mango) — the agent framework
+* [mango-agents](https://github.com/OFFIS-DAI/mango) 2.4.0 (PyPI) — the agent framework
 * [mango-energy-environments](../mango-energy-environments) — mango environment abstractions
 * [distributed-resource-optimization](../distributed-resource-optimization) — COHDA / ADMM / averaging consensus
-* [PyPSA](https://pypsa.org) — power-system data model (replaces `PowerSystems.jl`)
+* [PyPSA](https://pypsa.org) — source of the benchmark networks
 
 ## Scope of this package
 
@@ -18,14 +18,14 @@ This package is one of three with separate responsibilities:
   two modes: **physical** (runs on the real frameworks — pandapower, monee — incl. their physical
   calculations) and **copper-plate** (physics skipped; lines only decide which agents are connected,
   energy moves freely between any actors; used by the benchmark). Networks, components, time series,
-  observe/act, component agents, network sources (e.g. PyPSA) converted into backend networks,
+  observe/act, binding agents to network elements (one component or a whole bus), network sources (e.g. PyPSA) converted into backend networks,
   generic preparation steps. Existing functionality (monee restoration, pandapower scheduling) is
   kept. No distributed-algorithm or benchmark logic.
 - **distributed-resource-optimization** — only the logic of the distributed algorithms, as generic
   as possible (usable for non-energy problems too) and built on mango as far as possible, including
   the generic mango carrier/role. No PyPSA, network or benchmark logic.
 - **energy-scheduling-benchmark** — builds the benchmark from the other two: the economic-dispatch
-  problem formulation, storage model, central-dispatch optimum, benchmark roles (leader, loads),
+  problem formulation, storage model, central-dispatch optimum, benchmark roles (leader, bus agents),
   concrete datasets, runs and comparisons.
 
 Dependencies point one way only: energy-scheduling-benchmark → the other two; mango-energy-environments
@@ -37,19 +37,20 @@ and distributed-resource-optimization never import each other.
 pip install -e .
 ```
 
-The `pyproject.toml` wires the three sibling mango packages in as editable
-local dependencies via `tool.uv.sources`.
+The `pyproject.toml` wires the two sibling packages (mango-energy-environments,
+distributed-resource-optimization) in as editable local dependencies via `tool.uv.sources`;
+mango-agents comes from PyPI.
 
 ## Networks
 
 Prepare once, run many times. `esb-prepare --network NAME` loads the raw PyPSA network from
 `resources/networks/`, converts it into an MEE `Network`, applies the benchmark's preparation recipe
-(drop unusable units, quadratic cost, storage defaults) and saves it as NetCDF to
+(drop unusable units, quadratic cost incl. a curvature band for renewables/storage, storage defaults) and saves it as NetCDF to
 `resources/prepared/NAME.nc` (committed; the recipe is stored in the file's `meta` attribute). The
 prepared file does not depend on the environment that runs it. Names: `toy` (tiny built-in 4-bus
 chain), `base_s_1_elec_2019`, `lower_saxony_2030` (built by
 `resources/networks/build_lower_saxony_2030.py`). Re-run `esb-prepare` after changing the recipe;
-`--k` and `--out` write a variant (e.g. linear costs) to another file.
+`--k`, `--band` and `--out` write a variant (e.g. linear costs: `--k 0 --band 0`) to another file.
 
 ## Running
 
@@ -61,9 +62,18 @@ esb-run --help   # --algorithm, --loss-rate (fraction per hop), --delay-s, --sla
 ```
 
 Each run writes `outputs/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_from<start>_<hours>h/`
-with `schedule.csv` (time × unit MW, `slack`, `residual`) and `meta.json` (inputs, prepared-file SHA-256,
-total cost, messages sent/delivered/lost, iterations, stop reason, wall time). The only algorithm so
-far is `dummy` (merit order in the leader, a plumbing test).
+with `schedule.csv` (time × unit MW, `slack`, `residual`, `soc:<storage>`) and `meta.json` (inputs,
+prepared-file SHA-256, total cost, slack use, imbalance shortfall/surplus, messages
+sent/delivered/lost, iterations, stop reason, wall time). Algorithms so far: `central` (the
+reference optimum) and `dummy` (merit order in the leader, a plumbing test).
+
+## World
+
+One mango agent per bus; it owns every component at its bus (units, storage and its load) and
+reaches them through MEE's copper-plate behaviour (`register(..., bus=b)`). A `leader` (and with
+`--slack` a `slack` agent) sits at the first bus / position 0. The leader knows no demand: it
+only learns it from the bus agents' messages. Topologies: `grid` (buses joined by lines),
+`ring`, `complete`; non-neighbours are reached hop by hop, every hop lossy and counted.
 
 ## Package layout
 
@@ -72,7 +82,7 @@ src/energy_scheduling_benchmark/
 ├── datasets.py   # benchmark networks + preparation recipe; esb-prepare
 ├── central.py    # central dispatch: the reference optimum (cvxpy)
 ├── storage.py    # shared storage model (central dispatch + algorithms)
-├── world.py      # mango world: topologies, counted lossy links, leader/slack
+├── world.py      # mango world: bus agents, topologies, counted lossy links, leader/slack
 ├── dummy.py      # dummy merit-order algorithm (test fixture)
 ├── run.py        # esb-run: one run end-to-end
 └── outputs.py    # schedule.csv + meta.json

@@ -9,7 +9,7 @@ Whenever new code is written here, first invoke the ponytail skill (`ponytail:po
 
 - Owns: the benchmark — economic-dispatch problem formulation (costs incl. quadratic, power
   balance, bounds, storage model), central-dispatch reference optimum, mapping MEE networks onto
-  DRO's generic problem interface, benchmark roles (leader, loads), concrete datasets
+  DRO's generic problem interface, benchmark roles (leader, bus agents), concrete datasets
   (network selection, lower_saxony_2030), runs, CSV + meta outputs, comparison.
 - Must not contain: network representation/simulation (→ MEE) or generic algorithm logic (→ DRO).
 
