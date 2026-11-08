@@ -1,6 +1,6 @@
 """esb-tune: sweep consensus step sizes for one network × topology (plan §7 I15).
 
-Runs central once per window, then consensus for every candidate (decaying: α₀ grid; constant:
+Runs central once per window, then consensus for every candidate (decaying: α₀ × β₀ grid; constant:
 κ × γ grid) on each window. Among the candidates that stop "converged" on every window it picks
 the smallest worst-window |cost gap| + relative imbalance vs central (ties: fewer iterations)
 and writes it into ``resources/tuned_parameters.toml`` as
@@ -61,7 +61,10 @@ def write_section(name: str, values: dict) -> None:
 
 
 def _grid(args: argparse.Namespace) -> list[dict]:
-    decaying = [{"steps": "decaying", "alpha0": a} for a in _floats(args.alpha0)]
+    decaying = [
+        {"steps": "decaying", "alpha0": a, "beta0": b}
+        for a, b in itertools.product(_floats(args.alpha0), _floats(args.beta0))
+    ]
     constant = [
         {"steps": "constant", "kappa": k, "gamma": g}
         for k, g in itertools.product(_floats(args.kappa), _floats(args.gamma))
@@ -156,6 +159,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--hours", type=int, default=24)
     parser.add_argument("--alpha0", default="0.1,0.3,1,3,10,30", help="decaying grid")
+    parser.add_argument(
+        "--beta0", default="0.003,0.01,0.03,0.1,0.2", help="decaying grid (× alpha0)"
+    )
     parser.add_argument("--kappa", default="0.003,0.01,0.03,0.1", help="constant grid")
     parser.add_argument("--gamma", default="1,4,16", help="constant grid")
     parser.add_argument("--max-iter", type=int, default=3000, help="per candidate")
