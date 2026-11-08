@@ -1,7 +1,8 @@
 """mango world for a benchmark run: copper-plate behaviour, communication topology, lossy links.
 
 Agents: one per bus, owning all components at it incl. its load (KH12 §III-C), plus a ``leader``
-and, if enabled, a ``slack`` agent, both placed at the first bus / position 0. The leader knows
+and, if enabled, a ``slack`` agent: leaves on the first bus (grid, ring) or at position 0 of the
+complete graph. The leader knows
 no demand; it only learns it from the bus agents' messages.
 """
 
@@ -38,23 +39,26 @@ class CountingCommunication(SimpleCommunicationSimulation):
 
 
 def topology_graph(network: Network, kind: str, slack: bool = False) -> nx.Graph:
-    """Agent graph: buses + leader (+ slack) at the first bus / position 0."""
+    """Agent graph over the buses; leader (+ slack) at position 0 (complete) or as leaves on the
+    first bus (grid, ring), so the bus agents' own graph is the named topology."""
     buses = sorted({c.bus for c in network.components.values()})
     extra = [LEADER, SLACK] if slack else [LEADER]
     if kind == "complete":
         return nx.complete_graph(extra + buses)
     if kind == "ring":
-        return nx.cycle_graph(extra + buses)
-    if kind != "grid":
+        graph = nx.cycle_graph(buses)
+        graph.remove_edges_from(list(nx.selfloop_edges(graph)))  # a one-bus network
+    elif kind == "grid":
+        graph = nx.Graph()
+        graph.add_nodes_from(buses)
+        graph.add_edges_from(network.lines)
+        if not nx.is_connected(graph) or len(graph) != len(buses):
+            # unroutable agents would be reached directly, bypassing the topology
+            raise ValueError(
+                "grid topology is disconnected or has buses without components"
+            )
+    else:
         raise ValueError(f"unknown topology {kind!r}, expected one of {TOPOLOGIES}")
-    graph = nx.Graph()
-    graph.add_nodes_from(buses)
-    graph.add_edges_from(network.lines)
-    if not nx.is_connected(graph) or len(graph) != len(buses):
-        # unroutable agents would be reached directly, bypassing the topology
-        raise ValueError(
-            "grid topology is disconnected or has buses without components"
-        )
     graph.add_edges_from((e, buses[0]) for e in extra)
     if slack:
         graph.add_edge(LEADER, SLACK)

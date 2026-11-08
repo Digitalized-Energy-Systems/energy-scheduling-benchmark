@@ -39,3 +39,25 @@ def constraints(c: Component, p_c: cp.Variable, p_d: cp.Variable) -> list:
         energy <= e_max,
         energy[-1] >= e0,
     ]
+
+
+def response(c: Component):
+    """``respond(λ)`` → net schedule P = argmin cost(P) − λᵀP over the Q15 set (HKW15 eq. 19).
+
+    The cvxpy problem is built once, λ is a Parameter; each call re-solves it.
+    """
+    steps = len(c.p_max)
+    lam = cp.Parameter(steps)
+    p_c, p_d = cp.Variable(steps), cp.Variable(steps)
+    p = p_d - p_c
+    cost = c.cost[0] * cp.sum(p_d) + c.cost[1] * cp.sum_squares(p) - lam @ p
+    problem = cp.Problem(cp.Minimize(cost), constraints(c, p_c, p_d))
+
+    def respond(prices: np.ndarray) -> np.ndarray:
+        lam.value = np.asarray(prices, dtype=float)
+        problem.solve(solver=cp.CLARABEL)
+        if problem.status != cp.OPTIMAL:
+            raise RuntimeError(f"storage response: {problem.status}")
+        return np.asarray(p.value)
+
+    return respond

@@ -1,3 +1,4 @@
+import networkx as nx
 import pytest
 
 from energy_scheduling_benchmark import datasets
@@ -20,9 +21,18 @@ def test_grid(toy):
 
 def test_ring_with_slack(toy):
     g = topology_graph(toy, "ring", slack=True)
-    assert all(d == 2 for _, d in g.degree)
-    assert set(g[LEADER]) == {SLACK, "bus3"}  # position 0, ring ordered by bus
+    buses = g.subgraph(BUSES)
+    assert all(d == 2 for _, d in buses.degree)  # the buses form the ring
+    assert set(g[LEADER]) == {SLACK, "bus0"}  # leaves on the first bus
     assert set(g[SLACK]) == {LEADER, "bus0"}
+
+
+def test_ring_one_bus_has_no_self_loop(toy):
+    from mango_energy_environments import THERMAL, Component, Network
+
+    one = [1.0]
+    net = Network(toy.time_index[:1], {"g": Component(THERMAL, "a", one, one)}, [])
+    assert nx.number_of_selfloops(topology_graph(net, "ring")) == 0
 
 
 def test_complete_and_unknown(toy):
@@ -49,9 +59,9 @@ def test_grid_disconnected(toy):
 
 async def test_build_world_and_loss_count(toy):
     world, behavior, agents, comm, routes = build_world(toy, "ring", loss_rate=1.0)
-    assert routes["leader"]["bus1"] == "bus0"  # ring: leader, bus0, bus1, bus2, bus3
+    assert routes["leader"]["bus2"] in {"bus0"}  # leader is a leaf on bus0
     assert behavior.observe(agents["bus1"].aid, "components") == ["coal", "load1"]
-    assert {a.aid for a in agents[LEADER].neighbors()} == {"bus0", "bus3"}
+    assert {a.aid for a in agents[LEADER].neighbors()} == {"bus0"}
 
     async with world:
         await world.send_message(
