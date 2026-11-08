@@ -1,11 +1,13 @@
-"""esb-tune: sweep consensus step sizes for one network × topology (plan §7 I15).
+"""esb-tune: sweep consensus step sizes for one network × topology (plan §7 I15–I19).
 
-Runs central once per window, then consensus for every candidate (decaying: α₀ × β₀ grid; constant:
-κ × γ grid) on each window. α₀ and κ are given as factors of 1 / (the largest bus price sensitivity
-Σ 1/(2c₂)), because constant steps are only stable below 2 / that sensitivity. Among the candidates that stop "converged" on every window it picks
-the smallest worst-window |cost gap| + relative imbalance vs central (ties: fewer iterations)
-and writes it into ``resources/tuned_parameters.toml`` as
-``[consensus.<network>.<topology>.sweep]``; the note also records the best of the other variant.
+Runs central once per window, then consensus for every candidate (decaying: α₀ × β₀ grid;
+constant: κ × γ grid) on each window. α₀ and κ are factors of 1 / (the largest bus price
+sensitivity Σ 1/(2c₂)), because constant steps are only stable below 2 / that sensitivity.
+Each candidate runs a fixed budget (``--max-iter``) with the stop rule off (KH12 style), so
+small stable steps are not cut short by the step-change stop. The candidate with the smallest
+worst-window |cost gap| + relative imbalance vs central wins and is written into
+``resources/tuned_parameters.toml`` as ``[consensus.<network>.<topology>.sweep]`` — only if its
+|gap| < ``--max-gap`` (1 %) on every window; the note also records the best of the other variant.
 
     esb-tune --network lower_saxony_2030 --topology ring --start 2019-01-14 --start 2019-06-10
 """
@@ -36,8 +38,9 @@ async def _meta(argv: list[str]) -> dict:
 
 
 def score(meta: dict, central: dict, demand_mwh: float) -> float | None:
-    """|cost gap| + imbalance / demand (both relative); None unless the run converged."""
-    if meta["stop_reason"] != "converged" or meta["total_cost"] is None:
+    """|cost gap| + imbalance / demand (both relative); None unless the run used its whole
+    budget (stop rule off, so "max_iter"; "stalled" = diverged)."""
+    if meta["stop_reason"] != "max_iter" or meta["total_cost"] is None:
         return None
     gap = meta["total_cost"] / central["total_cost"] - 1
     imbalance = meta["imbalance"]["shortfall_mwh"] + meta["imbalance"]["surplus_mwh"]
@@ -124,7 +127,11 @@ async def sweep(args: argparse.Namespace) -> dict | None:
         for i, values in enumerate(_grid(args, sensitivity)):
             sets = [
                 x
-                for k, v in (values | {"max_iter": args.max_iter}).items()
+                # stop rule off (max |Δλ| < −1 never holds): every candidate gets the same
+                # budget; small stable steps would otherwise trip the step-change stop at once
+                for k, v in (
+                    values | {"max_iter": args.max_iter, "eps_lambda": -1}
+                ).items()
                 for x in ("--set", f"{k}={v}")
             ]
             scores, iterations, gaps = [], [], {}
@@ -151,9 +158,15 @@ async def sweep(args: argparse.Namespace) -> dict | None:
             variant = values["steps"]
             if variant not in best or candidate[:2] < best[variant][:2]:
                 best[variant] = candidate
-    if not best:
-        print("no candidate converged on every window")
+    usable = {
+        v: b for v, b in best.items() if max(map(abs, b[3].values())) < args.max_gap
+    }
+    if not usable:
+        print(f"no usable candidate (|gap| < {args.max_gap:.1%} on every window)")
+        for v, b in best.items():
+            print("best", v, _note(v, b, args.hours))
         return None
+    best = usable
     winner = min(best, key=lambda v: best[v][:2])
     values = best[winner][2] | {
         "note": f"esb-tune (grid × 1/{sensitivity:.4g} MW per €/MWh) best: "
@@ -191,7 +204,12 @@ def main(argv: list[str] | None = None) -> None:
         "--kappa", default="0.1,0.3,1,1.5", help="constant grid, × 1/max bus dP/dλ"
     )
     parser.add_argument("--gamma", default="1,4,16", help="constant grid")
-    parser.add_argument("--max-iter", type=int, default=3000, help="per candidate")
+    parser.add_argument(
+        "--max-iter", type=int, default=3000, help="fixed budget per candidate"
+    )
+    parser.add_argument(
+        "--max-gap", type=float, default=0.01, help="write only if |gap| < this"
+    )
     parser.add_argument(
         "--no-write", dest="write", action="store_false", help="only print the best set"
     )
