@@ -1,7 +1,8 @@
 """esb-tune: sweep consensus step sizes for one network × topology (plan §7 I15).
 
 Runs central once per window, then consensus for every candidate (decaying: α₀ × β₀ grid; constant:
-κ × γ grid) on each window. Among the candidates that stop "converged" on every window it picks
+κ × γ grid) on each window. α₀ and κ are given as factors of 1 / (the largest bus price sensitivity
+Σ 1/(2c₂)), because constant steps are only stable below 2 / that sensitivity. Among the candidates that stop "converged" on every window it picks
 the smallest worst-window |cost gap| + relative imbalance vs central (ties: fewer iterations)
 and writes it into ``resources/tuned_parameters.toml`` as
 ``[consensus.<network>.<topology>.sweep]``; the note also records the best of the other variant.
@@ -60,14 +61,29 @@ def write_section(name: str, values: dict) -> None:
         f.truncate()
 
 
-def _grid(args: argparse.Namespace) -> list[dict]:
+def max_sensitivity(network) -> float:
+    """Largest bus price sensitivity Σ 1/(2c₂) (MW per €/MWh): constant steps need
+    α < 2 / it at that bus, so the α₀ / κ grids are factors of its inverse."""
+    per_bus: dict[str, float] = {}
+    for c in network.components.values():
+        if c.kind != LOAD:
+            per_bus[c.bus] = per_bus.get(c.bus, 0.0) + 1 / (2 * c.cost[1])
+    return max(per_bus.values())
+
+
+def _grid(args: argparse.Namespace, sensitivity: float) -> list[dict]:
+    """α₀ and κ = factor / *sensitivity* (rounded to 4 digits); β₀, γ as given."""
+
+    def scaled(text):
+        return [float(f"{f / sensitivity:.4g}") for f in _floats(text)]
+
     decaying = [
         {"steps": "decaying", "alpha0": a, "beta0": b}
-        for a, b in itertools.product(_floats(args.alpha0), _floats(args.beta0))
+        for a, b in itertools.product(scaled(args.alpha0), _floats(args.beta0))
     ]
     constant = [
         {"steps": "constant", "kappa": k, "gamma": g}
-        for k, g in itertools.product(_floats(args.kappa), _floats(args.gamma))
+        for k, g in itertools.product(scaled(args.kappa), _floats(args.gamma))
     ]
     return {"decaying": decaying, "constant": constant, "both": decaying + constant}[
         args.steps
@@ -89,6 +105,8 @@ async def sweep(args: argparse.Namespace) -> dict | None:
     base = ["--network", args.network, "--topology", args.topology]
     base += ["--hours", str(args.hours)]
     raw = load_network(datasets.prepared_path(args.network))
+    sensitivity = max_sensitivity(raw)
+    print(f"max bus dP/dλ = {sensitivity:.4g} MW per €/MWh", flush=True)
     starts = args.start or [None]
     best: dict[str, tuple] = {}  # variant -> (score, iterations, values, {start: gap})
     with tempfile.TemporaryDirectory() as tmp:
@@ -103,7 +121,7 @@ async def sweep(args: argparse.Namespace) -> dict | None:
                 ["--algorithm", "central", *common, "--out", f"{tmp}/central{w}"]
             )
             windows[str(net.time_index[0])] = (common, central, float(demand))
-        for i, values in enumerate(_grid(args)):
+        for i, values in enumerate(_grid(args, sensitivity)):
             sets = [
                 x
                 for k, v in (values | {"max_iter": args.max_iter}).items()
@@ -120,7 +138,12 @@ async def sweep(args: argparse.Namespace) -> dict | None:
                 if meta["total_cost"] is not None:
                     gaps[start] = meta["total_cost"] / central["total_cost"] - 1
                 print(
-                    values, start, meta["stop_reason"], meta["iterations"], scores[-1]
+                    values,
+                    start,
+                    meta["stop_reason"],
+                    meta["iterations"],
+                    scores[-1],
+                    flush=True,
                 )
             if None in scores:
                 continue
@@ -133,7 +156,7 @@ async def sweep(args: argparse.Namespace) -> dict | None:
         return None
     winner = min(best, key=lambda v: best[v][:2])
     values = best[winner][2] | {
-        "note": "esb-tune best: "
+        "note": f"esb-tune (grid × 1/{sensitivity:.4g} MW per €/MWh) best: "
         + " | ".join(
             _note(v, best[v], args.hours)
             for v in sorted(best, key=lambda v: v != winner)
@@ -158,11 +181,15 @@ def main(argv: list[str] | None = None) -> None:
         "--start", action="append", help="window start; repeat for several windows"
     )
     parser.add_argument("--hours", type=int, default=24)
-    parser.add_argument("--alpha0", default="0.1,0.3,1,3,10,30", help="decaying grid")
+    parser.add_argument(
+        "--alpha0", default="0.1,0.3,1,1.5", help="decaying grid, × 1/max bus dP/dλ"
+    )
     parser.add_argument(
         "--beta0", default="0.003,0.01,0.03,0.1,0.2", help="decaying grid (× alpha0)"
     )
-    parser.add_argument("--kappa", default="0.003,0.01,0.03,0.1", help="constant grid")
+    parser.add_argument(
+        "--kappa", default="0.1,0.3,1,1.5", help="constant grid, × 1/max bus dP/dλ"
+    )
     parser.add_argument("--gamma", default="1,4,16", help="constant grid")
     parser.add_argument("--max-iter", type=int, default=3000, help="per candidate")
     parser.add_argument(
