@@ -83,3 +83,18 @@ def test_prepare_once_run_from_file(tmp_path):
     assert meta["stop_reason"] == "optimal"
     with pytest.raises(FileNotFoundError, match="esb-prepare --network nope"):
         main(["--network", "nope"])
+
+
+@pytest.mark.parametrize("topology", ["grid", "ring", "complete"])
+def test_consensus_reaches_central_cost(tmp_path, topology):
+    common = ["--hours", "24", "--topology", topology, "--out", str(tmp_path)]
+    main(["--algorithm", "central", *common])
+    tuned = ["--set", "steps=constant", "--set", "kappa=0.03", "--set", "gamma=4"]
+    main(["--algorithm", "consensus", *common, *tuned])
+    central, consensus = (
+        json.loads(next(tmp_path.glob(f"toy/{a}/*/meta.json")).read_text())
+        for a in ("central", "consensus")
+    )
+    assert consensus["stop_reason"] == "converged"
+    assert consensus["inputs"]["consensus"]["kappa"] == 0.03
+    assert consensus["total_cost"] == pytest.approx(central["total_cost"], rel=1e-3)

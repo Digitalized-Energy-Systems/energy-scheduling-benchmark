@@ -10,10 +10,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import time
+import tomllib
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+from distributed_resource_optimization import (
+    ConsensusCoordinator,
+    ConsensusInnovationsAlgorithm,
+)
 from distributed_resource_optimization.carrier.mango_carrier import (
     CoordinatorRole,
     DistributedOptimizationRole,
@@ -22,13 +28,13 @@ from distributed_resource_optimization.carrier.mango_carrier import (
 from mango import DISCRETE_EVENT
 from mango_energy_environments import CopperPlateBehavior, Network, load_network
 
-from . import datasets
+from . import consensus, datasets
 from .central import solve_central
 from .dummy import DummyBus, MeritOrderCoordinator
 from .outputs import run_dir, write_run
 from .world import LEADER, SLACK, TOPOLOGIES, build_world
 
-ALGORITHMS = ("central", "dummy")
+ALGORITHMS = ("central", "consensus", "dummy")
 #: Simulated seconds the dummy leader waits for offers (a ring of ~70 bus agents at 0.01 s per
 #: hop needs < 1 s for request + reply).
 DUMMY_TIMEOUT_S = 60.0
@@ -52,11 +58,8 @@ def window(network: Network, start, hours: int) -> Network:
     return Network(network.time_index[s], components, network.lines)
 
 
-async def _run_dummy(network, args):
-    """Returns (behavior, messages, stop_reason)."""
-    world, behavior, agents, communication, routes = build_world(
-        network, args.topology, args.loss_rate, args.delay_s, args.seed, args.slack
-    )
+def _dummy(behavior, agents, routes):
+    """Adds the dummy roles; returns ``() -> (stop_reason, iterations)``."""
     coordinator = MeritOrderCoordinator(DUMMY_TIMEOUT_S)
     for node, agent in agents.items():
         if node == LEADER:
@@ -65,6 +68,49 @@ async def _run_dummy(network, args):
             unit = DummyBus(None if node == SLACK else behavior, agent.aid)
             role = DistributedOptimizationRole(unit, routes=routes[agent.aid])
         agent.add_role(role)
+    return lambda: (coordinator.stop_reason, 1)
+
+
+def _consensus(params: dict, steps: int):
+    """Adds the consensus roles (bus agents + leader; the slack takes no part, plan Q6)."""
+
+    def setup(behavior, agents, routes):
+        alpha, beta = consensus.steps(params)
+        buses = [a for node, a in agents.items() if node not in (LEADER, SLACK)]
+        coordinator = ConsensusCoordinator([a.addr for a in buses], np.zeros(steps))
+        agents[LEADER].add_role(
+            CoordinatorRole(coordinator, routes=routes[agents[LEADER].aid])
+        )
+        for agent in buses:
+            actor = consensus.BusActor(behavior, agent.aid, params["eps_p"])
+            algorithm = ConsensusInnovationsAlgorithm(
+                lambda alg, carrier: alg.actor.finish(),
+                actor,
+                alpha,
+                beta,
+                params["eps_lambda"],
+                params["max_iter"],
+            )
+            agent.add_role(
+                DistributedOptimizationRole(algorithm, routes=routes[agent.aid])
+            )
+
+        def outcome():
+            r = coordinator.result
+            return ("stalled", None) if r is None else (r.stop_reason, r.iterations)
+
+        return outcome
+
+    return setup
+
+
+async def _simulate(network, args, setup):
+    """Run the mango world with the roles *setup* adds; returns
+    (behavior, messages, stop_reason, iterations)."""
+    world, behavior, agents, communication, routes = build_world(
+        network, args.topology, args.loss_rate, args.delay_s, args.seed, args.slack
+    )
+    outcome = setup(behavior, agents, routes)
     async with world:
         # kick-off is local (not sent over the lossy network, not counted)
         agents[LEADER].handle_message(StartCoordinatedDistributedOptimization(None), {})
@@ -75,19 +121,40 @@ async def _run_dummy(network, args):
         "delivered": world.messages_delivered_count,
         "lost": communication.lost,
     }
-    return behavior, messages, coordinator.stop_reason
+    return behavior, messages, *outcome()
+
+
+def _value(text: str):
+    """A ``--set`` value: TOML syntax (numbers, true/false), else the plain string."""
+    try:
+        return tomllib.loads(f"v = {text}")["v"]
+    except tomllib.TOMLDecodeError:
+        return text
 
 
 async def run(args: argparse.Namespace) -> Path:
     network_file = datasets.prepared_path(args.network)
     network = window(load_network(network_file), args.start, args.hours)
+    inputs = {**vars(args), "start": str(network.time_index[0])}
     began = time.perf_counter()
     if args.algorithm == "central":
         behavior = CopperPlateBehavior(network)
         behavior.schedules, stop_reason = solve_central(network, args.slack)
-        messages = {"sent": 0, "delivered": 0, "lost": 0}
+        messages, iterations = {"sent": 0, "delivered": 0, "lost": 0}, 1
+    elif args.algorithm == "consensus":
+        overrides = dict(kv.split("=", 1) for kv in args.set)
+        params = consensus.parameters(
+            network_file.stem, {k: _value(v) for k, v in overrides.items()}
+        )
+        inputs["consensus"] = params
+        setup = _consensus(params, len(network.time_index))
+        behavior, messages, stop_reason, iterations = await _simulate(
+            network, args, setup
+        )
     else:
-        behavior, messages, stop_reason = await _run_dummy(network, args)
+        behavior, messages, stop_reason, iterations = await _simulate(
+            network, args, _dummy
+        )
     wall_time_s = time.perf_counter() - began
 
     start = network.time_index[0]
@@ -105,10 +172,10 @@ async def run(args: argparse.Namespace) -> Path:
         out,
         behavior,
         messages=messages,
-        inputs={**vars(args), "start": str(start)},
+        inputs=inputs,
         network_file=network_file,
         algorithm=args.algorithm,
-        iterations=1,
+        iterations=iterations,
         stop_reason=stop_reason,
         wall_time_s=wall_time_s,
         slack=args.slack,
@@ -137,6 +204,13 @@ def main(argv: list[str] | None = None) -> None:
         "--start", help="first snapshot, e.g. 2019-01-14 (default: first)"
     )
     parser.add_argument("--hours", type=int, default=24)
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="override a consensus parameter (resources/tuned_parameters.toml)",
+    )
     parser.add_argument("--out", default="outputs")
     print(asyncio.run(run(parser.parse_args(argv))))
 

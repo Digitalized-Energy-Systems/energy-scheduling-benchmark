@@ -1,0 +1,17 @@
+# Consensus + innovations parameters (docs/consensus-plan.md §7 I4–I6).
+# [consensus] = paper fallback for every network; [consensus.<network>] overrides per network;
+# esb-run --set key=value overrides both.
+[consensus]
+steps = "decaying"  # or "constant"
+# decaying: alpha_i = alpha0 / i^alpha_exp, beta_i = beta0 / i^beta_exp (HKW15 eq. 32)
+alpha0 = 0.055
+alpha_exp = 0.98
+beta0 = 0.2
+beta_exp = 0.001
+# constant: alpha = kappa, beta = kappa * gamma (KH12 eq. 43, Fig. 4)
+kappa = 0.003
+gamma = 100.0
+# stop (HKW15 eq. 33): max |Δλ| < eps_lambda (€/MWh) and every unit's max |ΔP| < eps_p * p_nom
+eps_lambda = 1e-4
+eps_p = 1e-3
+max_iter = 10000

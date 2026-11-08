@@ -58,14 +58,19 @@ chain), `base_s_1_elec_2019`, `lower_saxony_2030` (built by
 esb-prepare --network lower_saxony_2030          # once (files for all three are committed)
 esb-run --network lower_saxony_2030 --topology ring --start 2019-01-14 --hours 168 --seed 0
 esb-run --network path/to/prepared.nc ...        # any prepared file
-esb-run --help   # --algorithm, --loss-rate (fraction per hop), --delay-s, --slack, --out, ...
+esb-run --algorithm consensus --set steps=constant --set kappa=0.03 --set gamma=4
+esb-run --help   # --algorithm, --loss-rate (fraction per hop), --delay-s, --slack, --set, --out, ...
 ```
 
 Each run writes `outputs/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_from<start>_<hours>h/`
 with `schedule.csv` (time × unit MW, `slack`, `residual`, `soc:<storage>`) and `meta.json` (inputs,
 prepared-file SHA-256, total cost, slack use, imbalance shortfall/surplus, messages
 sent/delivered/lost, iterations, stop reason, wall time). Algorithms so far: `central` (the
-reference optimum) and `dummy` (merit order in the leader, a plumbing test).
+reference optimum), `consensus` (consensus + innovations, Kar & Hug 2012 / Hug, Kar & Wu 2015;
+plan `../docs/consensus-plan.md`, deviations `../docs/deviations.md`) and `dummy` (merit order in
+the leader, a plumbing test). Consensus parameters (step sizes, tolerances, `max_iter`) come from
+`resources/tuned_parameters.toml` (`[consensus]` defaults, `[consensus.<network>]` per network);
+`--set key=value` overrides them, and the values used are stored in `meta.json`.
 
 ## World
 
@@ -73,7 +78,7 @@ One mango agent per bus; it owns every component at its bus (units, storage and 
 reaches them through MEE's copper-plate behaviour (`register(..., bus=b)`). A `leader` (and with
 `--slack` a `slack` agent) sits at the first bus / position 0. The leader knows no demand: it
 only learns it from the bus agents' messages. Topologies: `grid` (buses joined by lines),
-`ring`, `complete`; non-neighbours are reached hop by hop, every hop lossy and counted.
+`ring` (over the buses), `complete`; non-neighbours are reached hop by hop, every hop lossy and counted.
 
 ## Package layout
 
@@ -81,12 +86,14 @@ only learns it from the bus agents' messages. Topologies: `grid` (buses joined b
 src/energy_scheduling_benchmark/
 ├── datasets.py   # benchmark networks + preparation recipe; esb-prepare
 ├── central.py    # central dispatch: the reference optimum (cvxpy)
-├── storage.py    # shared storage model (central dispatch + algorithms)
+├── storage.py    # shared storage model + price response (central dispatch + algorithms)
+├── consensus.py  # consensus bus actor + parameters (tuned_parameters.toml)
 ├── world.py      # mango world: bus agents, topologies, counted lossy links, leader/slack
 ├── dummy.py      # dummy merit-order algorithm (test fixture)
 ├── run.py        # esb-run: one run end-to-end
 └── outputs.py    # schedule.csv + meta.json
 resources/
+├── tuned_parameters.toml  # per-algorithm parameters
 ├── networks/     # raw PyPSA inputs + build_lower_saxony_2030.py
 └── prepared/     # prepared networks (esb-prepare), read by esb-run
 ```
