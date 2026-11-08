@@ -33,6 +33,7 @@ dev = [
 [project.scripts]
 esb-run = "energy_scheduling_benchmark.run:main"
 esb-prepare = "energy_scheduling_benchmark.datasets:main"
+esb-tune = "energy_scheduling_benchmark.tune:main"
 
 [tool.uv.sources]
 mango-energy-environments = { path = "../mango-energy-environments", editable = true }

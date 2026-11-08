@@ -1,6 +1,8 @@
-# Consensus + innovations parameters (docs/consensus-plan.md §7 I4–I6).
-# [consensus] = paper fallback for every network; [consensus.<network>] overrides per network;
-# esb-run --set key=value overrides both.
+# Consensus + innovations parameters (docs/consensus-plan.md §7 I4–I6, I11–I15).
+# Routes (esb-run --tuning): paper = the [consensus] values below (the papers' numbers, used in
+# MW / €/MWh as printed); manual = [consensus.<network>.<topology>.manual] (hand-tuned, with a
+# note on how); sweep = [consensus.<network>.<topology>.sweep] (written by esb-tune).
+# Default route: manual if present, else paper. esb-run --set key=value overrides any value.
 [consensus]
 steps = "decaying"  # or "constant"
 # decaying: alpha_i = alpha0 / i^alpha_exp, beta_i = beta0 / i^beta_exp (HKW15 eq. 32)
@@ -15,3 +17,24 @@ gamma = 100.0
 eps_lambda = 1e-4
 eps_p = 1e-3
 max_iter = 10000
+
+# toy (2024-01-01, 24 h): hand-tuned 2026-11-08; κ = 0.05, γ = 4 oscillates on ring/complete
+# (α·dP/dλ at bus0 ≈ 1.75), κ = 0.03 is stable on all three; gap vs central −0.014 / −0.015 /
+# −0.019 % (residual imbalance ≈ 0.2 MWh), 495 / 254 / 207 iterations.
+[consensus.toy.grid.manual]
+steps = "constant"
+kappa = 0.03
+gamma = 4.0
+note = "hand-tuned on toy 24 h, 2026-11-08"
+
+[consensus.toy.ring.manual]
+steps = "constant"
+kappa = 0.03
+gamma = 4.0
+note = "hand-tuned on toy 24 h, 2026-11-08"
+
+[consensus.toy.complete.manual]
+steps = "constant"
+kappa = 0.03
+gamma = 4.0
+note = "hand-tuned on toy 24 h, 2026-11-08"

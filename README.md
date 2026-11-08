@@ -58,7 +58,8 @@ chain), `base_s_1_elec_2019`, `lower_saxony_2030` (built by
 esb-prepare --network lower_saxony_2030          # once (files for all three are committed)
 esb-run --network lower_saxony_2030 --topology ring --start 2019-01-14 --hours 168 --seed 0
 esb-run --network path/to/prepared.nc ...        # any prepared file
-esb-run --algorithm consensus --set steps=constant --set kappa=0.03 --set gamma=4
+esb-run --algorithm consensus --tuning paper    # or manual / sweep; --set key=value overrides
+esb-tune --network toy --topology ring --steps constant   # sweep → [consensus.toy.ring.sweep]
 esb-run --help   # --algorithm, --loss-rate (fraction per hop), --delay-s, --slack, --set, --out, ...
 ```
 
@@ -69,8 +70,11 @@ sent/delivered/lost, iterations, stop reason, wall time). Algorithms so far: `ce
 reference optimum), `consensus` (consensus + innovations, Kar & Hug 2012 / Hug, Kar & Wu 2015;
 plan `../docs/consensus-plan.md`, deviations `../docs/deviations.md`) and `dummy` (merit order in
 the leader, a plumbing test). Consensus parameters (step sizes, tolerances, `max_iter`) come from
-`resources/tuned_parameters.toml` (`[consensus]` defaults, `[consensus.<network>]` per network);
-`--set key=value` overrides them, and the values used are stored in `meta.json`.
+`resources/tuned_parameters.toml`, one set per tuning route and network × topology:
+`--tuning paper` = the papers' values (`[consensus]`, used in MW / €/MWh as printed), `manual` =
+hand-tuned `[consensus.<network>.<topology>.manual]` (default when present), `sweep` = written by
+`esb-tune` (grid over the step sizes, best converged cost gap vs central). `--set key=value`
+overrides any value; the route and values used are stored in `meta.json`.
 
 ## World
 
@@ -88,6 +92,7 @@ src/energy_scheduling_benchmark/
 ├── central.py    # central dispatch: the reference optimum (cvxpy)
 ├── storage.py    # shared storage model + price response (central dispatch + algorithms)
 ├── consensus.py  # consensus bus actor + parameters (tuned_parameters.toml)
+├── tune.py       # esb-tune: step-size sweep for one network × topology
 ├── world.py      # mango world: bus agents, topologies, counted lossy links, leader/slack
 ├── dummy.py      # dummy merit-order algorithm (test fixture)
 ├── run.py        # esb-run: one run end-to-end

@@ -144,7 +144,10 @@ async def run(args: argparse.Namespace) -> Path:
     elif args.algorithm == "consensus":
         overrides = dict(kv.split("=", 1) for kv in args.set)
         params = consensus.parameters(
-            network_file.stem, {k: _value(v) for k, v in overrides.items()}
+            network_file.stem,
+            args.topology,
+            args.tuning,
+            {k: _value(v) for k, v in overrides.items()},
         )
         inputs["consensus"] = params
         setup = _consensus(params, len(network.time_index))
@@ -183,7 +186,7 @@ async def run(args: argparse.Namespace) -> Path:
     return out
 
 
-def main(argv: list[str] | None = None) -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--network",
@@ -205,6 +208,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--hours", type=int, default=24)
     parser.add_argument(
+        "--tuning",
+        choices=consensus.TUNINGS,
+        help="consensus parameter set (default: manual if tuned, else paper)",
+    )
+    parser.add_argument(
         "--set",
         action="append",
         default=[],
@@ -212,7 +220,11 @@ def main(argv: list[str] | None = None) -> None:
         help="override a consensus parameter (resources/tuned_parameters.toml)",
     )
     parser.add_argument("--out", default="outputs")
-    print(asyncio.run(run(parser.parse_args(argv))))
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    print(asyncio.run(run(build_parser().parse_args(argv))))
 
 
 if __name__ == "__main__":

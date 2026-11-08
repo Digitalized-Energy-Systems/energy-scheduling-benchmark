@@ -20,12 +20,33 @@ from .datasets import RESOURCES
 PARAMETERS = RESOURCES / "tuned_parameters.toml"
 
 
-def parameters(network: str, overrides: dict | None = None) -> dict:
-    """``[consensus]`` defaults, then ``[consensus.<network>]``, then *overrides*."""
+TUNINGS = ("paper", "manual", "sweep")
+
+
+def parameters(
+    network: str,
+    topology: str,
+    tuning: str | None = None,
+    overrides: dict | None = None,
+) -> dict:
+    """``[consensus]`` defaults (= the paper values), then the *tuning* route's set
+    ``[consensus.<network>.<topology>.<tuning>]``, then *overrides*.
+
+    ``tuning=None``: "manual" if that set exists, else "paper".
+    """
     table = tomllib.loads(PARAMETERS.read_text())["consensus"]
-    own = table.get(network, {})
     defaults = {k: v for k, v in table.items() if not isinstance(v, dict)}
-    return defaults | own | (overrides or {})
+    routes = table.get(network, {}).get(topology, {})
+    if tuning is None:
+        tuning = "manual" if "manual" in routes else "paper"
+    if tuning not in TUNINGS:
+        raise ValueError(f"tuning must be one of {TUNINGS}, got {tuning!r}")
+    if tuning != "paper" and tuning not in routes:
+        raise ValueError(
+            f"no {tuning!r} parameters for {network}/{topology} in {PARAMETERS}"
+        )
+    own = routes.get(tuning, {}) if tuning != "paper" else {}
+    return defaults | own | (overrides or {}) | {"tuning": tuning}
 
 
 def steps(p: dict):
