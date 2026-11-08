@@ -20,17 +20,17 @@ from distributed_resource_optimization.carrier.mango_carrier import (
     StartCoordinatedDistributedOptimization,
 )
 from mango import DISCRETE_EVENT
-from mango_energy_environments import LOAD, CopperPlateBehavior, Network, load_network
+from mango_energy_environments import CopperPlateBehavior, Network, load_network
 
 from . import datasets
 from .central import solve_central
-from .dummy import DummyUnit, MeritOrderCoordinator
+from .dummy import DummyBus, MeritOrderCoordinator
 from .outputs import run_dir, write_run
 from .world import LEADER, SLACK, TOPOLOGIES, build_world
 
 ALGORITHMS = ("central", "dummy")
-#: Simulated seconds the dummy leader waits for offers (a ring of ~430 agents at 0.01 s per hop
-#: needs ~5 s for request + reply).
+#: Simulated seconds the dummy leader waits for offers (a ring of ~70 bus agents at 0.01 s per
+#: hop needs < 1 s for request + reply).
 DUMMY_TIMEOUT_S = 60.0
 
 
@@ -57,13 +57,12 @@ async def _run_dummy(network, args):
     world, behavior, agents, communication, routes = build_world(
         network, args.topology, args.loss_rate, args.delay_s, args.seed, args.slack
     )
-    demand = sum(c.p_max for c in network.components.values() if c.kind == LOAD)
-    coordinator = MeritOrderCoordinator(demand, DUMMY_TIMEOUT_S)
+    coordinator = MeritOrderCoordinator(DUMMY_TIMEOUT_S)
     for node, agent in agents.items():
         if node == LEADER:
             role = CoordinatorRole(coordinator, routes=routes[agent.aid])
         else:
-            unit = DummyUnit(None if node == SLACK else behavior, agent.aid)
+            unit = DummyBus(None if node == SLACK else behavior, agent.aid)
             role = DistributedOptimizationRole(unit, routes=routes[agent.aid])
         agent.add_role(role)
     async with world:

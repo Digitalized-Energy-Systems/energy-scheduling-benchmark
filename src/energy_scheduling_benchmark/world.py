@@ -1,7 +1,8 @@
 """mango world for a benchmark run: copper-plate behaviour, communication topology, lossy links.
 
-Agents: one per network component except loads (copper plate: the leader knows the total demand),
-plus a ``leader`` and, if enabled, a ``slack`` agent, both placed at the first bus / position 0.
+Agents: one per bus, owning all components at it incl. its load (KH12 §III-C), plus a ``leader``
+and, if enabled, a ``slack`` agent, both placed at the first bus / position 0. The leader knows
+no demand; it only learns it from the bus agents' messages.
 """
 
 from __future__ import annotations
@@ -15,12 +16,7 @@ from mango.express.topology import AGENT_NODE_KEY, graph_topology
 from mango.simulation.communication import SimpleCommunicationSimulation
 from mango.simulation.environment import DefaultEnvironment
 from mango.simulation.world import create_world
-from mango_energy_environments import (
-    LOAD,
-    CopperPlateBehavior,
-    Network,
-    connection_graph,
-)
+from mango_energy_environments import CopperPlateBehavior, Network
 
 LEADER, SLACK = "leader", "slack"
 #: Slack import price (€/MWh), export is free (Q3: SDAC harmonised maximum clearing price).
@@ -42,28 +38,24 @@ class CountingCommunication(SimpleCommunicationSimulation):
 
 
 def topology_graph(network: Network, kind: str, slack: bool = False) -> nx.Graph:
-    """Agent graph: component ids (no loads) + leader (+ slack) at the first bus / position 0."""
-    components = network.components
-    agents = sorted(cid for cid, c in components.items() if c.kind != LOAD)
+    """Agent graph: buses + leader (+ slack) at the first bus / position 0."""
+    buses = sorted({c.bus for c in network.components.values()})
     extra = [LEADER, SLACK] if slack else [LEADER]
     if kind == "complete":
-        return nx.complete_graph(extra + agents)
+        return nx.complete_graph(extra + buses)
     if kind == "ring":
-        return nx.cycle_graph(extra + agents)
+        return nx.cycle_graph(extra + buses)
     if kind != "grid":
         raise ValueError(f"unknown topology {kind!r}, expected one of {TOPOLOGIES}")
-    # shortcut: dropping load nodes can split the graph at a bus that hosts only loads; none of
-    # the current networks has one in the middle — contract such buses when a network needs it.
-    graph = connection_graph(network)
-    graph.remove_nodes_from(cid for cid, c in components.items() if c.kind == LOAD)
-    if not nx.is_connected(graph):
+    graph = nx.Graph()
+    graph.add_nodes_from(buses)
+    graph.add_edges_from(network.lines)
+    if not nx.is_connected(graph) or len(graph) != len(buses):
         # unroutable agents would be reached directly, bypassing the topology
         raise ValueError(
-            "grid topology is disconnected (e.g. split at a load-only bus)"
+            "grid topology is disconnected or has buses without components"
         )
-    first_bus = min(components[cid].bus for cid in agents)
-    anchors = [cid for cid in agents if components[cid].bus == first_bus]
-    graph.add_edges_from((e, a) for e in extra for a in anchors)
+    graph.add_edges_from((e, buses[0]) for e in extra)
     if slack:
         graph.add_edge(LEADER, SLACK)
     return graph
@@ -94,7 +86,7 @@ def build_world(
     graph = topology_graph(network, topology, slack)
     agents = {}
     for node in graph.nodes:
-        bind = {} if node in (LEADER, SLACK) else {"id": node}
+        bind = {} if node in (LEADER, SLACK) else {"bus": node}
         agents[node] = world.register(RoleAgent(), suggested_aid=str(node), **bind)
     topo = graph_topology(graph)
     for node, agent in agents.items():

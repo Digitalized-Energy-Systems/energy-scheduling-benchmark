@@ -1,10 +1,11 @@
 """Dummy "algorithm" for end-to-end runs: merit order in the leader, over the DRO carrier.
 
 A test fixture for the benchmark plumbing, not a benchmarked algorithm. The leader asks every
-agent for its offer (cost, p_min/p_max over the horizon), waits up to a timeout, then per hour
-puts every unit at p_min and fills the rest of the demand cheapest-c1-first up to p_max
-(c2 only counts in the cost). Storage stays idle. Each schedule goes back as the participant's
-``OptimizationFinishedMessage``; lost messages simply leave a unit without a schedule.
+bus agent for its offer (per unit: cost, p_min/p_max over the horizon; plus the bus load), waits
+up to a timeout, then per hour puts every unit at p_min and fills the rest of the received demand
+cheapest-c1-first up to p_max (c2 only counts in the cost). Storage stays idle. Each bus's
+``{component: schedule}`` goes back as its ``OptimizationFinishedMessage``; a lost offer leaves
+that bus's units without a schedule and its load out of the demand.
 ``stop_reason`` "complete" only means every offer arrived: schedules lost on the way back
 still show up as empty columns.
 """
@@ -22,7 +23,7 @@ from distributed_resource_optimization.algorithm.core import (
 from distributed_resource_optimization.carrier.mango_carrier import (
     OptimizationFinishedMessage,
 )
-from mango_energy_environments import STORAGE
+from mango_energy_environments import LOAD, STORAGE
 
 
 @dataclass
@@ -31,6 +32,12 @@ class Offer:
     c1: float
     p_min: np.ndarray
     p_max: np.ndarray
+
+
+@dataclass
+class BusOffer:
+    units: dict[str, Offer]
+    load: np.ndarray  # MW per step, sum of the bus's loads (zeros without one)
 
 
 class OfferRequest:
@@ -59,8 +66,7 @@ def merit_order(
 
 
 class MeritOrderCoordinator(Coordinator):
-    def __init__(self, demand: np.ndarray, timeout_s: float) -> None:
-        self.demand = demand
+    def __init__(self, timeout_s: float) -> None:
         self.timeout_s = timeout_s
         self.stop_reason: str | None = None
 
@@ -70,12 +76,19 @@ class MeritOrderCoordinator(Coordinator):
         ]
         await carrier.race(asyncio.wait(futures), carrier.sleep(self.timeout_s))
         self.stop_reason = "complete" if all(f.done() for f in futures) else "timeout"
-        offers = [f.result() if f.done() else None for f in futures]
-        return merit_order(offers, self.demand)
+        buses = [f.result() if f.done() else None for f in futures]
+        received = [b for b in buses if b is not None]
+        demand = sum(b.load for b in received)
+        units = [(i, cid) for i, b in enumerate(buses) if b for cid in b.units]
+        flat = merit_order([buses[i].units[cid] for i, cid in units], demand)
+        result = [None if b is None else {} for b in buses]
+        for (i, cid), schedule in zip(units, flat):
+            result[i][cid] = schedule
+        return result
 
 
-class DummyUnit(DistributedAlgorithm):
-    """Replies its offer and sets the schedule it gets; ``behavior=None``: no component (slack)."""
+class DummyBus(DistributedAlgorithm):
+    """Replies its bus offer and sets the schedules it gets; ``behavior=None``: no bus (slack)."""
 
     def __init__(self, behavior, aid: str) -> None:
         self.behavior = behavior
@@ -83,17 +96,24 @@ class DummyUnit(DistributedAlgorithm):
 
     async def on_exchange_message(self, carrier, message_data, meta):
         if isinstance(message_data, OptimizationFinishedMessage):
-            if message_data.result is not None:
-                self.behavior.act(self.aid, "set_schedule", message_data.result)
+            for cid, schedule in (message_data.result or {}).items():
+                self.behavior.act(self.aid, "set_schedule", schedule, cid)
             return
         offer = None
         if self.behavior is not None:
             observe = self.behavior.observe
-            statics = observe(self.aid, "statics")
-            offer = Offer(
-                statics["kind"],
-                statics["cost"][0],
-                observe(self.aid, "p_min"),
-                observe(self.aid, "p_max"),
-            )
+            cids = observe(self.aid, "components")
+            units, load = {}, np.zeros_like(observe(self.aid, "p_max", cids[0]))
+            for cid in cids:
+                statics = observe(self.aid, "statics", cid)
+                if statics["kind"] == LOAD:
+                    load = load + observe(self.aid, "demand", cid)
+                else:
+                    units[cid] = Offer(
+                        statics["kind"],
+                        statics["cost"][0],
+                        observe(self.aid, "p_min", cid),
+                        observe(self.aid, "p_max", cid),
+                    )
+            offer = BusOffer(units, load)
         carrier.reply_to_other(offer, meta)

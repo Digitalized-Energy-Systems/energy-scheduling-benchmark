@@ -1,8 +1,9 @@
-import networkx as nx
 import pytest
 
 from energy_scheduling_benchmark import datasets
 from energy_scheduling_benchmark.world import LEADER, SLACK, build_world, topology_graph
+
+BUSES = {"bus0", "bus1", "bus2", "bus3"}  # bus3: load only
 
 
 @pytest.fixture(scope="module")
@@ -12,16 +13,16 @@ def toy():
 
 def test_grid(toy):
     g = topology_graph(toy, "grid")
-    assert set(g.nodes) == {"gas", "coal", "wind", "battery", LEADER}  # no loads
-    assert nx.is_connected(g)
-    assert set(g[LEADER]) == {"gas", "battery"}  # agents on the first bus (bus0)
+    assert set(g.nodes) == BUSES | {LEADER}  # one agent per bus, incl. load-only bus3
+    assert set(g.edges) >= set(toy.lines)
+    assert set(g[LEADER]) == {"bus0"}  # the first bus
 
 
 def test_ring_with_slack(toy):
     g = topology_graph(toy, "ring", slack=True)
     assert all(d == 2 for _, d in g.degree)
-    assert set(g[LEADER]) == {SLACK, "wind"}  # position 0, ring ordered by id
-    assert set(g[SLACK]) == {LEADER, "battery"}
+    assert set(g[LEADER]) == {SLACK, "bus3"}  # position 0, ring ordered by bus
+    assert set(g[SLACK]) == {LEADER, "bus0"}
 
 
 def test_complete_and_unknown(toy):
@@ -30,18 +31,17 @@ def test_complete_and_unknown(toy):
         topology_graph(toy, "star")
 
 
-def test_grid_split_at_load_only_bus(toy):
-    from mango_energy_environments import LOAD, THERMAL, Component, Network
+def test_grid_disconnected(toy):
+    from mango_energy_environments import THERMAL, Component, Network
 
     one = [1.0]
     net = Network(
         time_index=toy.time_index[:1],
         components={
             "g0": Component(THERMAL, "a", one, one),
-            "d": Component(LOAD, "b", one, one),
-            "g1": Component(THERMAL, "c", one, one),
+            "g1": Component(THERMAL, "b", one, one),
         },
-        lines=[("a", "b"), ("b", "c")],
+        lines=[],
     )
     with pytest.raises(ValueError, match="disconnected"):
         topology_graph(net, "grid")
@@ -49,12 +49,13 @@ def test_grid_split_at_load_only_bus(toy):
 
 async def test_build_world_and_loss_count(toy):
     world, behavior, agents, comm, routes = build_world(toy, "ring", loss_rate=1.0)
-    assert routes["leader"]["gas"] in {"battery", "wind"}  # 2 hops away on the ring
-    assert behavior.observe(agents["gas"].aid, "statics")["kind"] == "gen"
-    # ring: leader, battery, coal, gas, wind
-    assert {a.aid for a in agents[LEADER].neighbors()} == {"battery", "wind"}
+    assert routes["leader"]["bus1"] == "bus0"  # ring: leader, bus0, bus1, bus2, bus3
+    assert behavior.observe(agents["bus1"].aid, "components") == ["coal", "load1"]
+    assert {a.aid for a in agents[LEADER].neighbors()} == {"bus0", "bus3"}
 
     async with world:
-        await world.send_message("hi", agents["gas"].addr, sender_id=agents[LEADER].aid)
+        await world.send_message(
+            "hi", agents["bus1"].addr, sender_id=agents[LEADER].aid
+        )
         await world.step_until(1.0)
     assert (comm.sent, comm.lost) == (1, 1)

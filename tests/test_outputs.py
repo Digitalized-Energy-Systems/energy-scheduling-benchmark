@@ -21,9 +21,9 @@ async def test_write_run(tmp_path, slack):
     net = datasets.load("toy")
     world, behavior, agents, communication, _ = build_world(net, slack=slack)
     steps = len(net.time_index)
-    behavior.act(agents["gas"].aid, "set_schedule", np.full(steps, 50.0))
-    behavior.act(agents["coal"].aid, "set_schedule", np.full(steps, 10.0))
-    behavior.act(agents["battery"].aid, "set_schedule", np.full(steps, -1.0))
+    behavior.act(agents["bus0"].aid, "set_schedule", np.full(steps, 50.0), "gas")
+    behavior.act(agents["bus1"].aid, "set_schedule", np.full(steps, 10.0), "coal")
+    behavior.act(agents["bus0"].aid, "set_schedule", np.full(steps, -1.0), "battery")
     messages = {"sent": 3, "delivered": 2, "lost": 1}
 
     write_run(
