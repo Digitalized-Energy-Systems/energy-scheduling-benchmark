@@ -8,6 +8,7 @@ with the cheapest schedule of every unit at its bus (HKW15 eq. 19/29) and report
 
 from __future__ import annotations
 
+import fcntl
 import tomllib
 
 import numpy as np
@@ -34,7 +35,9 @@ def parameters(
 
     ``tuning=None``: "manual" if that set exists, else "paper".
     """
-    table = tomllib.loads(PARAMETERS.read_text())["consensus"]
+    with open(PARAMETERS) as f:
+        fcntl.flock(f, fcntl.LOCK_SH)  # esb-tune may be rewriting it in parallel
+        table = tomllib.loads(f.read())["consensus"]
     defaults = {k: v for k, v in table.items() if not isinstance(v, dict)}
     routes = table.get(network, {}).get(topology, {})
     if tuning is None:

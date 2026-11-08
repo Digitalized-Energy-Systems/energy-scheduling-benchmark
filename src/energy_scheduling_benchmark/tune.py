@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import fcntl
 import itertools
 import json
 import re
@@ -43,13 +44,20 @@ def score(meta: dict, central: dict, demand_mwh: float) -> float | None:
 
 
 def write_section(name: str, values: dict) -> None:
-    """Replace (or append) table ``[name]`` in the parameter file; other text is kept."""
-    text = consensus.PARAMETERS.read_text()
-    text = re.sub(rf"\n\[{re.escape(name)}\]\n(?:[^\[\n].*\n|\n(?!\[))*", "\n", text)
-    lines = [f"[{name}]"] + [f"{k} = {json.dumps(v)}" for k, v in values.items()]
-    consensus.PARAMETERS.write_text(
-        text.rstrip("\n") + "\n\n" + "\n".join(lines) + "\n"
-    )
+    """Replace (or append) table ``[name]`` in the parameter file; other text is kept.
+
+    Locked, so parallel sweeps (one per topology) do not lose each other's sections.
+    """
+    with open(consensus.PARAMETERS, "r+") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        text = f.read()
+        text = re.sub(
+            rf"\n\[{re.escape(name)}\]\n(?:[^\[\n].*\n|\n(?!\[))*", "\n", text
+        )
+        lines = [f"[{name}]"] + [f"{k} = {json.dumps(v)}" for k, v in values.items()]
+        f.seek(0)
+        f.write(text.rstrip("\n") + "\n\n" + "\n".join(lines) + "\n")
+        f.truncate()
 
 
 def _grid(args: argparse.Namespace) -> list[dict]:
