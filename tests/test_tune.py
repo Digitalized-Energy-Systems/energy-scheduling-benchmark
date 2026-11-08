@@ -24,12 +24,12 @@ def test_write_section_replaces_only_its_table(tmp_path, monkeypatch):
 
 async def test_sweep_picks_a_converged_candidate():
     args = tune.argparse.Namespace(
-        network="toy", topology="ring", steps="constant", start=None, hours=6,
-        alpha0="", kappa="0.03,0.2", gamma="4", max_iter=2000, write=False,
+        network="toy", topology="ring", steps="both", start=None, hours=6,
+        alpha0="5", kappa="0.03,0.2", gamma="4", max_iter=2000, write=False,
     )  # fmt: skip
     best = await tune.sweep(args)
-    assert best["kappa"] == 0.03  # κ = 0.2 oscillates
-    assert best["note"].startswith("esb-tune")
+    assert best["steps"] == "constant" and best["kappa"] == 0.03  # κ = 0.2 oscillates
+    assert best["note"].startswith("esb-tune best: constant")
 
 
 def test_parameter_routes():
