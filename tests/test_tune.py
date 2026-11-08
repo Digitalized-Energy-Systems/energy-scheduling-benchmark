@@ -52,6 +52,8 @@ def test_parameter_routes():
     with pytest.raises(ValueError):
         consensus.parameters("base_s_1_elec_2019", "grid", "sweep")
     assert consensus.parameters("toy", "ring", overrides={"kappa": 1.0})["kappa"] == 1.0
+    with pytest.raises(ValueError, match="kapa"):
+        consensus.parameters("toy", "ring", overrides={"kapa": 1.0})  # typo
 
 
 async def test_sweep_writes_nothing_without_a_usable_candidate():

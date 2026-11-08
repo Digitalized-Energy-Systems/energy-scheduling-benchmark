@@ -48,6 +48,9 @@ def parameters(
         raise ValueError(
             f"no {tuning!r} parameters for {network}/{topology} in {PARAMETERS}"
         )
+    unknown = set(overrides or {}) - set(defaults)
+    if unknown:
+        raise ValueError(f"unknown consensus parameters {sorted(unknown)}")
     own = routes.get(tuning, {}) if tuning != "paper" else {}
     return defaults | own | (overrides or {}) | {"tuning": tuning}
 
