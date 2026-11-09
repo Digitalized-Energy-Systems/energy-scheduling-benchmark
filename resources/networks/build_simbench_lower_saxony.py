@@ -82,7 +82,8 @@ def build():
     keep = main_grid(net)
     dropped = net.bus.index.difference(keep)
     # only load may be lost here; a cut-off generator would change the fleet
-    assert not (net.gen.bus.isin(dropped).any() or net.sgen.bus.isin(dropped).any())
+    if net.gen.bus.isin(dropped).any() or net.sgen.bus.isin(dropped).any():
+        raise ValueError("a cut-off part holds generators")
     net = tb.select_subnet(net, keep)
     for table in ("gen", "sgen"):
         for idx, kind in net[table].type.items():

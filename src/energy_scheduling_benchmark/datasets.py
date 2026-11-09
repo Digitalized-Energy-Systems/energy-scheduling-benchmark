@@ -40,7 +40,9 @@ NETWORKS = {
     # built by resources/networks/build_synthetic.py (balanced bus sensitivities)
     "synthetic_10": NETWORKS_DIR / "synthetic_10.nc",
     "synthetic_50": NETWORKS_DIR / "synthetic_50.nc",
-    # PyPSA-Eur run with pypsa-eur/config/config.germany-100-2025.yaml (copied, unchanged)
+    # PyPSA-Eur run with config/config.germany-100-2025.yaml (committed in the pypsa-eur
+    # checkout ~/development/all-energy-scheduling-benchmark/pypsa-eur, branch benchmark-configs,
+    # 23b5b51e), copied unchanged
     "pypsa_eur_germany_100": NETWORKS_DIR / "pypsa_eur_germany_100.nc",
     # pandapower JSON, built by resources/networks/build_simbench_lower_saxony.py
     "simbench_lower_saxony": NETWORKS_DIR / "simbench_lower_saxony.json",
