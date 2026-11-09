@@ -65,7 +65,7 @@ drops every power plant when bus names are OSM ids. Re-run `esb-prepare` after c
 ```bash
 esb-prepare --network lower_saxony_2030          # once (files for all networks are committed)
 esb-run --network lower_saxony_2030 --topology ring --start 2019-01-14 --hours 168 --seed 0
-esb-run --network synthetic_10 --day winter      # standard day: winter|spring|summer|autumn
+esb-run --network synthetic_10 --start 2019-01-16 # standard winter day (table below), 24 h
 esb-run --network path/to/prepared.nc ...        # any prepared file
 esb-run --algorithm consensus --tuning paper    # or manual / sweep; --set key=value overrides
 esb-tune --network toy --topology ring --steps constant   # sweep → [consensus.toy.ring.sweep]
@@ -73,9 +73,32 @@ esb-compare                      # all runs under outputs/ vs. their central run
 esb-run --help   # --algorithm, --loss-rate (fraction per hop), --delay-s, --slack, --no-storage, --set, --out, ...
 ```
 
-Standard days (`--day`, also `esb-tune --day`): per network and season the 24 h day whose residual
-load (load − available renewables) is closest to the season's median day
-(`datasets.STANDARD_DAYS`, kept in sync with `datasets.typical_days` by a test).
+### Standard and tuning days
+
+Benchmark runs use 24 h on four **standard days** per network; parameters are tuned (`esb-tune
+--start`) on four other **tuning days**, so tuning is not done on the evaluated days. Rule (per
+network and meteorological season DJF / MAM / JJA / SON, full days only): the day whose daily
+residual load (load − available renewables, MWh) is closest to the season's median day is the
+standard day, the second-closest is the tuning day. The dates live here and in `../run_all.sh`
+(its defaults), not in code; regenerate with
+`datasets.typical_days(load_network(datasets.prepared_path(name)))` after re-preparing a network.
+
+| network | | winter | spring | summer | autumn |
+|---|---|---|---|---|---|
+| synthetic_10 | standard | 2019-01-16 | 2019-04-25 | 2019-06-13 | 2019-10-09 |
+| | tuning | 2019-01-09 | 2019-04-15 | 2019-06-24 | 2019-10-25 |
+| synthetic_50 | standard | 2019-01-14 | 2019-03-05 | 2019-06-13 | 2019-09-20 |
+| | tuning | 2019-01-15 | 2019-05-03 | 2019-07-02 | 2019-10-02 |
+| lower_saxony_2030 | standard | 2019-01-22 | 2019-04-07 | 2019-07-13 | 2019-09-13 |
+| | tuning | 2019-12-29 | 2019-04-21 | 2019-08-14 | 2019-11-10 |
+| simbench_lower_saxony | standard | 2016-12-18 | 2016-05-16 | 2016-07-01 | 2016-11-04 |
+| | tuning | 2016-01-19 | 2016-03-15 | 2016-08-24 | 2016-10-23 |
+| pypsa_eur_germany_100 | standard | 2025-01-14 | 2025-03-06 | 2025-08-17 | 2025-11-05 |
+| | tuning | 2025-12-11 | 2025-04-17 | 2025-07-28 | 2025-11-22 |
+| base_s_1_elec_2019 | standard | 2019-12-10 | 2019-03-24 | 2019-06-26 | 2019-09-04 |
+| | tuning | 2019-01-28 | 2019-04-16 | 2019-08-13 | 2019-09-13 |
+
+Consensus is tuned with storage on; that set is used for runs with and without storage.
 
 Each run writes `outputs/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_from<start>_<hours>h_[no]storage[_<variant>]/`
 (consensus: variant = tuning route, plus `_set<hash>` when `--set` is used)
@@ -95,8 +118,8 @@ overrides any value; the route and values used are stored in `meta.json`.
 `esb-compare [--root outputs] [--out FILE]` reads every `<root>/<network>/<algorithm>/<run>/meta.json`
 (read-only), pairs each run with the central run of the same network, window, storage and slack
 setting, and writes one row per run to `<root>/compare.csv` (signed cost gap in %, central cost,
-imbalance shortfall/surplus, iterations, stop reason, messages, wall time; `season` when the
-window is a standard day) plus a printed markdown table. Missing runs go to stderr: runs without
+imbalance shortfall/surplus, iterations, stop reason, messages, wall time, window start/hours)
+plus a printed markdown table. Missing runs go to stderr: runs without
 their central run (skipped) and, per network, windows an algorithm setting lacks that other runs
 have. The batch over the standard grid is `../run_all.sh` (workspace root): all `esb-run`s, then
 `esb-compare`.

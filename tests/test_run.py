@@ -114,17 +114,6 @@ def test_consensus_reaches_central_cost(tmp_path, topology):
     assert consensus["total_cost"] == pytest.approx(central["total_cost"], rel=1e-3)
 
 
-def test_day_sets_window(tmp_path):
-    main(["--network", "synthetic_10", "--algorithm", "central", "--day", "summer",
-          "--out", str(tmp_path)])  # fmt: skip
-    (out,) = tmp_path.glob("synthetic_10/central/*")
-    assert out.name == "grid_loss0_seed0_from20190613T00_24h_storage"
-    with pytest.raises(SystemExit):  # --start and --day exclude each other
-        main(["--start", "2019-01-01", "--day", "winter"])
-    with pytest.raises(SystemExit, match="no standard days for toy"):
-        main(["--day", "winter", "--out", str(tmp_path)])
-
-
 def test_consensus_settings_get_own_folders(tmp_path):
     common = ["--algorithm", "consensus", "--hours", "2", "--out", str(tmp_path)]
     main([*common, "--tuning", "paper", "--set", "max_iter=2"])

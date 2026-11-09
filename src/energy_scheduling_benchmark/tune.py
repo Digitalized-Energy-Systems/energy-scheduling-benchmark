@@ -112,10 +112,7 @@ async def sweep(args: argparse.Namespace) -> dict | None:
         raw = without_storage(raw)
     sensitivity = max_sensitivity(raw)
     print(f"max bus dP/dλ = {sensitivity:.4g} MW per €/MWh", flush=True)
-    if args.day and (args.network not in datasets.STANDARD_DAYS or args.hours != 24):
-        raise SystemExit("--day: needs a network with standard days and --hours 24")
-    days = [datasets.STANDARD_DAYS[args.network][d] for d in args.day or []]
-    starts = (args.start or []) + days or [None]
+    starts = args.start or [None]
     best: dict[str, tuple] = {}  # variant -> (score, iterations, values, {start: gap})
     with tempfile.TemporaryDirectory() as tmp:
         windows = {}
@@ -196,13 +193,9 @@ def main(argv: list[str] | None = None) -> None:
         "--steps", default="both", choices=("decaying", "constant", "both")
     )
     parser.add_argument(
-        "--start", action="append", help="window start; repeat for several windows"
-    )
-    parser.add_argument(
-        "--day",
+        "--start",
         action="append",
-        choices=datasets.SEASONS,
-        help="standard day as a window (24 h); repeat, e.g. --day winter --day summer",
+        help="window start; repeat for several windows (tuning days: README)",
     )
     parser.add_argument("--hours", type=int, default=24)
     parser.add_argument(

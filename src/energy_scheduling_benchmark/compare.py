@@ -21,8 +21,6 @@ from pathlib import Path
 
 import pandas as pd
 
-from .datasets import STANDARD_DAYS
-
 
 def load_runs(root: Path) -> pd.DataFrame:
     """One row per ``meta.json`` under *root* (network/algorithm from the folder names)."""
@@ -31,16 +29,6 @@ def load_runs(root: Path) -> pd.DataFrame:
         meta = json.loads(path.read_text())
         i = meta["inputs"]
         network, algorithm, name = path.parts[-4:-1]
-        start = pd.Timestamp(i["start"])
-        days = STANDARD_DAYS.get(network, {})
-        season = next(
-            (
-                s
-                for s, d in days.items()
-                if i["hours"] == 24 and start == pd.Timestamp(d)
-            ),
-            "",
-        )
         rows.append(
             {
                 "network": network,
@@ -50,9 +38,8 @@ def load_runs(root: Path) -> pd.DataFrame:
                 "topology": i["topology"],
                 "loss_rate": i["loss_rate"],
                 "seed": i["seed"],
-                "start": str(start),
+                "start": i["start"],
                 "hours": i["hours"],
-                "season": season,
                 "storage": i.get("storage", True),  # older runs had no --no-storage
                 "slack": i["slack"],
                 "total_cost": meta["total_cost"],
@@ -110,7 +97,7 @@ def _window(w) -> str:
 
 
 def markdown(df: pd.DataFrame) -> str:
-    cols = ["network", "algorithm", "variant", "topology", "loss_rate", "season", "start",
+    cols = ["network", "algorithm", "variant", "topology", "loss_rate", "start",
             "storage", "gap_pct", "shortfall_mwh", "surplus_mwh", "iterations", "stop_reason",
             "messages_sent", "wall_time_s"]  # fmt: skip
     cells = df[cols].map(lambda v: f"{v:.4g}" if isinstance(v, float) else str(v))

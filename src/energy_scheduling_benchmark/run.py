@@ -146,13 +146,6 @@ def _value(text: str):
 
 async def run(args: argparse.Namespace) -> Path:
     network_file = datasets.prepared_path(args.network)
-    if args.day:
-        days = datasets.STANDARD_DAYS.get(network_file.stem)
-        if days is None:
-            raise SystemExit(
-                f"--day: no standard days for {network_file.stem}; use --start"
-            )
-        args.start, args.hours = days[args.day], 24
     network = window(load_network(network_file), args.start, args.hours)
     if not args.storage:
         network = without_storage(network)
@@ -234,14 +227,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--slack", action="store_true", help="grid import (islanded default)"
     )
-    when = parser.add_mutually_exclusive_group()
-    when.add_argument(
-        "--start", help="first snapshot, e.g. 2019-01-14 (default: first)"
-    )
-    when.add_argument(
-        "--day",
-        choices=datasets.SEASONS,
-        help="standard 24 h day of the network (datasets.STANDARD_DAYS); sets --start, --hours",
+    parser.add_argument(
+        "--start",
+        help="first snapshot, e.g. 2019-01-14 (default: first); standard days: README",
     )
     parser.add_argument("--hours", type=int, default=24)
     parser.add_argument(
