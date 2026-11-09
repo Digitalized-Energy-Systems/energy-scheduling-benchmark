@@ -11,9 +11,9 @@ from energy_scheduling_benchmark.world import build_world
 
 def test_run_dir():
     start = pd.Timestamp("2019-01-14")
-    assert run_dir("out", "toy", "admm", "ring", 0.1, 3, start, 168).as_posix() == (
-        "out/toy/admm/ring_loss0.1_seed3_from20190114T00_168h"
-    )
+    assert run_dir(
+        "out", "toy", "admm", "ring", 0.1, 3, start, 168, True
+    ).as_posix() == ("out/toy/admm/ring_loss0.1_seed3_from20190114T00_168h_storage")
 
 
 @pytest.mark.parametrize("slack", [False, True])

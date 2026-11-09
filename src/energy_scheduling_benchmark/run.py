@@ -26,7 +26,12 @@ from distributed_resource_optimization.carrier.mango_carrier import (
     StartCoordinatedDistributedOptimization,
 )
 from mango import DISCRETE_EVENT
-from mango_energy_environments import CopperPlateBehavior, Network, load_network
+from mango_energy_environments import (
+    STORAGE,
+    CopperPlateBehavior,
+    Network,
+    load_network,
+)
 
 from . import consensus, datasets
 from .central import solve_central
@@ -56,6 +61,12 @@ def window(network: Network, start, hours: int) -> Network:
         for cid, c in network.components.items()
     }
     return Network(network.time_index[s], components, network.lines)
+
+
+def without_storage(network: Network) -> Network:
+    """*network* without its storage units (``--no-storage``)."""
+    components = {cid: c for cid, c in network.components.items() if c.kind != STORAGE}
+    return Network(network.time_index, components, network.lines)
 
 
 def _dummy(behavior, agents, routes):
@@ -135,6 +146,8 @@ def _value(text: str):
 async def run(args: argparse.Namespace) -> Path:
     network_file = datasets.prepared_path(args.network)
     network = window(load_network(network_file), args.start, args.hours)
+    if not args.storage:
+        network = without_storage(network)
     inputs = {**vars(args), "start": str(network.time_index[0])}
     began = time.perf_counter()
     if args.algorithm == "central":
@@ -170,6 +183,7 @@ async def run(args: argparse.Namespace) -> Path:
         args.seed,
         start,
         args.hours,
+        args.storage,
     )
     write_run(
         out,
@@ -207,6 +221,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--start", help="first snapshot, e.g. 2019-01-14 (default: first)"
     )
     parser.add_argument("--hours", type=int, default=24)
+    parser.add_argument(
+        "--no-storage",
+        dest="storage",
+        action="store_false",
+        help="drop the network's storage units",
+    )
     parser.add_argument(
         "--tuning",
         choices=consensus.TUNINGS,

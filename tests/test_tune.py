@@ -26,7 +26,7 @@ async def test_sweep_picks_a_converged_candidate():
     args = tune.argparse.Namespace(
         network="toy", topology="ring", steps="both", start=None, hours=6,
         alpha0="200", beta0="0.2", kappa="1.2,8", gamma="4", max_iter=1000,
-        max_gap=0.01, write=False,
+        max_gap=0.01, write=False, storage=True,
     )  # fmt: skip
     best = await tune.sweep(args)
     # toy max bus dP/dλ = 40 → κ = 1.2/40 = 0.03 (stable), 8/40 = 0.2 oscillates
@@ -60,6 +60,7 @@ async def test_sweep_writes_nothing_without_a_usable_candidate():
     args = tune.argparse.Namespace(
         network="toy", topology="ring", steps="constant", start=None, hours=6,
         alpha0="1", beta0="0.2", kappa="8", gamma="4", max_iter=500, max_gap=0.01, write=True,
+        storage=True,
     )  # fmt: skip
     before = consensus.PARAMETERS.read_text()
     assert await tune.sweep(args) is None  # κ = 0.2 oscillates → gap far above 1 %

@@ -61,10 +61,10 @@ esb-run --network lower_saxony_2030 --topology ring --start 2019-01-14 --hours 1
 esb-run --network path/to/prepared.nc ...        # any prepared file
 esb-run --algorithm consensus --tuning paper    # or manual / sweep; --set key=value overrides
 esb-tune --network toy --topology ring --steps constant   # sweep → [consensus.toy.ring.sweep]
-esb-run --help   # --algorithm, --loss-rate (fraction per hop), --delay-s, --slack, --set, --out, ...
+esb-run --help   # --algorithm, --loss-rate (fraction per hop), --delay-s, --slack, --no-storage, --set, --out, ...
 ```
 
-Each run writes `outputs/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_from<start>_<hours>h/`
+Each run writes `outputs/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_from<start>_<hours>h_[no]storage/`
 with `schedule.csv` (time × unit MW, `slack`, `residual`, `soc:<storage>`) and `meta.json` (inputs,
 prepared-file SHA-256, total cost, slack use, imbalance shortfall/surplus, messages
 sent/delivered/lost, iterations, stop reason, wall time). Algorithms so far: `central` (the

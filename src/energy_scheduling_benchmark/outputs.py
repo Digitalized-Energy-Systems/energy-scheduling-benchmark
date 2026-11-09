@@ -26,10 +26,14 @@ def run_dir(
     seed: int,
     start: pd.Timestamp,
     hours: int,
+    storage: bool,
 ) -> Path:
-    """``<root>/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_from<start>_<hours>h``
-    (reruns overwrite)."""
-    name = f"{topology}_loss{loss_rate:g}_seed{seed}_from{start:%Y%m%dT%H}_{hours}h"
+    """``<root>/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_from<start>_<hours>h_
+    [no]storage`` (reruns overwrite)."""
+    name = (
+        f"{topology}_loss{loss_rate:g}_seed{seed}_from{start:%Y%m%dT%H}_{hours}h_"
+        f"{'' if storage else 'no'}storage"
+    )
     return Path(root) / network / algorithm / name
 
 

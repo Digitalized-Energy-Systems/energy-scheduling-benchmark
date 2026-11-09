@@ -25,7 +25,7 @@ import tempfile
 from mango_energy_environments import LOAD, load_network
 
 from . import consensus, datasets
-from .run import build_parser, run, window
+from .run import build_parser, run, window, without_storage
 
 
 def _floats(text: str) -> list[float]:
@@ -106,8 +106,10 @@ async def sweep(args: argparse.Namespace) -> dict | None:
     """A candidate counts only if it converges on every window; its score and iterations are
     the worst over the windows."""
     base = ["--network", args.network, "--topology", args.topology]
-    base += ["--hours", str(args.hours)]
+    base += ["--hours", str(args.hours)] + ([] if args.storage else ["--no-storage"])
     raw = load_network(datasets.prepared_path(args.network))
+    if not args.storage:
+        raw = without_storage(raw)
     sensitivity = max_sensitivity(raw)
     print(f"max bus dP/dλ = {sensitivity:.4g} MW per €/MWh", flush=True)
     starts = args.start or [None]
@@ -209,6 +211,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--max-gap", type=float, default=0.01, help="write only if |gap| < this"
+    )
+    parser.add_argument(
+        "--no-storage",
+        dest="storage",
+        action="store_false",
+        help="tune without the network's storage units",
     )
     parser.add_argument(
         "--no-write", dest="write", action="store_false", help="only print the best set"

@@ -63,6 +63,7 @@ async def test_end_to_end_all_lost_times_out(tmp_path):
         slack=True,
         start=None,
         hours=3,
+        storage=True,
         out=str(tmp_path),
     )
     out = await run(args)
@@ -72,6 +73,17 @@ async def test_end_to_end_all_lost_times_out(tmp_path):
     csv = pd.read_csv(out / "schedule.csv", index_col="time")
     assert csv[["gas", "coal", "wind", "battery"]].isna().all().all()
     np.testing.assert_allclose(csv["residual"], 0.0)  # the slack takes all demand
+
+
+def test_no_storage(tmp_path):
+    for flag in ([], ["--no-storage"]):
+        main(["--algorithm", "central", "--hours", "24", "--out", str(tmp_path), *flag])
+    on, off = (tmp_path / "toy/central/grid_loss0_seed0_from20240101T00_24h_storage",
+               tmp_path / "toy/central/grid_loss0_seed0_from20240101T00_24h_nostorage")  # fmt: skip
+    meta_on, meta_off = (json.loads((d / "meta.json").read_text()) for d in (on, off))
+    assert "battery" not in pd.read_csv(off / "schedule.csv").columns
+    assert meta_off["inputs"]["storage"] is False
+    assert meta_off["total_cost"] >= meta_on["total_cost"]  # storage can only help
 
 
 def test_prepare_once_run_from_file(tmp_path):
