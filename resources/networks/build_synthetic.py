@@ -47,6 +47,8 @@ NOISE = 0.05  # std of the multiplicative hourly noise per bus
 
 def draw(n_buses: int, seed: int) -> dict | None:
     """Candidate design as arrays (cheap); None if the RES share cannot be met."""
+    # fewer buses cannot hold a ring + N//2 distinct chords (the chord loop would never end)
+    assert n_buses >= 4, "need at least 4 buses"
     rng = np.random.default_rng(seed)
     kind = rng.integers(0, 3, n_buses)  # 0 thermal only, 1 RES only, 2 mixed
     s = TARGET_S * rng.uniform(0.8, 1.2, n_buses)
@@ -182,7 +184,10 @@ def build(cand: dict) -> pypsa.Network:
 
 def pick(n_buses: int, candidates: int) -> dict:
     cands = [c for seed in range(candidates) if (c := draw(n_buses, seed))]
-    return min(cands, key=score)
+    best = min(cands, key=score, default=None)
+    if best is None or not np.isfinite(score(best)):
+        raise SystemExit("no candidate meets the RES share and variety rules")
+    return best
 
 
 if __name__ == "__main__":

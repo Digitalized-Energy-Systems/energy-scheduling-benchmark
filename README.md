@@ -49,13 +49,14 @@ Prepare once, run many times. `esb-prepare --network NAME` loads the raw PyPSA n
 `resources/prepared/NAME.nc` (committed; the recipe is stored in the file's `meta` attribute). The
 prepared file does not depend on the environment that runs it. Names: `toy` (tiny built-in 4-bus
 chain), `base_s_1_elec_2019`, `lower_saxony_2030` (built by
-`resources/networks/build_lower_saxony_2030.py`). Re-run `esb-prepare` after changing the recipe;
+`resources/networks/build_lower_saxony_2030.py`), `synthetic_10`, `synthetic_50` (seeded networks
+with balanced bus price sensitivities, built once by `resources/networks/build_synthetic.py`). Re-run `esb-prepare` after changing the recipe;
 `--k`, `--band` and `--out` write a variant (e.g. linear costs: `--k 0 --band 0`) to another file.
 
 ## Running
 
 ```bash
-esb-prepare --network lower_saxony_2030          # once (files for all three are committed)
+esb-prepare --network lower_saxony_2030          # once (files for all networks are committed)
 esb-run --network lower_saxony_2030 --topology ring --start 2019-01-14 --hours 168 --seed 0
 esb-run --network path/to/prepared.nc ...        # any prepared file
 esb-run --algorithm consensus --tuning paper    # or manual / sweep; --set key=value overrides
@@ -99,6 +100,6 @@ src/energy_scheduling_benchmark/
 └── outputs.py    # schedule.csv + meta.json
 resources/
 ├── tuned_parameters.toml  # per-algorithm parameters
-├── networks/     # raw PyPSA inputs + build_lower_saxony_2030.py
+├── networks/     # raw PyPSA inputs + build_lower_saxony_2030.py, build_synthetic.py
 └── prepared/     # prepared networks (esb-prepare), read by esb-run
 ```
