@@ -121,3 +121,5 @@ def test_day_sets_window(tmp_path):
     assert out.name == "grid_loss0_seed0_from20190613T00_24h_storage"
     with pytest.raises(SystemExit):  # --start and --day exclude each other
         main(["--start", "2019-01-01", "--day", "winter"])
+    with pytest.raises(SystemExit, match="no standard days for toy"):
+        main(["--day", "winter", "--out", str(tmp_path)])

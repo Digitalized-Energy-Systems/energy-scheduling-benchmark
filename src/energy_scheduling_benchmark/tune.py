@@ -112,6 +112,8 @@ async def sweep(args: argparse.Namespace) -> dict | None:
         raw = without_storage(raw)
     sensitivity = max_sensitivity(raw)
     print(f"max bus dP/dλ = {sensitivity:.4g} MW per €/MWh", flush=True)
+    if args.day and (args.network not in datasets.STANDARD_DAYS or args.hours != 24):
+        raise SystemExit("--day: needs a network with standard days and --hours 24")
     days = [datasets.STANDARD_DAYS[args.network][d] for d in args.day or []]
     starts = (args.start or []) + days or [None]
     best: dict[str, tuple] = {}  # variant -> (score, iterations, values, {start: gap})
