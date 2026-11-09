@@ -20,6 +20,8 @@ import pandapower as pp
 import pandas as pd
 import pypsa
 from mango_energy_environments import (
+    LOAD,
+    RENEWABLE,
     Network,
     add_quadratic_cost,
     drop_unusable_units,
@@ -116,6 +118,41 @@ def prepare(
     }
     save_network(load(name, k=k, band=band), out, meta=recipe)
     return out
+
+
+#: Meteorological seasons (months) for the standard days.
+SEASONS = {
+    "winter": (12, 1, 2),
+    "spring": (3, 4, 5),
+    "summer": (6, 7, 8),
+    "autumn": (9, 10, 11),
+}
+#: Standard 24 h days per network (`esb-run --day SEASON`), from :func:`typical_days` on the
+#: prepared file (decided 2026-11-09, TODO Next #8e); a test keeps them in sync.
+STANDARD_DAYS = {
+    "base_s_1_elec_2019": {"winter": "2019-12-10", "spring": "2019-03-24", "summer": "2019-06-26", "autumn": "2019-09-04"},
+    "lower_saxony_2030": {"winter": "2019-01-22", "spring": "2019-04-07", "summer": "2019-07-13", "autumn": "2019-09-13"},
+    "synthetic_10": {"winter": "2019-01-16", "spring": "2019-04-25", "summer": "2019-06-13", "autumn": "2019-10-09"},
+    "synthetic_50": {"winter": "2019-01-14", "spring": "2019-03-05", "summer": "2019-06-13", "autumn": "2019-09-20"},
+    "pypsa_eur_germany_100": {"winter": "2025-01-14", "spring": "2025-03-06", "summer": "2025-08-17", "autumn": "2025-11-05"},
+    "simbench_lower_saxony": {"winter": "2016-12-18", "spring": "2016-05-16", "summer": "2016-07-01", "autumn": "2016-11-04"},
+}  # fmt: skip
+
+
+def typical_days(network: Network) -> dict[str, str]:
+    """Per season, the full day whose residual load (load − available renewables, MWh) is
+    closest to the season's median day."""
+    comps = network.components.values()
+    residual = sum(c.p_max for c in comps if c.kind == LOAD) - sum(
+        c.p_max for c in comps if c.kind == RENEWABLE
+    )
+    hourly = pd.Series(residual, index=network.time_index)
+    daily = hourly.resample("D").sum()[hourly.resample("D").count() == 24]
+    days = {}
+    for season, months in SEASONS.items():
+        d = daily[daily.index.month.isin(months)]
+        days[season] = str((d - d.median()).abs().idxmin().date())
+    return days
 
 
 def prepared_path(network: str) -> Path:

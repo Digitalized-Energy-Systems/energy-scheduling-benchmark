@@ -61,11 +61,16 @@ clusters, 2025 weather/demand/fleet, built with PyPSA-Eur `config.germany-100-20
 ```bash
 esb-prepare --network lower_saxony_2030          # once (files for all networks are committed)
 esb-run --network lower_saxony_2030 --topology ring --start 2019-01-14 --hours 168 --seed 0
+esb-run --network synthetic_10 --day winter      # standard day: winter|spring|summer|autumn
 esb-run --network path/to/prepared.nc ...        # any prepared file
 esb-run --algorithm consensus --tuning paper    # or manual / sweep; --set key=value overrides
 esb-tune --network toy --topology ring --steps constant   # sweep → [consensus.toy.ring.sweep]
 esb-run --help   # --algorithm, --loss-rate (fraction per hop), --delay-s, --slack, --no-storage, --set, --out, ...
 ```
+
+Standard days (`--day`, also `esb-tune --day`): per network and season the 24 h day whose residual
+load (load − available renewables) is closest to the season's median day
+(`datasets.STANDARD_DAYS`, kept in sync with `datasets.typical_days` by a test).
 
 Each run writes `outputs/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_from<start>_<hours>h_[no]storage/`
 with `schedule.csv` (time × unit MW, `slack`, `residual`, `soc:<storage>`) and `meta.json` (inputs,

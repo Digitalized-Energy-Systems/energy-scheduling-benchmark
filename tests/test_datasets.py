@@ -111,3 +111,10 @@ def test_simbench_lower_saxony():
     assert len(net.time_index) == 8784  # 2016, hourly
     assert sum(c.kind == "sgen" for c in comps) == 29
     assert not any(np.isnan(c.p_max).any() for c in comps)
+
+
+@pytest.mark.parametrize("name", datasets.NETWORKS)
+def test_standard_days_match_prepared(name):
+    """STANDARD_DAYS = typical_days of today's prepared file; else update the table."""
+    net = load_network(datasets.prepared_path(name))
+    assert datasets.STANDARD_DAYS[name] == datasets.typical_days(net)

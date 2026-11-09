@@ -63,6 +63,7 @@ async def test_end_to_end_all_lost_times_out(tmp_path):
         slack=True,
         start=None,
         hours=3,
+        day=None,
         storage=True,
         out=str(tmp_path),
     )
@@ -111,3 +112,12 @@ def test_consensus_reaches_central_cost(tmp_path, topology):
     assert consensus["stop_reason"] == "converged"
     assert consensus["inputs"]["consensus"]["tuning"] == "manual"
     assert consensus["total_cost"] == pytest.approx(central["total_cost"], rel=1e-3)
+
+
+def test_day_sets_window(tmp_path):
+    main(["--network", "synthetic_10", "--algorithm", "central", "--day", "summer",
+          "--out", str(tmp_path)])  # fmt: skip
+    (out,) = tmp_path.glob("synthetic_10/central/*")
+    assert out.name == "grid_loss0_seed0_from20190613T00_24h_storage"
+    with pytest.raises(SystemExit):  # --start and --day exclude each other
+        main(["--start", "2019-01-01", "--day", "winter"])
