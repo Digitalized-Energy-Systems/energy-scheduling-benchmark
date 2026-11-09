@@ -1,0 +1,87 @@
+From ed1a8356720c15ce36a5dbd22a02e10cbf00d2e0 Mon Sep 17 00:00:00 2001
+From: jonas <jonas-augustin@gmx.de>
+Date: Fri, 23 Oct 2026 12:15:24 +0200
+Subject: [PATCH] Benchmark network configs and powerplant bus-mapping patch
+
+Configs used to build the energy-scheduling-benchmark extracts (elec 2019/2020,
+DE-AT storage 2023, Lower Saxony 2030). build_powerplants.py: map regions to
+countries via n.buses.country instead of the bus-name prefix, so clusters: [all]
+(OSM bus ids) keeps the German power plants (see the monorepo's
+docs/lower-saxony-2030-workflow.md).
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ scripts/build_powerplants.py | 31 +++++++++++++++++++++++++++----
+ 1 file changed, 27 insertions(+), 4 deletions(-)
+
+diff --git a/scripts/build_powerplants.py b/scripts/build_powerplants.py
+index a7614ac5..07d33c52 100755
+--- a/scripts/build_powerplants.py
++++ b/scripts/build_powerplants.py
+@@ -161,7 +161,10 @@ def fill_unoccupied_holes(gdf: gpd.GeoDataFrame) -> gpd.GeoSeries:
+ 
+ 
+ def map_to_country_bus(
+-    ppl: gpd.GeoDataFrame, regions: gpd.GeoDataFrame, max_distance: float = 10000
++    ppl: gpd.GeoDataFrame,
++    regions: gpd.GeoDataFrame,
++    region_country: pd.Series | None = None,
++    max_distance: float = 10000,
+ ) -> gpd.GeoDataFrame:
+     """
+     Assign power plants to region buses of the same country.
+@@ -169,12 +172,25 @@ def map_to_country_bus(
+     First, spatial join is performed per country to avoid cross-border
+     misassignment. Remaining unmatched plants are assigned via nearest
+     neighbor (max 10000m) within the same country.
++
++    ``region_country`` maps region (bus) name -> ISO2 country code. When given
++    it is used to select each country's regions; otherwise the region name is
++    assumed to be country-prefixed (``DE0 0``, ``DE1`` ...). The name prefix is
++    *not* a country code for ``clusters: all`` (OSM substation ids), so the
++    explicit mapping is required there.
+     """
++
++    def _regions_of(country: str) -> gpd.GeoDataFrame:
++        if region_country is not None:
++            sel = region_country.reindex(regions.index).to_numpy() == country
++            return regions[sel]
++        return regions[regions.index.str[:2] == country]
++
+     assigned = []
+     unmatched = []
+ 
+     for country, plants in ppl.groupby("Country"):
+-        country_regions = regions[regions.index.str[:2] == country]
++        country_regions = _regions_of(country)
+         joined = (
+             plants.sjoin(country_regions)
+             .rename(columns={"name": "bus"})
+@@ -188,7 +204,10 @@ def map_to_country_bus(
+     if unmatched:
+         unmatched = pd.concat(unmatched)
+         for country, plants in unmatched.groupby("Country"):
+-            country_regions = regions[regions.index.str[:2] == country]
++            country_regions = _regions_of(country)
++            if country_regions.empty:
++                assigned.append(plants)
++                continue
+             nearest = (
+                 plants.to_crs(3035)
+                 .sjoin_nearest(country_regions.to_crs(3035), max_distance=max_distance)
+@@ -257,7 +276,11 @@ if __name__ == "__main__":
+ 
+     ppl = gpd.GeoDataFrame(ppl, geometry=gpd.points_from_xy(ppl.lon, ppl.lat), crs=4326)
+ 
+-    ppl = map_to_country_bus(ppl, regions)
++    # region (bus) name -> country. Region names are only country-prefixed for
++    # clustered networks; for `clusters: all` they are OSM ids, so pass the
++    # mapping explicitly from the network buses.
++    region_country = n.buses["country"].reindex(regions.index)
++    ppl = map_to_country_bus(ppl, regions, region_country)
+ 
+     bus_null_b = ppl["bus"].isnull()
+     if bus_null_b.any():
+-- 
+2.53.0
+

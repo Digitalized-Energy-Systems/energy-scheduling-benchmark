@@ -55,7 +55,9 @@ with balanced bus price sensitivities, built once by `resources/networks/build_s
 `resources/networks/build_simbench_lower_saxony.py`), `pypsa_eur_germany_100` (PyPSA-Eur Germany, 100
 clusters, 2025 weather/demand/fleet). The PyPSA-Eur configs both PyPSA-Eur networks were built with
 are kept next to them: `resources/networks/config.germany-100-2025.yaml`,
-`config.lower-saxony-2030.yaml` (run them from a PyPSA-Eur checkout). Re-run `esb-prepare` after changing the recipe;
+`config.lower-saxony-2030.yaml` (run them from a PyPSA-Eur checkout). LS2030 (`clusters: [all]`)
+also needs `pypsa-eur-powerplant-bus-mapping.patch` (`git apply` in the checkout): upstream
+drops every power plant when bus names are OSM ids. Re-run `esb-prepare` after changing the recipe;
 `--k`, `--band` and `--out` write a variant (e.g. linear costs: `--k 0 --band 0`) to another file.
 
 ## Running
