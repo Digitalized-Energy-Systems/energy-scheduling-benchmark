@@ -79,7 +79,11 @@ def build():
     full, profiles = load_simbench(CODE)
     net = tb.select_subnet(full, region_buses(full))
     fuse_substations(net)
-    net = tb.select_subnet(net, main_grid(net))
+    keep = main_grid(net)
+    dropped = net.bus.index.difference(keep)
+    # only load may be lost here; a cut-off generator would change the fleet
+    assert not (net.gen.bus.isin(dropped).any() or net.sgen.bus.isin(dropped).any())
+    net = tb.select_subnet(net, keep)
     for table in ("gen", "sgen"):
         for idx, kind in net[table].type.items():
             if (table, kind) in C1:
