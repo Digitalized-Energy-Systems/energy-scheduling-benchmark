@@ -72,7 +72,8 @@ Standard days (`--day`, also `esb-tune --day`): per network and season the 24 h 
 load (load − available renewables) is closest to the season's median day
 (`datasets.STANDARD_DAYS`, kept in sync with `datasets.typical_days` by a test).
 
-Each run writes `outputs/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_from<start>_<hours>h_[no]storage/`
+Each run writes `outputs/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_from<start>_<hours>h_[no]storage[_<variant>]/`
+(consensus: variant = tuning route, plus `_set<hash>` when `--set` is used)
 with `schedule.csv` (time × unit MW, `slack`, `residual`, `soc:<storage>`) and `meta.json` (inputs,
 prepared-file SHA-256, total cost, slack use, imbalance shortfall/surplus, messages
 sent/delivered/lost, iterations, stop reason, wall time). Algorithms so far: `central` (the

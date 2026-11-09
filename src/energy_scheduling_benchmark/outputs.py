@@ -1,6 +1,7 @@
 """Run outputs: one folder per run with ``schedule.csv`` and ``meta.json`` (decided Q-B7/Q-B8/Q-B8b).
 
-The cost gap vs. the central optimum and balance summaries are computed by the compare script.
+A compare script (cost gap vs. the central optimum, balance summaries) does not exist yet; only
+``esb-tune`` computes the gap.
 """
 
 from __future__ import annotations
@@ -27,13 +28,14 @@ def run_dir(
     start: pd.Timestamp,
     hours: int,
     storage: bool,
+    variant: str = "",
 ) -> Path:
     """``<root>/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_from<start>_<hours>h_
-    [no]storage`` (reruns overwrite)."""
+    [no]storage[_<variant>]`` (reruns overwrite); *variant* tells algorithm settings apart."""
     name = (
         f"{topology}_loss{loss_rate:g}_seed{seed}_from{start:%Y%m%dT%H}_{hours}h_"
         f"{'' if storage else 'no'}storage"
-    )
+    ) + (f"_{variant}" if variant else "")
     return Path(root) / network / algorithm / name
 
 
@@ -100,7 +102,9 @@ def write_run(
         "cost": SLACK_IMPORT_PRICE * slack_import,
     }
     total_cost += slack_meta["cost"]
-    if failed:  # no valid result; 0 would look like the cheapest run
+    if failed or not (behavior.schedules or slack):
+        # no valid result (failed solve, or no unit scheduled and no slack import): 0 would
+        # look like the cheapest run
         total_cost = None
         slack_meta = dict.fromkeys(slack_meta)
 

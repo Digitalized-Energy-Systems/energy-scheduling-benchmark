@@ -14,6 +14,9 @@ def test_run_dir():
     assert run_dir(
         "out", "toy", "admm", "ring", 0.1, 3, start, 168, True
     ).as_posix() == ("out/toy/admm/ring_loss0.1_seed3_from20190114T00_168h_storage")
+    assert run_dir(
+        "o", "toy", "consensus", "ring", 0, 0, start, 24, False, "paper"
+    ).name == ("ring_loss0_seed0_from20190114T00_24h_nostorage_paper")
 
 
 @pytest.mark.parametrize("slack", [False, True])
@@ -76,8 +79,8 @@ async def test_write_run(tmp_path, slack):
     assert meta["inputs"] == {"network": "toy", "seed": 0}
 
 
-def _write_empty(tmp_path, algorithm, stop_reason):
-    _, behavior, _, _, _ = build_world(datasets.load("toy"), slack=True)
+def _write_empty(tmp_path, algorithm, stop_reason, slack=True):
+    _, behavior, _, _, _ = build_world(datasets.load("toy"), slack=slack)
     write_run(
         tmp_path,
         behavior,
@@ -88,7 +91,7 @@ def _write_empty(tmp_path, algorithm, stop_reason):
         iterations=0,
         stop_reason=stop_reason,
         wall_time_s=0.0,
-        slack=True,
+        slack=slack,
     )
     csv = pd.read_csv(tmp_path / "schedule.csv", index_col="time")
     return json.loads((tmp_path / "meta.json").read_text()), csv, behavior
@@ -109,3 +112,9 @@ async def test_lossy_run_without_schedules_keeps_slack_cost(tmp_path):
     assert meta["slack"]["import_share"] == pytest.approx(1.0)
     assert meta["total_cost"] == pytest.approx(4000 * demand)
     assert meta["imbalance"] == {"shortfall_mwh": 0.0, "surplus_mwh": 0.0}
+
+
+async def test_stalled_run_without_schedules_has_no_cost(tmp_path):
+    """A diverged distributed run (nothing scheduled, no slack) must not look like cost 0."""
+    meta, _, _ = _write_empty(tmp_path, "consensus", "stalled", slack=False)
+    assert meta["total_cost"] is None

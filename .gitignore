@@ -10,7 +10,5 @@ build/
 dist/
 *.pdf
 *.csv
-!EnergySchedulingBenchmark.jl/*.pdf
-!EnergySchedulingBenchmark.jl/*.csv
 .idea/
 outputs/

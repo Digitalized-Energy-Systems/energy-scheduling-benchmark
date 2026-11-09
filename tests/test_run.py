@@ -123,3 +123,13 @@ def test_day_sets_window(tmp_path):
         main(["--start", "2019-01-01", "--day", "winter"])
     with pytest.raises(SystemExit, match="no standard days for toy"):
         main(["--day", "winter", "--out", str(tmp_path)])
+
+
+def test_consensus_settings_get_own_folders(tmp_path):
+    common = ["--algorithm", "consensus", "--hours", "2", "--out", str(tmp_path)]
+    main([*common, "--tuning", "paper", "--set", "max_iter=2"])
+    main([*common, "--tuning", "paper", "--set", "max_iter=3"])
+    names = sorted(p.name for p in tmp_path.glob("toy/consensus/*"))
+    assert len(names) == 2 and all("_paper_set" in n for n in names)
+    with pytest.raises(SystemExit, match="KEY=VALUE"):
+        main([*common, "--set", "kappa"])

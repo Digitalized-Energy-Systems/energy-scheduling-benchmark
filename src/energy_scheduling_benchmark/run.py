@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import time
 import tomllib
 from dataclasses import replace
@@ -157,11 +158,14 @@ async def run(args: argparse.Namespace) -> Path:
         network = without_storage(network)
     inputs = {**vars(args), "start": str(network.time_index[0])}
     began = time.perf_counter()
+    variant = ""
     if args.algorithm == "central":
         behavior = CopperPlateBehavior(network)
         behavior.schedules, stop_reason = solve_central(network, args.slack)
         messages, iterations = {"sent": 0, "delivered": 0, "lost": 0}, 1
     elif args.algorithm == "consensus":
+        if bad := [kv for kv in args.set if "=" not in kv]:
+            raise SystemExit(f"--set needs KEY=VALUE, got {bad}")
         overrides = dict(kv.split("=", 1) for kv in args.set)
         params = consensus.parameters(
             network_file.stem,
@@ -170,6 +174,11 @@ async def run(args: argparse.Namespace) -> Path:
             {k: _value(v) for k, v in overrides.items()},
         )
         inputs["consensus"] = params
+        # tuning route, plus a short hash of --set overrides, so settings do not overwrite
+        variant = params["tuning"]
+        if args.set:
+            digest = hashlib.sha1(" ".join(sorted(args.set)).encode()).hexdigest()
+            variant += f"_set{digest[:6]}"
         setup = _consensus(params, len(network.time_index))
         behavior, messages, stop_reason, iterations = await _simulate(
             network, args, setup
@@ -191,6 +200,7 @@ async def run(args: argparse.Namespace) -> Path:
         start,
         args.hours,
         args.storage,
+        variant,
     )
     write_run(
         out,
