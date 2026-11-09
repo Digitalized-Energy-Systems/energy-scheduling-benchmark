@@ -43,8 +43,8 @@ mango-agents comes from PyPI.
 
 ## Networks
 
-Prepare once, run many times. `esb-prepare --network NAME` loads the raw PyPSA network from
-`resources/networks/`, converts it into an MEE `Network`, applies the benchmark's preparation recipe
+Prepare once, run many times. `esb-prepare --network NAME` loads the raw network from
+`resources/networks/` (PyPSA `.nc`, or pandapower `.json` for SimBench), converts it into an MEE `Network`, applies the benchmark's preparation recipe
 (drop unusable units, quadratic cost incl. a curvature band for renewables/storage, storage defaults) and saves it as NetCDF to
 `resources/prepared/NAME.nc` (committed; the recipe is stored in the file's `meta` attribute). The
 prepared file does not depend on the environment that runs it. Names: `toy` (tiny built-in 4-bus
@@ -75,11 +75,13 @@ load (load − available renewables) is closest to the season's median day
 Each run writes `outputs/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_from<start>_<hours>h_[no]storage[_<variant>]/`
 (consensus: variant = tuning route, plus `_set<hash>` when `--set` is used)
 with `schedule.csv` (time × unit MW, `slack`, `residual`, `soc:<storage>`) and `meta.json` (inputs,
-prepared-file SHA-256, total cost, slack use, imbalance shortfall/surplus, messages
+prepared-file SHA-256, total cost (`null` for a failed central solve or a run that scheduled
+nothing without slack), slack use, imbalance shortfall/surplus, messages
 sent/delivered/lost, iterations, stop reason, wall time). Algorithms so far: `central` (the
 reference optimum), `consensus` (consensus + innovations, Kar & Hug 2012 / Hug, Kar & Wu 2015;
 plan `../docs/consensus-plan.md`, deviations `../docs/deviations.md`) and `dummy` (merit order in
-the leader, a plumbing test). Consensus parameters (step sizes, tolerances, `max_iter`) come from
+the leader, a plumbing test). No compare script yet (cost gap vs. central across runs): only
+`esb-tune` computes the gap. Consensus parameters (step sizes, tolerances, `max_iter`) come from
 `resources/tuned_parameters.toml`, one set per tuning route and network × topology:
 `--tuning paper` = the papers' values (`[consensus]`, used in MW / €/MWh as printed), `manual` =
 hand-tuned `[consensus.<network>.<topology>.manual]` (default when present), `sweep` = written by
