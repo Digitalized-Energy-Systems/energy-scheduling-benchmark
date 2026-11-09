@@ -112,7 +112,8 @@ the leader, a plumbing test). Consensus parameters (step sizes, tolerances, `max
 `resources/tuned_parameters.toml`, one set per tuning route and network × topology:
 `--tuning paper` = the papers' values (`[consensus]`, used in MW / €/MWh as printed), `manual` =
 hand-tuned `[consensus.<network>.<topology>.manual]` (default when present), `sweep` = written by
-`esb-tune` (grid over the step sizes, best converged cost gap vs central). `--set key=value`
+`esb-tune` (grid over the step sizes; the best candidate that runs through every window is
+written whatever its gap, the gap per window is in its `note`; nothing if every candidate diverges). `--set key=value`
 overrides any value; the route and values used are stored in `meta.json`.
 
 `esb-compare [--root outputs] [--out FILE]` reads every `<root>/<network>/<algorithm>/<run>/meta.json`

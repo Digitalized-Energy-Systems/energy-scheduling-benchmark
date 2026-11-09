@@ -6,8 +6,9 @@ sensitivity Σ 1/(2c₂)), because constant steps are only stable below 2 / that
 Each candidate runs a fixed budget (``--max-iter``) with the stop rule off (KH12 style), so
 small stable steps are not cut short by the step-change stop. The candidate with the smallest
 worst-window |cost gap| + relative imbalance vs central wins and is written into
-``resources/tuned_parameters.toml`` as ``[consensus.<network>.<topology>.sweep]`` — only if its
-|gap| < ``--max-gap`` (1 %) on every window; the note also records the best of the other variant.
+``resources/tuned_parameters.toml`` as ``[consensus.<network>.<topology>.sweep]`` whatever its
+gap (decision 2026-11-09): the note records the gap per window and the best of the other variant.
+Nothing is written only if no candidate runs through every window (all diverge/stall on one).
 
     esb-tune --network lower_saxony_2030 --topology ring --start 2019-01-14 --start 2019-06-10
 """
@@ -114,6 +115,7 @@ async def sweep(args: argparse.Namespace) -> dict | None:
     print(f"max bus dP/dλ = {sensitivity:.4g} MW per €/MWh", flush=True)
     starts = args.start or [None]
     best: dict[str, tuple] = {}  # variant -> (score, iterations, values, {start: gap})
+    partial = None  # (failed windows, values, gaps) of the best candidate that did not run through
     with tempfile.TemporaryDirectory() as tmp:
         windows = {}
         for w, start in enumerate(starts):
@@ -155,20 +157,21 @@ async def sweep(args: argparse.Namespace) -> dict | None:
                     flush=True,
                 )
             if None in scores:
+                failed = scores.count(None)
+                if partial is None or failed < partial[0]:
+                    partial = (failed, values, gaps)
                 continue
             candidate = (max(scores), max(iterations), values, gaps)
             variant = values["steps"]
             if variant not in best or candidate[:2] < best[variant][:2]:
                 best[variant] = candidate
-    usable = {
-        v: b for v, b in best.items() if max(map(abs, b[3].values())) < args.max_gap
-    }
-    if not usable:
-        print(f"no usable candidate (|gap| < {args.max_gap:.1%} on every window)")
-        for v, b in best.items():
-            print("best", v, _note(v, b, args.hours))
+    if not best:
+        print("no candidate ran through every window (each diverged/stalled on one)")
+        if partial:
+            print(
+                f"best partial: {partial[1]} failed {partial[0]} window(s), gaps {partial[2]}"
+            )
         return None
-    best = usable
     winner = min(best, key=lambda v: best[v][:2])
     values = best[winner][2] | {
         "note": f"esb-tune (grid × 1/{sensitivity:.4g} MW per €/MWh) best: "
@@ -210,9 +213,6 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--gamma", default="1,4,16", help="constant grid")
     parser.add_argument(
         "--max-iter", type=int, default=3000, help="fixed budget per candidate"
-    )
-    parser.add_argument(
-        "--max-gap", type=float, default=0.01, help="write only if |gap| < this"
     )
     parser.add_argument(
         "--no-storage",
