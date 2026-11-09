@@ -104,9 +104,8 @@ def score(cand: dict) -> float:
     )
     if not varied:
         return np.inf
-    return max(
-        (lambda x: x.max() / x.min())(sensitivity(cand, on)) for on in (True, False)
-    )
+    on, off = sensitivity(cand, True), sensitivity(cand, False)
+    return max(on.max() / on.min(), off.max() / off.min())
 
 
 def build(cand: dict) -> pypsa.Network:

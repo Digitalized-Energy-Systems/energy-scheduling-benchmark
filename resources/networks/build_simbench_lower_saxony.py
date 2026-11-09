@@ -40,7 +40,7 @@ C1 = {
     ("gen", "oil"): 132.7,
     ("gen", "waste"): 35.4,
     ("sgen", "biomass"): 20.0,
-}
+}  # other sgen types (wind, "mixed" 586 MW: no fuel given) are renewables with c₁ = 0
 
 
 def region_buses(net) -> list[int]:

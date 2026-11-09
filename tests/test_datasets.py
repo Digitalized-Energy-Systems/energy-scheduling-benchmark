@@ -98,6 +98,16 @@ def test_synthetic_balanced_and_varied(name):
                 sens[c.bus] = sens.get(c.bus, 0.0) + 1 / (2 * c.cost[1])
         assert max(sens.values()) / min(sens.values()) < 2
     assert {c.kind for c in comps} == {"gen", "sgen", "storage", "load"}
-    assert len({c.bus for c in comps if c.kind == "load"}) < len(
-        sens
-    )  # load-free buses
+    unit_buses = {c.bus for c in comps if c.kind != "load"}
+    load_buses = {c.bus for c in comps if c.kind == "load"}
+    assert len(load_buses) < len(unit_buses)  # load-free buses
+
+
+def test_simbench_lower_saxony():
+    """Regression: SimBench's local-time labels (DST gap) once gave NaN hours that dropped every
+    renewable unit; load_simbench now uses a regular 15-min index."""
+    net = datasets.load("simbench_lower_saxony")
+    comps = net.components.values()
+    assert len(net.time_index) == 8784  # 2016, hourly
+    assert sum(c.kind == "sgen" for c in comps) == 29
+    assert not any(np.isnan(c.p_max).any() for c in comps)
