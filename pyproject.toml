@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 license = {text = "MIT"}
 keywords = ["energy", "multi-agent", "power-systems", "scheduling", "benchmark", "pypsa"]
 dependencies = [
-    "mango-agents>=2.1",
+    "mango-agents>=2.4.0",
     "mango-energy-environments>=0.1",
     "distributed-resource-optimization>=0.1",
     "pypsa>=0.29",

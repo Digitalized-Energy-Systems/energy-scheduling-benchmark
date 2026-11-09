@@ -12,8 +12,7 @@ import random
 
 import networkx as nx
 from distributed_resource_optimization.carrier.mango_carrier import next_hops
-from mango import RoleAgent
-from mango.express.topology import AGENT_NODE_KEY, graph_topology
+from mango import RoleAgent, auto_assign, graph_topology, topology_to_aid_graph
 from mango.simulation.communication import SimpleCommunicationSimulation
 from mango.simulation.environment import DefaultEnvironment
 from mango.simulation.world import create_world
@@ -96,8 +95,7 @@ def build_world(
         bind = {} if node in (LEADER, SLACK) else {"bus": node}
         agents[node] = world.register(RoleAgent(), suggested_aid=str(node), **bind)
     topo = graph_topology(graph)
-    for node, agent in agents.items():
-        topo.graph.nodes[node][AGENT_NODE_KEY].add(agent)
-    topo.inject()
-    routes = next_hops(nx.relabel_nodes(graph, {n: a.aid for n, a in agents.items()}))
+    # agents are in graph-node order: one per node
+    auto_assign(topo, list(agents.values()))
+    routes = next_hops(topology_to_aid_graph(topo))
     return world, behavior, agents, communication, routes
