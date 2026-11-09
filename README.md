@@ -79,8 +79,8 @@ Benchmark runs use 24 h on four **standard days** per network; parameters are tu
 --start`) on four other **tuning days**, so tuning is not done on the evaluated days. Rule (per
 network and meteorological season DJF / MAM / JJA / SON, full days only): the day whose daily
 residual load (load − available renewables, MWh) is closest to the season's median day is the
-standard day, the second-closest is the tuning day. The dates live here and in `../run_all.sh`
-(its defaults), not in code; regenerate with
+standard day, the second-closest is the tuning day. The dates live here, in `../run_all.sh`
+(standard days, its defaults) and in `../hpc_sweeps.sh` (tuning days), not in code; regenerate with
 `datasets.typical_days(load_network(datasets.prepared_path(name)))` after re-preparing a network.
 
 | network | | winter | spring | summer | autumn |
