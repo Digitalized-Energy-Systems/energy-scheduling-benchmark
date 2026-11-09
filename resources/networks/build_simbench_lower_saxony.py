@@ -3,6 +3,7 @@ cut to the Lower Saxony buses (NUTS1 DE9, same shapes as lower_saxony_2030), isl
 per substation, LS2030 marginal costs (decided 2026-11-09, TODO Next #8b).
 
 - buses joined by closed bus–bus switches or transformers are fused (one agent per substation);
+  substations cut off from the rest by the region border are dropped;
 - c₁ per SimBench type = the median c₁ of that carrier in lower_saxony_2030 (PyPSA-Eur 2030),
   written to pandapower's ``poly_cost``; c₂ and the band come from ``esb-prepare``;
 - profiles: hourly means of SimBench's 15-min values, real 2016 dates; stored in the JSON as
@@ -65,10 +66,20 @@ def fuse_substations(net) -> None:
             tb.fuse_buses(net, first, rest)
 
 
+def main_grid(net) -> list[int]:
+    """Buses of the largest line-connected part: border substations whose lines all leave the
+    region are dropped (decided 2026-11-09; two load-only substations)."""
+    graph = nx.Graph()
+    graph.add_nodes_from(net.bus.index)
+    graph.add_edges_from(zip(net.line.from_bus, net.line.to_bus))
+    return sorted(max(nx.connected_components(graph), key=len))
+
+
 def build():
     full, profiles = load_simbench(CODE)
     net = tb.select_subnet(full, region_buses(full))
     fuse_substations(net)
+    net = tb.select_subnet(net, main_grid(net))
     for table in ("gen", "sgen"):
         for idx, kind in net[table].type.items():
             if (table, kind) in C1:
