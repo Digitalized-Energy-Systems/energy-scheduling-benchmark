@@ -52,7 +52,8 @@ chain), `base_s_1_elec_2019`, `lower_saxony_2030` (built by
 `resources/networks/build_lower_saxony_2030.py`), `synthetic_10`, `synthetic_50` (seeded networks
 with balanced bus price sensitivities, built once by `resources/networks/build_synthetic.py`),
 `simbench_lower_saxony` (SimBench EHV cut to Lower Saxony, pandapower JSON, built by
-`resources/networks/build_simbench_lower_saxony.py`). Re-run `esb-prepare` after changing the recipe;
+`resources/networks/build_simbench_lower_saxony.py`), `pypsa_eur_germany_100` (PyPSA-Eur Germany, 100
+clusters, 2025 weather/demand/fleet, built with PyPSA-Eur `config.germany-100-2025.yaml`). Re-run `esb-prepare` after changing the recipe;
 `--k`, `--band` and `--out` write a variant (e.g. linear costs: `--k 0 --band 0`) to another file.
 
 ## Running
