@@ -74,6 +74,8 @@ class MeritOrderCoordinator(Coordinator):
         futures = [
             carrier.send_awaitable(OfferRequest(), a) for a in carrier.others("leader")
         ]
+        # Kept (decision 2026-11-09, TODO 14c): same as mango's gather(timeout=), but DRO's
+        # Carrier has no gather and mango's cannot route multi-hop; a fixture is not worth either.
         await carrier.race(asyncio.wait(futures), carrier.sleep(self.timeout_s))
         self.stop_reason = "complete" if all(f.done() for f in futures) else "timeout"
         buses = [f.result() if f.done() else None for f in futures]
