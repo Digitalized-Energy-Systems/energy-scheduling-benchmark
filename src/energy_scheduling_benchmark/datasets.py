@@ -16,12 +16,14 @@ import argparse
 from pathlib import Path
 
 import numpy as np
+import pandapower as pp
 import pandas as pd
 import pypsa
 from mango_energy_environments import (
     Network,
     add_quadratic_cost,
     drop_unusable_units,
+    from_pandapower,
     from_pypsa,
     save_network,
     set_storage_defaults,
@@ -38,6 +40,8 @@ NETWORKS = {
     # built by resources/networks/build_synthetic.py (balanced bus sensitivities)
     "synthetic_10": NETWORKS_DIR / "synthetic_10.nc",
     "synthetic_50": NETWORKS_DIR / "synthetic_50.nc",
+    # pandapower JSON, built by resources/networks/build_simbench_lower_saxony.py
+    "simbench_lower_saxony": NETWORKS_DIR / "simbench_lower_saxony.json",
 }
 
 #: Quadratic cost factor k in c₂ = k·c₁/p_nom on thermal units (old decision Q17). No network
@@ -75,7 +79,12 @@ def load(
     soc_initial: float = SOC_INITIAL,
 ) -> Network:
     """Load network *name* (``"toy"`` or a key of :data:`NETWORKS`), convert it, prepare it."""
-    net = from_pypsa(toy_network() if name == "toy" else pypsa.Network(NETWORKS[name]))
+    if name == "toy":
+        net = from_pypsa(toy_network())
+    elif NETWORKS[name].suffix == ".json":
+        net = _from_pandapower_json(NETWORKS[name])
+    else:
+        net = from_pypsa(pypsa.Network(NETWORKS[name]))
     drop_unusable_units(net, DROP_STORAGE_CARRIERS)
     add_quadratic_cost(net, k, band)
     set_storage_defaults(net, storage_max_hours or STORAGE_MAX_HOURS, soc_initial)
@@ -130,6 +139,17 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
     print(prepare(args.network, k=args.k, band=args.band, out=args.out))
+
+
+def _from_pandapower_json(path: Path) -> Network:
+    """pandapower JSON with ``profiles_<table>`` frames (see build_simbench_lower_saxony.py)."""
+    pp_net = pp.from_json(path)
+    profiles = {}
+    for table in ("load", "sgen"):
+        df = pp_net[f"profiles_{table}"]
+        # the JSON round trip stores the DatetimeIndex as epoch milliseconds
+        profiles[table] = df.set_axis(pd.to_datetime(df.index, unit="ms"))
+    return from_pandapower(pp_net, profiles)
 
 
 def toy_network(hours: int = 48) -> pypsa.Network:
