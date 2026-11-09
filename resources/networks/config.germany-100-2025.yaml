@@ -1,0 +1,140 @@
+%YAML 1.1
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# config/config.germany-100-2025.yaml
+#
+# Germany, 100 clusters (PyPSA-Eur's own k-means), most recent data: 2025 weather
+# (prebuilt europe-2025-sarah3-era5 cutout) and 2025 demand, fleet in service in 2025,
+# 2025 technology-data costs. Raw input of the ESB dataset `pypsa_eur_germany_100`
+# (decided 2026-11-09, ESB TODO Next #8c). Islanded (Germany only), nothing extendable.
+#
+# Build (stop at prepare_network — no solve):
+#   cd pypsa-eur
+#   pixi run snakemake --dry-run resources/germany-100-2025/networks/base_s_100_elec_.nc \
+#             --configfile config/config.germany-100-2025.yaml
+#   pixi run snakemake resources/germany-100-2025/networks/base_s_100_elec_.nc \
+#             --configfile config/config.germany-100-2025.yaml -j4 --resources mem_mb=22000
+# ─────────────────────────────────────────────────────────────────────────────
+
+run:
+  name: "germany-100-2025"
+  shared_resources:
+    policy: false
+
+foresight: overnight
+
+scenario:
+  clusters:
+  - 100
+  opts:
+  - ""
+  planning_horizons:
+  - 2025
+
+countries:
+- DE
+
+snapshots:
+  start: "2025-01-01"
+  end: "2026-01-01"
+  inclusive: left
+
+enable:
+  drop_leap_day: true
+
+electricity:
+  base_network: osm
+  gaslimit_enable: false
+  co2limit_enable: false
+
+  extendable_carriers:               # installed fleet only
+    Generator: []
+    StorageUnit: []
+    Store: []
+    Link: []
+
+  max_hours:
+    battery: 4
+    H2: 168
+
+  conventional_carriers:             # no nuclear (German phase-out April 2023)
+  - oil
+  - OCGT
+  - CCGT
+  - coal
+  - lignite
+  - geothermal
+  - waste
+  - biomass
+
+  renewable_carriers:
+  - solar
+  - onwind
+  - offwind-ac
+  - offwind-dc
+  - hydro
+
+  # units in service in 2025: retired before 2025 or commissioned after 2025 are dropped
+  powerplants_filter: "(DateOut > 2025 or DateOut != DateOut) and (DateIn < 2026 or DateIn != DateIn)"
+
+  estimate_renewable_capacities:
+    enable: true
+    from_powerplantmatching: true
+    year: 2024                       # newest statistics year PyPSA-Eur supports
+    expansion_limit: false
+    technology_mapping:
+      Offshore: offwind-ac
+      Onshore: onwind
+      PV: solar
+  estimate_battery_capacities: true
+
+  autarky:
+    enable: false
+
+atlite:
+  default_cutout: "europe-2025-sarah3-era5"
+  nprocesses: 4
+  show_progress: false
+
+load:
+  fixed_year: false
+  fill_gaps:
+    enable: true
+    interpolate_limit: 6
+    time_shift_for_large_gaps: 1w
+  manual_adjustments: true
+  scaling_factor: 1.0
+  supplement_synthetic: false        # synthetic set ends before 2025; DE 2025 ENTSO-E has no gaps
+  distribution_key:
+    gdp: 0.6
+    population: 0.4
+
+costs:
+  year: 2025
+  fill_values:
+    FOM: 0
+    VOM: 0
+    efficiency: 1
+    fuel: 0
+    investment: 0
+    lifetime: 25
+    CO2 intensity: 0
+    discount rate: 0.07
+    standing losses: 0
+
+clustering:
+  mode: busmap
+  focus_weights: false
+  simplify_network:
+    to_substations: false
+    remove_stubs: true
+    remove_stubs_across_borders: false
+  cluster_network:
+    algorithm: kmeans
+  temporal:
+    resolution_elec: false
+
+solving:
+  solver:
+    name: highs
+    options: highs-default
