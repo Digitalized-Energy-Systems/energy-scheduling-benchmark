@@ -1,3 +1,5 @@
+import shutil
+
 from energy_scheduling_benchmark.compare import compare, load_runs, main
 from energy_scheduling_benchmark.run import main as esb_run
 
@@ -7,18 +9,26 @@ def test_compare_pairs_runs_with_central(tmp_path, capsys):
     esb_run([*common, "--algorithm", "central", "--hours", "24"])
     esb_run([*common, "--algorithm", "dummy", "--hours", "24"])
     esb_run([*common, "--algorithm", "dummy", "--hours", "6"])  # no central for 6 h
+    # same central on another topology (esb-run's default grid): one setting, not "missing"
+    grid = ["--network", "toy", "--out", str(tmp_path), "--hours", "24"]
+    esb_run([*grid, "--algorithm", "central"])
+    # a run folder named before the _[no]storage suffix (2026-11-09) still loads
+    dummy = tmp_path / "toy" / "dummy"
+    shutil.copytree(dummy / "complete_loss0_seed0_from20240101T00_24h_storage",
+                    dummy / "ring_loss0_seed0_from20240101T00_24h")  # fmt: skip
 
     rows, missing = compare(load_runs(tmp_path))
-    assert len(rows) == 1  # the 6 h dummy run is skipped
+    assert len(rows) == 2  # 24 h dummy + its old-named copy; the 6 h one is skipped
+    assert set(rows.variant) == {""}
     row = rows.iloc[0]
     assert row.start == "2024-01-01 00:00:00" and row.hours == 24
     assert row.gap_pct == (row.total_cost / row.central_cost - 1) * 100
     assert row.gap_pct >= 0  # dummy cannot beat the optimum
     assert any("no central run" in m and "6h" in m for m in missing)
     assert any(
-        m.startswith("toy central complete_loss0_seed0:") and " 6 h " in m
-        for m in missing
+        m.startswith("toy central any_loss0_seed0:") and " 6 h " in m for m in missing
     )
+    assert not any("central grid" in m or "central complete" in m for m in missing)
 
     capsys.readouterr()
     main(["--root", str(tmp_path)])

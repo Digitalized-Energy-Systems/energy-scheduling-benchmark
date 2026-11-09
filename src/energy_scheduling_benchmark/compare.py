@@ -34,7 +34,7 @@ def load_runs(root: Path) -> pd.DataFrame:
                 "network": network,
                 "algorithm": algorithm,
                 # folder suffix after [no]storage: consensus tuning route (+ --set hash)
-                "variant": name.split("storage", 1)[1].lstrip("_"),
+                "variant": name.partition("storage")[2].lstrip("_"),  # "" for old names
                 "topology": i["topology"],
                 "loss_rate": i["loss_rate"],
                 "seed": i["seed"],
@@ -64,7 +64,15 @@ SETTING = ["algorithm", "variant", "topology", "loss_rate", "seed"]
 def compare(runs: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     """Rows with ``central_cost`` + ``gap_pct``, and the missing-run notices."""
     missing = []
-    for network, net_runs in runs.groupby("network"):
+    settings = (
+        runs.copy()
+    )  # central does not depend on topology, loss or seed: one setting
+    settings.loc[settings.algorithm == "central", ["topology", "loss_rate", "seed"]] = (
+        "any",
+        0.0,
+        0,
+    )
+    for network, net_runs in settings.groupby("network"):
         windows = set(net_runs[WINDOW[1:]].itertuples(index=False))
         for (alg, variant, topology, loss, seed), own in net_runs.groupby(SETTING):
             label = f"{network} {alg}{f'[{variant}]' if variant else ''} {topology}_loss{loss:g}_seed{seed}"
