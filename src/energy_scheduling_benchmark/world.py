@@ -86,6 +86,9 @@ def build_world(
         start_time=0.0,
         communication_sim=communication,
         environment=DefaultEnvironment(behavior=behavior),
+        # no per-message log (memory grew ~4 MB/iteration on PyPSA-Eur);
+        # world.messages_delivered_count is kept either way
+        record_messages=False,
     )
     graph = topology_graph(network, topology, slack)
     agents = {}
