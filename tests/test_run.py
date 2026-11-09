@@ -66,6 +66,7 @@ async def test_end_to_end_all_lost_times_out(tmp_path):
         day=None,
         storage=True,
         out=str(tmp_path),
+        trace=False,
     )
     out = await run(args)
     meta = json.loads((out / "meta.json").read_text())
@@ -122,3 +123,10 @@ def test_consensus_settings_get_own_folders(tmp_path):
     assert len(names) == 2 and all("_paper_set" in n for n in names)
     with pytest.raises(SystemExit, match="KEY=VALUE"):
         main([*common, "--set", "kappa"])
+
+
+def test_trace_lands_in_run_folder(tmp_path):
+    main(["--hours", "2", "--trace", "--out", str(tmp_path)])
+    (folder,) = tmp_path.glob("toy/dummy/*")
+    names = {p.name for p in folder.iterdir()}
+    assert {"mango_trace.jsonl", "mango_trace.html", "meta.json"} <= names

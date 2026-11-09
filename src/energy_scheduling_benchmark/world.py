@@ -71,6 +71,7 @@ def build_world(
     delay_s: float = 0.01,
     seed: int = 0,
     slack: bool = False,
+    trace=None,
 ):
     """Create the world with one ``RoleAgent`` per topology node; callers add the roles.
 
@@ -88,6 +89,7 @@ def build_world(
         # no per-message log (memory grew ~4 MB/iteration on PyPSA-Eur);
         # world.messages_delivered_count is kept either way
         record_messages=False,
+        trace=trace,  # mango tracing (a trace file path) for debugging, off by default
     )
     graph = topology_graph(network, topology, slack)
     agents = {}

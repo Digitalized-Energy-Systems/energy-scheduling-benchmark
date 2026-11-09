@@ -68,6 +68,7 @@ esb-run --network lower_saxony_2030 --topology ring --start 2019-01-14 --hours 1
 esb-run --network synthetic_10 --start 2019-01-16 # standard winter day (table below), 24 h
 esb-run --network path/to/prepared.nc ...        # any prepared file
 esb-run --algorithm consensus --tuning paper    # or manual / sweep; --set key=value overrides
+esb-run --trace ...   # debugging: mango trace (mango_trace.jsonl + .html viewer) in the run folder; slow, large
 esb-tune --network toy --topology ring --steps constant   # sweep → [consensus.toy.ring.sweep]
 esb-compare                      # all runs under outputs/ vs. their central run → outputs/compare.csv
 esb-run --help   # --algorithm, --loss-rate (fraction per hop), --delay-s, --slack, --no-storage, --set, --out, ...

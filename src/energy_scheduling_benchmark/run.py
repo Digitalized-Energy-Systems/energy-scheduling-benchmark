@@ -116,11 +116,17 @@ def _consensus(params: dict, steps: int):
     return setup
 
 
-async def _simulate(network, args, setup):
+async def _simulate(network, args, setup, trace=None):
     """Run the mango world with the roles *setup* adds; returns
     (behavior, messages, stop_reason, iterations)."""
     world, behavior, agents, communication, routes = build_world(
-        network, args.topology, args.loss_rate, args.delay_s, args.seed, args.slack
+        network,
+        args.topology,
+        args.loss_rate,
+        args.delay_s,
+        args.seed,
+        args.slack,
+        trace,
     )
     outcome = setup(behavior, agents, routes)
     async with world:
@@ -152,6 +158,7 @@ async def run(args: argparse.Namespace) -> Path:
     inputs = {**vars(args), "start": str(network.time_index[0])}
     began = time.perf_counter()
     variant = ""
+    setup = _dummy
     if args.algorithm == "central":
         behavior = CopperPlateBehavior(network)
         behavior.schedules, stop_reason = solve_central(network, args.slack)
@@ -173,16 +180,6 @@ async def run(args: argparse.Namespace) -> Path:
             digest = hashlib.sha1(" ".join(sorted(args.set)).encode()).hexdigest()
             variant += f"_set{digest[:6]}"
         setup = _consensus(params, len(network.time_index))
-        behavior, messages, stop_reason, iterations = await _simulate(
-            network, args, setup
-        )
-    else:
-        behavior, messages, stop_reason, iterations = await _simulate(
-            network, args, _dummy
-        )
-    wall_time_s = time.perf_counter() - began
-
-    start = network.time_index[0]
     out = run_dir(
         args.out,
         network_file.stem,
@@ -190,11 +187,21 @@ async def run(args: argparse.Namespace) -> Path:
         args.topology,
         args.loss_rate,
         args.seed,
-        start,
+        network.time_index[0],
         args.hours,
         args.storage,
         variant,
     )
+    if args.algorithm != "central":
+        trace = None
+        if args.trace:
+            out.mkdir(parents=True, exist_ok=True)
+            trace = out / "mango_trace.jsonl"
+        behavior, messages, stop_reason, iterations = await _simulate(
+            network, args, setup, trace
+        )
+    wall_time_s = time.perf_counter() - began
+
     write_run(
         out,
         behavior,
@@ -251,6 +258,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="override a consensus parameter (resources/tuned_parameters.toml)",
     )
     parser.add_argument("--out", default="outputs")
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="mango trace + HTML viewer in the run folder (debugging; slow, large)",
+    )
     return parser
 
 
