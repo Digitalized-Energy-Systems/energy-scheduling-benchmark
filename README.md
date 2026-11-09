@@ -50,7 +50,9 @@ Prepare once, run many times. `esb-prepare --network NAME` loads the raw PyPSA n
 prepared file does not depend on the environment that runs it. Names: `toy` (tiny built-in 4-bus
 chain), `base_s_1_elec_2019`, `lower_saxony_2030` (built by
 `resources/networks/build_lower_saxony_2030.py`), `synthetic_10`, `synthetic_50` (seeded networks
-with balanced bus price sensitivities, built once by `resources/networks/build_synthetic.py`). Re-run `esb-prepare` after changing the recipe;
+with balanced bus price sensitivities, built once by `resources/networks/build_synthetic.py`),
+`simbench_lower_saxony` (SimBench EHV cut to Lower Saxony, pandapower JSON, built by
+`resources/networks/build_simbench_lower_saxony.py`). Re-run `esb-prepare` after changing the recipe;
 `--k`, `--band` and `--out` write a variant (e.g. linear costs: `--k 0 --band 0`) to another file.
 
 ## Running
@@ -100,6 +102,6 @@ src/energy_scheduling_benchmark/
 └── outputs.py    # schedule.csv + meta.json
 resources/
 ├── tuned_parameters.toml  # per-algorithm parameters
-├── networks/     # raw PyPSA inputs + build_lower_saxony_2030.py, build_synthetic.py
+├── networks/     # raw PyPSA inputs + build_*.py
 └── prepared/     # prepared networks (esb-prepare), read by esb-run
 ```
