@@ -7,7 +7,7 @@ The package is built on top of:
 
 * [mango-agents](https://github.com/OFFIS-DAI/mango) 2.4.0 (PyPI) — the agent framework
 * [mango-energy-environments](../mango-energy-environments) — mango environment abstractions
-* [distributed-resource-optimization](../distributed-resource-optimization) — COHDA / ADMM / averaging consensus
+* [distributed-resource-optimization](../distributed-resource-optimization) — the distributed algorithms (consensus + innovations, ADMM, COHDA, …)
 * [PyPSA](https://pypsa.org) — source of the benchmark networks
 
 ## Scope of this package
@@ -115,6 +115,6 @@ src/energy_scheduling_benchmark/
 └── outputs.py    # schedule.csv + meta.json
 resources/
 ├── tuned_parameters.toml  # per-algorithm parameters
-├── networks/     # raw PyPSA inputs + build_*.py
+├── networks/     # raw inputs (PyPSA .nc, pandapower .json), build_*.py, PyPSA-Eur configs
 └── prepared/     # prepared networks (esb-prepare), read by esb-run
 ```
