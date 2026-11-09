@@ -85,3 +85,19 @@ def test_prepared_file_matches_recipe(name):
             assert getattr(s, field) == getattr(f, field), stale
         assert np.array_equal(s.p_min, f.p_min, equal_nan=True), stale
         assert np.array_equal(s.p_max, f.p_max, equal_nan=True), stale
+
+
+@pytest.mark.parametrize("name", ["synthetic_10", "synthetic_50"])
+def test_synthetic_balanced_and_varied(name):
+    """Pick rule (TODO Next #8a): bus Σ 1/(2c₂) within 2× with storage on and off; all mixes."""
+    comps = load_network(datasets.prepared_path(name)).components.values()
+    for kinds in (("gen", "sgen", "storage"), ("gen", "sgen")):
+        sens = {}
+        for c in comps:
+            if c.kind in kinds:
+                sens[c.bus] = sens.get(c.bus, 0.0) + 1 / (2 * c.cost[1])
+        assert max(sens.values()) / min(sens.values()) < 2
+    assert {c.kind for c in comps} == {"gen", "sgen", "storage", "load"}
+    assert len({c.bus for c in comps if c.kind == "load"}) < len(
+        sens
+    )  # load-free buses

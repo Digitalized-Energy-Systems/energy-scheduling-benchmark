@@ -35,6 +35,9 @@ NETWORKS = {
     "base_s_1_elec_2019": NETWORKS_DIR / "base_s_1_elec_2019.nc",
     # built by resources/networks/build_lower_saxony_2030.py
     "lower_saxony_2030": NETWORKS_DIR / "lower_saxony_2030.nc",
+    # built by resources/networks/build_synthetic.py (balanced bus sensitivities)
+    "synthetic_10": NETWORKS_DIR / "synthetic_10.nc",
+    "synthetic_50": NETWORKS_DIR / "synthetic_50.nc",
 }
 
 #: Quadratic cost factor k in c₂ = k·c₁/p_nom on thermal units (old decision Q17). No network
