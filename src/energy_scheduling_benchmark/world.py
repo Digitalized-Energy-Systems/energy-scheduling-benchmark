@@ -25,7 +25,12 @@ TOPOLOGIES = ("grid", "complete", "ring")
 
 
 class CountingCommunication(SimpleCommunicationSimulation):
-    """mango's loss/delay simulation that also counts sent and lost messages (per hop)."""
+    """mango's loss/delay simulation that also counts sent and lost messages (per hop).
+
+    Kept (decision 2026-11-09, TODO 14d): mango counts only delivered messages
+    (``world.messages_delivered_count``); sent/lost exist only as trace events, and tracing
+    is a debugging option (``esb-run --trace``), too slow for benchmark runs.
+    """
 
     sent = 0
     lost = 0
