@@ -1,7 +1,6 @@
 """Run outputs: one folder per run with ``schedule.csv`` and ``meta.json`` (decided Q-B7/Q-B8/Q-B8b).
 
-A compare script (cost gap vs. the central optimum, balance summaries) does not exist yet; only
-``esb-tune`` computes the gap.
+The cost gap vs. the central optimum across runs: ``esb-compare`` (``compare.py``).
 """
 
 from __future__ import annotations

@@ -69,6 +69,7 @@ esb-run --network synthetic_10 --day winter      # standard day: winter|spring|s
 esb-run --network path/to/prepared.nc ...        # any prepared file
 esb-run --algorithm consensus --tuning paper    # or manual / sweep; --set key=value overrides
 esb-tune --network toy --topology ring --steps constant   # sweep → [consensus.toy.ring.sweep]
+esb-compare                      # all runs under outputs/ vs. their central run → outputs/compare.csv
 esb-run --help   # --algorithm, --loss-rate (fraction per hop), --delay-s, --slack, --no-storage, --set, --out, ...
 ```
 
@@ -84,13 +85,21 @@ nothing without slack), slack use, imbalance shortfall/surplus, messages
 sent/delivered/lost, iterations, stop reason, wall time). Algorithms so far: `central` (the
 reference optimum), `consensus` (consensus + innovations, Kar & Hug 2012 / Hug, Kar & Wu 2015;
 plan `../docs/consensus-plan.md`, deviations `../docs/deviations.md`) and `dummy` (merit order in
-the leader, a plumbing test). No compare script yet (cost gap vs. central across runs): only
-`esb-tune` computes the gap. Consensus parameters (step sizes, tolerances, `max_iter`) come from
+the leader, a plumbing test). Consensus parameters (step sizes, tolerances, `max_iter`) come from
 `resources/tuned_parameters.toml`, one set per tuning route and network × topology:
 `--tuning paper` = the papers' values (`[consensus]`, used in MW / €/MWh as printed), `manual` =
 hand-tuned `[consensus.<network>.<topology>.manual]` (default when present), `sweep` = written by
 `esb-tune` (grid over the step sizes, best converged cost gap vs central). `--set key=value`
 overrides any value; the route and values used are stored in `meta.json`.
+
+`esb-compare [--root outputs] [--out FILE]` reads every `<root>/<network>/<algorithm>/<run>/meta.json`
+(read-only), pairs each run with the central run of the same network, window, storage and slack
+setting, and writes one row per run to `<root>/compare.csv` (signed cost gap in %, central cost,
+imbalance shortfall/surplus, iterations, stop reason, messages, wall time; `season` when the
+window is a standard day) plus a printed markdown table. Missing runs go to stderr: runs without
+their central run (skipped) and, per network, windows an algorithm setting lacks that other runs
+have. The batch over the standard grid is `../run_all.sh` (workspace root): all `esb-run`s, then
+`esb-compare`.
 
 ## World
 
@@ -109,6 +118,7 @@ src/energy_scheduling_benchmark/
 ├── storage.py    # shared storage model + price response (central dispatch + algorithms)
 ├── consensus.py  # consensus bus actor + parameters (tuned_parameters.toml)
 ├── tune.py       # esb-tune: step-size sweep for one network × topology
+├── compare.py    # esb-compare: cost gap of every run vs. its central run
 ├── world.py      # mango world: bus agents, topologies, counted lossy links, leader/slack
 ├── dummy.py      # dummy merit-order algorithm (test fixture)
 ├── run.py        # esb-run: one run end-to-end
