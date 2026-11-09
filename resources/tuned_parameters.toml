@@ -38,3 +38,9 @@ steps = "constant"
 kappa = 0.03
 gamma = 4.0
 note = "hand-tuned on toy 24 h, 2026-11-08"
+
+[consensus.synthetic_10.complete.sweep]
+steps = "constant"
+kappa = 0.002559
+gamma = 16.0
+note = "esb-tune (grid \u00d7 1/117.2 MW per \u20ac/MWh) best: constant kappa=0.002559, gamma=16.0 \u2014 24 h gap 2019-01-14 00:00:00: +0.0001%; 2019-06-10 00:00:00: +0.0001%, score 9.12e-07, 3000 it."
