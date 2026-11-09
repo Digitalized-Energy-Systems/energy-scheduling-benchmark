@@ -8,7 +8,7 @@ The package is built on top of:
 * [mango-agents](https://github.com/OFFIS-DAI/mango) 2.4.0 (PyPI) — the agent framework
 * [mango-energy-environments](../mango-energy-environments) — mango environment abstractions
 * [distributed-resource-optimization](../distributed-resource-optimization) — the distributed algorithms (consensus + innovations, ADMM, COHDA, …)
-* [PyPSA](https://pypsa.org) — source of the benchmark networks
+* [PyPSA](https://pypsa.org) and [pandapower](https://www.pandapower.org) (SimBench) — sources of the benchmark networks
 
 ## Scope of this package
 
@@ -71,7 +71,7 @@ esb-run --algorithm consensus --tuning paper    # or manual / sweep; --set key=v
 esb-run --trace ...   # debugging: mango trace (mango_trace.jsonl + .html viewer) in the run folder; slow, large
 esb-tune --network toy --topology ring --steps constant   # sweep → [consensus.toy.ring.sweep]
 esb-compare                      # all runs under outputs/ vs. their central run → outputs/compare.csv
-esb-run --help   # --algorithm, --loss-rate (fraction per hop), --delay-s, --slack, --no-storage, --set, --out, ...
+esb-run --help   # --algorithm, --loss-rate (fraction per hop), --delay-s, --slack, --no-storage, --set, --out, --trace, ...
 ```
 
 ### Standard and tuning days
@@ -106,7 +106,8 @@ Each run writes `outputs/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_
 with `schedule.csv` (time × unit MW, `slack`, `residual`, `soc:<storage>`) and `meta.json` (inputs,
 prepared-file SHA-256, total cost (`null` for a failed central solve or a run that scheduled
 nothing without slack), slack use, imbalance shortfall/surplus, messages
-sent/delivered/lost, iterations, stop reason, wall time). Algorithms so far: `central` (the
+sent/delivered/lost, iterations, stop reason, wall time); with `--trace` also `mango_trace.jsonl`
+and its HTML viewer `mango_trace.html`. Algorithms so far: `central` (the
 reference optimum), `consensus` (consensus + innovations, Kar & Hug 2012 / Hug, Kar & Wu 2015;
 plan `../docs/consensus-plan.md`, deviations `../docs/deviations.md`) and `dummy` (merit order in
 the leader, a plumbing test). Consensus parameters (step sizes, tolerances, `max_iter`) come from
@@ -114,8 +115,9 @@ the leader, a plumbing test). Consensus parameters (step sizes, tolerances, `max
 `--tuning paper` = the papers' values (`[consensus]`, used in MW / €/MWh as printed), `manual` =
 hand-tuned `[consensus.<network>.<topology>.manual]` (default when present), `sweep` = written by
 `esb-tune` (grid over the step sizes; the best candidate that runs through every window is
-written whatever its gap, the gap per window is in its `note`; nothing if every candidate diverges; use `esb-tune --no-write` for trial sweeps and check
-`git diff resources/tuned_parameters.toml` after a real one). `--set key=value`
+written whatever its gap, the gap per window is in its `note`; nothing if every candidate
+diverges; use `esb-tune --no-write` for trial sweeps and check `git diff
+resources/tuned_parameters.toml` after a real one). `--set key=value`
 overrides any value; the route and values used are stored in `meta.json`.
 
 `esb-compare [--root outputs] [--out FILE]` reads every `<root>/<network>/<algorithm>/<run>/meta.json`
