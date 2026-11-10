@@ -1,6 +1,6 @@
 """Build ``simbench_lower_saxony.json`` (the dataset's raw input): SimBench ``1-EHV-mixed--0-sw``
-cut to the Lower Saxony buses (NUTS1 DE9, same shapes as lower_saxony_2030), islanded, one bus
-per substation, LS2030 marginal costs (decided 2026-11-09, TODO Next #8b).
+cut to the Lower Saxony buses (NUTS1 DE9, same shapes as lower_saxony_2025), islanded, one bus
+per substation, marginal costs from the former lower_saxony_2030 (decided 2026-11-09, TODO Next #8b).
 
 - buses joined by closed bus–bus switches or transformers are fused (one agent per substation);
   substations cut off from the rest by the region border are dropped;
@@ -50,7 +50,7 @@ def region_buses(net) -> list[int]:
         gpd.points_from_xy(xy.str[0], xy.str[1]), net.bus.index, crs=4326
     )
     shape = gpd.read_file(SHAPES).query("level1 == @REGION").to_crs(4326).union_all()
-    # small buffer so buses exactly on the border are kept (as in build_lower_saxony_2030.py)
+    # small buffer so buses exactly on the border are kept (as in build_lower_saxony_2025.py)
     return list(net.bus.index[points.within(shape.buffer(0.01))])
 
 
