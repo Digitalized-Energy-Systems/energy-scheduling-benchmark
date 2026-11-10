@@ -91,7 +91,11 @@ def compare(runs: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     rows.insert(
         rows.columns.get_loc("total_cost") + 1,
         "gap_pct",
-        (rows.total_cost / rows.central_cost - 1) * 100,  # NaN if a cost is null
+        # NaN if a cost is null; 0 when equal (a window the renewables cover can cost 0 in both)
+        (rows.total_cost / rows.central_cost - 1).mask(
+            rows.total_cost == rows.central_cost, 0.0
+        )
+        * 100,
     )
     rows.insert(
         rows.columns.get_loc("total_cost"), "central_cost", rows.pop("central_cost")

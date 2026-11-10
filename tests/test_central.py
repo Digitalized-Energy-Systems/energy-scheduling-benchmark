@@ -41,9 +41,11 @@ def test_storage_shifts_cheap_energy():
         state_of_charge_initial=0.0,
     )
     bat = Component(STORAGE, "b", flat(-5), flat(5), params=params)
-    schedules, *_ = solve_central(net(("bat", bat)))
+    schedules, _, simultaneous = solve_central(net(("bat", bat)))
     # store the cheap unit's 1 MW surplus (losses make storing 'dear' energy not worth it)
     np.testing.assert_allclose(schedules["bat"], [-1, 0.81], atol=1e-6)
+    # losses: never charge and discharge in the same hour
+    assert simultaneous == pytest.approx(0.0, abs=1e-6)
     np.testing.assert_allclose(storage.soc(bat, schedules["bat"]), [0.9, 0], atol=1e-6)
 
 

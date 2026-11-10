@@ -182,9 +182,8 @@ async def run(args: argparse.Namespace) -> Path:
     began = time.perf_counter()
     variant = ""
     setup = _dummy
-    simultaneous = (
-        None  # MWh charged + discharged in the same hour; only central knows it
-    )
+    # MWh charged + discharged in the same hour; only central knows it
+    simultaneous = None
     covered = no_dispatch(network)
     if args.algorithm == "central" and covered is None:
         behavior = CopperPlateBehavior(network)

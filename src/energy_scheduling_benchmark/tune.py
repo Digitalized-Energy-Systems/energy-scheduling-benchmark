@@ -40,18 +40,24 @@ async def _meta(argv: list[str]) -> dict:
     return json.loads((out / "meta.json").read_text())
 
 
+def gap(cost: float, central_cost: float) -> float:
+    """Relative cost gap; 0 when equal (a window the renewables cover can cost 0 in both)."""
+    return 0.0 if cost == central_cost else cost / central_cost - 1
+
+
 def score(meta: dict, central: dict, demand_mwh: float) -> float | None:
     """|cost gap| + imbalance / demand (both relative); None unless the run used its whole
     budget (stop rule off, so "max_iter"; "stalled" = diverged) or needed no ED at all (a window
-    the renewables cover: the same for every candidate)."""
+    the renewables cover: the same for every candidate). Surplus counts only where it differs
+    from central's: islanded, an unabsorbable renewable surplus is part of the optimum (S1)."""
     if (
         meta["stop_reason"] not in ("max_iter", RENEWABLES_COVER)
         or meta["total_cost"] is None
     ):
         return None
-    gap = meta["total_cost"] / central["total_cost"] - 1
-    imbalance = meta["imbalance"]["shortfall_mwh"] + meta["imbalance"]["surplus_mwh"]
-    return abs(gap) + imbalance / demand_mwh
+    surplus = meta["imbalance"]["surplus_mwh"] - central["imbalance"]["surplus_mwh"]
+    imbalance = meta["imbalance"]["shortfall_mwh"] + abs(surplus)
+    return abs(gap(meta["total_cost"], central["total_cost"])) + imbalance / demand_mwh
 
 
 def write_section(name: str, values: dict) -> None:
@@ -154,7 +160,7 @@ async def sweep(args: argparse.Namespace) -> dict | None:
                 scores.append(score(meta, central, demand))
                 iterations.append(meta["iterations"] or args.max_iter)
                 if meta["total_cost"] is not None:
-                    gaps[start] = meta["total_cost"] / central["total_cost"] - 1
+                    gaps[start] = gap(meta["total_cost"], central["total_cost"])
                 print(
                     values,
                     start,

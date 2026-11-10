@@ -85,3 +85,18 @@ async def test_sweep_writes_the_best_whatever_its_gap(tmp_path, monkeypatch):
     assert abs(gap) > 1  # once (--max-gap 1 %) this was not written
     written = tomllib.loads(path.read_text())["consensus"]["toy"]["ring"]["sweep"]
     assert written["kappa"] == best["kappa"] and written["note"] == best["note"]
+
+
+def test_score_zero_cost_window_and_unavoidable_surplus():
+    # a window the renewables cover at 0 €/MWh: central and run both cost 0 → gap 0, no crash
+    covered = {"stop_reason": "renewables_cover", "total_cost": 0.0}
+    covered["imbalance"] = {"shortfall_mwh": 0.0, "surplus_mwh": 5.0}
+    assert (
+        tune.score(covered, covered, 100.0) == 0.0
+    )  # central's surplus is not penalised
+    run = {**covered, "stop_reason": "max_iter"}
+    run["imbalance"] = {
+        "shortfall_mwh": 0.0,
+        "surplus_mwh": 3.0,
+    }  # 2 MWh off the optimum
+    assert tune.score(run, covered, 100.0) == pytest.approx(0.02)
