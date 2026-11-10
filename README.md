@@ -108,7 +108,8 @@ Each run writes `outputs/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_
 with `schedule.csv` (time × unit MW, `slack`, `residual`, `soc:<storage>`) and `meta.json` (inputs,
 prepared-file SHA-256, total cost (`null` for a failed central solve or a run that scheduled
 nothing without slack), slack use, imbalance shortfall/surplus, messages
-sent/delivered/lost, iterations, stop reason, wall time, `renewable_available_mwh`); with
+sent/delivered/lost, iterations, stop reason, wall time, `renewable_available_mwh`,
+`storage_simultaneous_mwh` = MWh charged and discharged in the same hour, central only, expected 0); with
 `--trace` also `mango_trace.jsonl` and its HTML viewer `mango_trace.html`.
 
 **Renewables are pre-dispatched** (decided 2026-11-10, `../docs/renewables-predispatch-plan.md`):
