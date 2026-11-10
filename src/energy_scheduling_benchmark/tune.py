@@ -10,7 +10,7 @@ worst-window |cost gap| + relative imbalance vs central wins and is written into
 gap (decision 2026-11-09): the note records the gap per window and the best of the other variant.
 Nothing is written only if no candidate runs through every window (all diverge/stall on one).
 
-    esb-tune --network lower_saxony_2030 --topology ring --start 2019-01-14 --start 2019-06-10
+    esb-tune --network lower_saxony_2025 --topology ring --start 2025-01-14 --start 2025-06-10
 """
 
 from __future__ import annotations

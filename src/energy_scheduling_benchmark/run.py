@@ -1,8 +1,8 @@
 """One benchmark run: load prepared network → cut window → mango world → algorithm → outputs.
 
-Usage (after ``esb-prepare --network lower_saxony_2030``)::
+Usage (after ``esb-prepare --network lower_saxony_2025``)::
 
-    esb-run --network lower_saxony_2030 --topology ring --start 2019-01-14 --hours 168 --slack
+    esb-run --network lower_saxony_2025 --topology ring --start 2025-01-14 --hours 168 --slack
 """
 
 from __future__ import annotations

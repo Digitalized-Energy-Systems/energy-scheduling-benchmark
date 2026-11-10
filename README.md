@@ -49,15 +49,17 @@ Prepare once, run many times. `esb-prepare --network NAME` loads the raw network
 battery ageing cost — Xu et al. 2018 eq. 5 with DEA 2025 values, `datasets.STORAGE_COST`) and saves it as NetCDF to
 `resources/prepared/NAME.nc` (committed; the recipe is stored in the file's `meta` attribute). The
 prepared file does not depend on the environment that runs it. Names: `toy` (tiny built-in 4-bus
-chain), `base_s_1_elec_2019`, `lower_saxony_2030` (built by
-`resources/networks/build_lower_saxony_2030.py`), `synthetic_10`, `synthetic_50` (seeded networks
+chain), `base_s_1_elec_2019`, `lower_saxony_2025` (PyPSA-Eur Germany unclustered,
+2025 weather/demand/fleet, cut to Lower Saxony, built by `resources/networks/build_lower_saxony_2025.py`;
+offshore wind dropped — it lands in Lower Saxony but serves all of Germany; replaces
+`lower_saxony_2030` since 2026-11-11 — its EEG 2030 uplift left almost no dispatch), `synthetic_10`, `synthetic_50` (seeded networks
 picked for balanced bus price sensitivities incl. renewables — since renewables are pre-dispatched
 the dispatchable buses are not balanced any more; built once by `resources/networks/build_synthetic.py`),
 `simbench_lower_saxony` (SimBench EHV cut to Lower Saxony, pandapower JSON, built by
 `resources/networks/build_simbench_lower_saxony.py`), `pypsa_eur_germany_100` (PyPSA-Eur Germany, 100
 clusters, 2025 weather/demand/fleet). The PyPSA-Eur configs both PyPSA-Eur networks were built with
 are kept next to them: `resources/networks/config.germany-100-2025.yaml`,
-`config.lower-saxony-2030.yaml` (run them from a PyPSA-Eur checkout). LS2030 (`clusters: [all]`)
+`config.lower-saxony-2025.yaml` (run them from a PyPSA-Eur checkout). Lower Saxony (`clusters: [all]`)
 also needs `pypsa-eur-powerplant-bus-mapping.patch` (`git apply` in the checkout): upstream
 drops every power plant when bus names are OSM ids. Re-run `esb-prepare` after changing the recipe;
 `--k`, `--band` and `--out` write a variant (e.g. linear costs: `--k 0 --band 0`) to another file.
@@ -65,8 +67,8 @@ drops every power plant when bus names are OSM ids. Re-run `esb-prepare` after c
 ## Running
 
 ```bash
-esb-prepare --network lower_saxony_2030          # once (files for all networks are committed)
-esb-run --network lower_saxony_2030 --topology ring --start 2019-01-14 --hours 168 --seed 0
+esb-prepare --network lower_saxony_2025          # once (files for all networks are committed)
+esb-run --network lower_saxony_2025 --topology ring --start 2025-01-14 --hours 168 --seed 0
 esb-run --network synthetic_10 --start 2019-01-16 # standard winter day (table below), 24 h
 esb-run --network path/to/prepared.nc ...        # any prepared file
 esb-run --algorithm consensus --tuning paper    # or manual / sweep; --set key=value overrides
@@ -92,8 +94,8 @@ standard day, the second-closest is the tuning day. The dates live here, in `../
 | | tuning | 2019-01-09 | 2019-04-15 | 2019-06-24 | 2019-10-25 |
 | synthetic_50 | standard | 2019-01-14 | 2019-03-05 | 2019-06-13 | 2019-09-20 |
 | | tuning | 2019-01-15 | 2019-05-03 | 2019-07-02 | 2019-10-02 |
-| lower_saxony_2030 | standard | 2019-01-22 | 2019-04-07 | 2019-07-13 | 2019-09-13 |
-| | tuning | 2019-12-29 | 2019-04-21 | 2019-08-14 | 2019-11-10 |
+| lower_saxony_2025 | standard | 2025-01-25 | 2025-03-15 | 2025-06-19 | 2025-09-19 |
+| | tuning | 2025-02-09 | 2025-05-10 | 2025-07-28 | 2025-09-26 |
 | simbench_lower_saxony | standard | 2016-12-18 | 2016-05-16 | 2016-07-01 | 2016-11-04 |
 | | tuning | 2016-01-19 | 2016-03-15 | 2016-08-24 | 2016-10-23 |
 | pypsa_eur_germany_100 | standard | 2025-01-14 | 2025-03-06 | 2025-08-17 | 2025-11-05 |

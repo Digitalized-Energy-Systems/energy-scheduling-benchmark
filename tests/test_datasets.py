@@ -50,12 +50,16 @@ def test_base_s_1_elec_2019():
     assert c["DE0 0AC PHS"].params["max_hours"] == 6.0
 
 
-def test_lower_saxony_2030():
-    net = datasets.load("lower_saxony_2030")
+def test_lower_saxony_2025():
+    net = datasets.load("lower_saxony_2025")
     kinds = [c.kind for c in net.components.values()]
-    assert len(net.time_index) == 8760
+    carriers = {c.params.get("carrier") for c in net.components.values()}
+    assert len(net.time_index) == 8760 and net.time_index[0].year == 2025
     assert kinds.count("load") == 67
-    assert not any(c.params.get("carrier") == "hydro" for c in net.components.values())
+    assert "hydro" not in carriers
+    assert not any(
+        str(x).startswith("offwind") for x in carriers
+    )  # dropped in the build
     assert nx.is_connected(connection_graph(net))
 
 
