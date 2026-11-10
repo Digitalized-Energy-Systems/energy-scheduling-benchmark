@@ -16,12 +16,20 @@ from mango import RoleAgent, auto_assign, graph_topology, topology_to_aid_graph
 from mango.simulation.communication import SimpleCommunicationSimulation
 from mango.simulation.environment import DefaultEnvironment
 from mango.simulation.world import create_world
-from mango_energy_environments import CopperPlateBehavior, Network
+from mango_energy_environments import RENEWABLE, THERMAL, CopperPlateBehavior, Network
 
 LEADER, SLACK = "leader", "slack"
 #: Slack import price (€/MWh), export is free (Q3: SDAC harmonised maximum clearing price).
 SLACK_IMPORT_PRICE = 4000.0
 TOPOLOGIES = ("grid", "complete", "ring")
+
+
+def predispatched(kind: str, c1: float) -> bool:
+    """Runs at its available power p_max before any algorithm: renewables and free thermal units
+    (marginal cost 0 → always first; KH12 eq. 27 / HKW15 §II must-take). Decided 2026-11-10
+    (supervisor meeting, `docs/renewables-predispatch-plan.md` D1): no curtailment — a surplus is
+    exported by the slack or reported."""
+    return kind == RENEWABLE or (kind == THERMAL and c1 <= 0)
 
 
 class CountingCommunication(SimpleCommunicationSimulation):

@@ -106,8 +106,17 @@ Each run writes `outputs/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_
 with `schedule.csv` (time × unit MW, `slack`, `residual`, `soc:<storage>`) and `meta.json` (inputs,
 prepared-file SHA-256, total cost (`null` for a failed central solve or a run that scheduled
 nothing without slack), slack use, imbalance shortfall/surplus, messages
-sent/delivered/lost, iterations, stop reason, wall time); with `--trace` also `mango_trace.jsonl`
-and its HTML viewer `mango_trace.html`. Algorithms so far: `central` (the
+sent/delivered/lost, iterations, stop reason, wall time, `renewable_available_mwh`); with
+`--trace` also `mango_trace.jsonl` and its HTML viewer `mango_trace.html`.
+
+**Renewables are pre-dispatched** (decided 2026-11-10, `../docs/renewables-predispatch-plan.md`):
+renewables and thermal units with c₁ ≤ 0 run at their available power p_max; every algorithm
+(central included) only dispatches thermal units and storage against the residual load (each bus
+agent: its own load minus its own renewables). Renewables are never curtailed: a surplus is
+exported by the slack (`--slack`) or stays in `residual` / `imbalance.surplus_mwh` (islanded).
+Consensus keeps λ ≥ 0 (the renewables' marginal cost) so a surplus hour cannot drive λ down
+without bound. A window whose renewables cover the load in every hour needs no ED: every
+algorithm returns at once with `stop_reason = "renewables_cover"`. Algorithms so far: `central` (the
 reference optimum), `consensus` (consensus + innovations, Kar & Hug 2012 / Hug, Kar & Wu 2015;
 plan `../docs/consensus-plan.md`, deviations `../docs/deviations.md`) and `dummy` (merit order in
 the leader, a plumbing test). Consensus parameters (step sizes, tolerances, `max_iter`) come from

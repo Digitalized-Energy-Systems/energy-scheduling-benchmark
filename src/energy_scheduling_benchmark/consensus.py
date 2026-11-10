@@ -3,7 +3,8 @@
 Plan: ``docs/consensus-plan.md`` (§7 I1–I10). The generic algorithm is DRO's
 ``ConsensusInnovationsAlgorithm``; here each bus agent answers a price vector λ (€/MWh per hour)
 with the cheapest schedule of every unit at its bus (HKW15 eq. 19/29) and reports its innovation
-= Σ unit injections − its own load (KH12 eq. 24, HKW15 eq. 28).
+= Σ unit injections − its own net load (KH12 eq. 24, HKW15 eq. 28). Net load = load − the bus's
+pre-dispatched units at p_max (KH12 eq. 27 fixed infeed; S1 plan D3).
 """
 
 from __future__ import annotations
@@ -17,8 +18,13 @@ from mango_energy_environments import LOAD, STORAGE, Component
 
 from . import storage
 from .datasets import RESOURCES
+from .world import predispatched
 
 PARAMETERS = RESOURCES / "tuned_parameters.toml"
+#: Floor on λ (€/MWh) = the marginal cost of the pre-dispatched renewables: in a surplus hour
+#: nobody can absorb, λ would fall without bound; at 0 renewables are the marginal unit, so 0 is
+#: the clearing price (S1 plan D4, deviation C9; KH12/HKW15 have no bound).
+LAM_MIN = 0.0
 
 
 TUNINGS = ("paper", "manual", "sweep")
@@ -72,14 +78,18 @@ class BusActor(ConsensusActor):
     def __init__(self, behavior, aid: str, eps_p: float) -> None:
         self.behavior, self.aid = behavior, aid
         observe = behavior.observe
-        self.load = 0.0
-        self.respond, self.tol = {}, {}
+        self.load = 0.0  # net load: own load − own pre-dispatched units
+        self.respond, self.tol, self.fixed = {}, {}, {}
         for cid in observe(aid, "components"):
             s = observe(aid, "statics", cid)
             if s["kind"] == LOAD:
                 self.load = self.load + observe(aid, "demand", cid)
                 continue
             p_min, p_max = observe(aid, "p_min", cid), observe(aid, "p_max", cid)
+            if predispatched(s["kind"], s["cost"][0]):
+                self.fixed[cid] = p_max
+                self.load = self.load - p_max
+                continue
             self.tol[cid] = eps_p * s["p_nom"]
             if s["kind"] == STORAGE:
                 params = {
@@ -103,7 +113,7 @@ class BusActor(ConsensusActor):
         )
 
     def finish(self) -> None:
-        for cid, p in (self.p or {}).items():
+        for cid, p in (self.fixed | (self.p or {})).items():
             self.behavior.act(self.aid, "set_schedule", p, cid)
 
 

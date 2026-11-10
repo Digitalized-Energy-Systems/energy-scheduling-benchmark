@@ -14,7 +14,11 @@ import pandas as pd
 from mango_energy_environments import LOAD, STORAGE, CopperPlateBehavior
 
 from . import storage
-from .world import SLACK, SLACK_IMPORT_PRICE
+from .world import SLACK, SLACK_IMPORT_PRICE, predispatched
+
+#: stop_reason of a run that needed no ED: pre-dispatched units cover the load in every hour
+#: (S1 plan D7); a valid result for every algorithm, central included.
+RENEWABLES_COVER = "renewables_cover"
 
 
 def run_dir(
@@ -60,7 +64,8 @@ def write_run(
     with ``import_share`` = import / total demand); the costs and all ``slack`` fields are
     ``null`` (CSV ``slack`` empty) when the central solve is not optimal. Distributed runs always
     report their cost, also over only the units that got a schedule; ``imbalance`` = shortfall /
-    surplus MWh of the final ``residual``.
+    surplus MWh of the final ``residual`` (islanded: a renewable surplus stays there, it is never
+    curtailed); ``renewable_available_mwh`` = energy of the pre-dispatched units.
     ``messages``: sent / delivered / lost counts.
     ``inputs``: all CLI args incl. seed and network name; ``network_file``: the prepared ``.nc``
     the run read (its SHA-256 goes into meta).
@@ -70,7 +75,7 @@ def write_run(
     schedule = pd.DataFrame(behavior.schedules, index=network.time_index).reindex(
         columns=units
     )
-    failed = algorithm == "central" and stop_reason != "optimal"
+    failed = algorithm == "central" and stop_reason not in ("optimal", RENEWABLES_COVER)
     residual = behavior.balance()
     slack_p = -residual if slack and not failed else np.zeros_like(residual)
     if slack:
@@ -118,6 +123,11 @@ def write_run(
             "shortfall_mwh": float(np.maximum(-residual, 0.0).sum()),
             "surplus_mwh": float(np.maximum(residual, 0.0).sum()),
         },
+        "renewable_available_mwh": sum(
+            float(c.p_max.sum())
+            for c in network.components.values()
+            if c.kind != LOAD and predispatched(c.kind, c.cost[0])
+        ),
         "messages": messages,
         "iterations": iterations,
         "stop_reason": stop_reason,

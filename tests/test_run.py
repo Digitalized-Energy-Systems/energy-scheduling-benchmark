@@ -5,7 +5,15 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
-from mango_energy_environments import STORAGE, THERMAL
+from mango_energy_environments import (
+    LOAD,
+    RENEWABLE,
+    STORAGE,
+    THERMAL,
+    Component,
+    Network,
+    save_network,
+)
 
 from energy_scheduling_benchmark import datasets
 from energy_scheduling_benchmark.dummy import Offer, merit_order
@@ -130,3 +138,57 @@ def test_trace_lands_in_run_folder(tmp_path):
     (folder,) = tmp_path.glob("toy/dummy/*")
     names = {p.name for p in folder.iterdir()}
     assert {"mango_trace.jsonl", "mango_trace.html", "meta.json"} <= names
+
+
+def _two_bus(tmp_path, wind):
+    """Bus a: gas (c₁ 10, c₂ 0.1, 0…10 MW) + load 4 / 8 MW; bus b: wind (pre-dispatched)."""
+    a = lambda *v: np.array(v, dtype=float)  # noqa: E731
+    comps = {
+        "gas": Component(
+            THERMAL, "a", a(0, 0), a(10, 10), (10.0, 0.1), {"p_nom": 10.0}
+        ),
+        "load": Component(LOAD, "a", a(4, 8), a(4, 8)),
+        "wind": Component(
+            RENEWABLE, "b", a(0, 0), a(*wind), (0.0, 0.0), {"p_nom": 9.0}
+        ),
+    }
+    path = tmp_path / "two_bus.nc"
+    idx = pd.date_range("2024-01-01", periods=2, freq="h")
+    save_network(Network(idx, comps, [("a", "b")]), path)
+    return path
+
+
+def _metas(tmp_path, path):
+    common = ["--network", str(path), "--hours", "2", "--topology", "complete"]
+    common += ["--out", str(tmp_path / "out")]
+    main(["--algorithm", "central", *common])
+    steps = ["--tuning", "paper", "--set", "steps=constant", "--set", "kappa=0.1"]
+    main(["--algorithm", "consensus", *common, *steps, "--set", "gamma=4"])
+    return [
+        json.loads(
+            next((tmp_path / "out").glob(f"two_bus/{alg}/*/meta.json")).read_text()
+        )
+        for alg in ("central", "consensus")
+    ]
+
+
+def test_surplus_hour_is_reported_not_curtailed(tmp_path):
+    # hour 0: wind 6 > load 4 → 2 MWh surplus (islanded), gas off; hour 1: gas covers 8 − 1 = 7
+    central, consensus = _metas(tmp_path, _two_bus(tmp_path, (6, 1)))
+    assert central["stop_reason"] == "optimal"
+    assert consensus["stop_reason"] == "converged"  # λ floor 0 in the surplus hour
+    for meta in (central, consensus):
+        assert meta["imbalance"]["surplus_mwh"] == pytest.approx(2.0, abs=1e-3)
+        assert meta["renewable_available_mwh"] == 7.0
+    assert consensus["total_cost"] == pytest.approx(central["total_cost"], rel=1e-3)
+
+
+def test_renewables_cover_every_hour_needs_no_dispatch(tmp_path):
+    central, consensus = _metas(tmp_path, _two_bus(tmp_path, (6, 9)))
+    for meta in (central, consensus):
+        assert meta["stop_reason"] == "renewables_cover"
+        assert meta["iterations"] == 0 and meta["messages"]["sent"] == 0
+        assert (
+            meta["total_cost"] == 0.0
+        )  # gas idle, wind free; a valid result, not null
+        assert meta["imbalance"]["surplus_mwh"] == pytest.approx(3.0)

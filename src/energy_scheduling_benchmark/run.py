@@ -28,6 +28,7 @@ from distributed_resource_optimization.carrier.mango_carrier import (
 )
 from mango import DISCRETE_EVENT
 from mango_energy_environments import (
+    LOAD,
     STORAGE,
     CopperPlateBehavior,
     Network,
@@ -37,8 +38,8 @@ from mango_energy_environments import (
 from . import consensus, datasets
 from .central import solve_central
 from .dummy import DummyBus, MeritOrderCoordinator
-from .outputs import run_dir, write_run
-from .world import LEADER, SLACK, TOPOLOGIES, build_world
+from .outputs import RENEWABLES_COVER, run_dir, write_run
+from .world import LEADER, SLACK, TOPOLOGIES, build_world, predispatched
 
 ALGORITHMS = ("central", "consensus", "dummy")
 #: Simulated seconds the dummy leader waits for offers (a ring of ~70 bus agents at 0.01 s per
@@ -68,6 +69,27 @@ def without_storage(network: Network) -> Network:
     """*network* without its storage units (``--no-storage``)."""
     components = {cid: c for cid, c in network.components.items() if c.kind != STORAGE}
     return Network(network.time_index, components, network.lines)
+
+
+def no_dispatch(network: Network) -> dict[str, np.ndarray] | None:
+    """Schedules when the pre-dispatched units alone cover the load in every hour (no ED needed,
+    the same for every algorithm; S1 plan D7): those at p_max, other units at p_min, storage
+    idle. None if any hour needs dispatch."""
+    comps = network.components
+    fixed = {
+        cid: c.p_max
+        for cid, c in comps.items()
+        if c.kind != LOAD and predispatched(c.kind, c.cost[0])
+    }
+    demand = sum(c.p_max for c in comps.values() if c.kind == LOAD)
+    if not np.all(sum(fixed.values(), 0.0) >= demand):
+        return None
+    rest = {
+        cid: np.zeros_like(c.p_max) if c.kind == STORAGE else c.p_min
+        for cid, c in comps.items()
+        if c.kind != LOAD and cid not in fixed
+    }
+    return fixed | rest
 
 
 def _dummy(behavior, agents, routes):
@@ -102,6 +124,7 @@ def _consensus(params: dict, steps: int):
                 beta,
                 params["eps_lambda"],
                 params["max_iter"],
+                consensus.LAM_MIN,
             )
             agent.add_role(
                 DistributedOptimizationRole(algorithm, routes=routes[agent.aid])
@@ -159,7 +182,8 @@ async def run(args: argparse.Namespace) -> Path:
     began = time.perf_counter()
     variant = ""
     setup = _dummy
-    if args.algorithm == "central":
+    covered = no_dispatch(network)
+    if args.algorithm == "central" and covered is None:
         behavior = CopperPlateBehavior(network)
         behavior.schedules, stop_reason = solve_central(network, args.slack)
         messages, iterations = {"sent": 0, "delivered": 0, "lost": 0}, 1
@@ -192,7 +216,12 @@ async def run(args: argparse.Namespace) -> Path:
         args.storage,
         variant,
     )
-    if args.algorithm != "central":
+    if covered is not None:
+        behavior = CopperPlateBehavior(network)
+        behavior.schedules = covered
+        stop_reason, iterations = RENEWABLES_COVER, 0
+        messages = {"sent": 0, "delivered": 0, "lost": 0}
+    elif args.algorithm != "central":
         trace = None
         if args.trace:
             out.mkdir(parents=True, exist_ok=True)

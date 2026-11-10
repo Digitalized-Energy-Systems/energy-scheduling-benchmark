@@ -109,7 +109,8 @@ def test_simbench_lower_saxony():
     net = datasets.load("simbench_lower_saxony")
     comps = net.components.values()
     assert len(net.time_index) == 8784  # 2016, hourly
-    assert sum(c.kind == "sgen" for c in comps) == 29
+    # 29 sgens: 27 wind/mixed renewables + 2 biomass, which are thermal (MEE, S1 plan D10)
+    assert sum(c.kind == "sgen" for c in comps) == 27
     assert not any(np.isnan(c.p_max).any() for c in comps)
 
 

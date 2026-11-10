@@ -5,7 +5,8 @@ bus agent for its offer (per unit: cost, p_min/p_max over the horizon; plus the 
 up to a timeout, then per hour puts every unit at p_min and fills the rest of the received demand
 cheapest-c1-first up to p_max (c2 only counts in the cost). Storage stays idle. Each bus's
 ``{component: schedule}`` goes back as its ``OptimizationFinishedMessage``; a lost offer leaves
-that bus's units without a schedule and its load out of the demand.
+that bus's units without a schedule and its load out of the demand. Pre-dispatched units are not
+offered: the bus sets them to p_max itself and offers its net load (S1 plan D3).
 ``stop_reason`` "complete" only means every offer arrived: schedules lost on the way back
 still show up as empty columns.
 """
@@ -24,6 +25,8 @@ from distributed_resource_optimization.carrier.mango_carrier import (
     OptimizationFinishedMessage,
 )
 from mango_energy_environments import LOAD, STORAGE
+
+from .world import predispatched
 
 
 @dataclass
@@ -110,6 +113,10 @@ class DummyBus(DistributedAlgorithm):
                 statics = observe(self.aid, "statics", cid)
                 if statics["kind"] == LOAD:
                     load = load + observe(self.aid, "demand", cid)
+                elif predispatched(statics["kind"], statics["cost"][0]):
+                    p_max = observe(self.aid, "p_max", cid)
+                    self.behavior.act(self.aid, "set_schedule", p_max, cid)
+                    load = load - p_max
                 else:
                     units[cid] = Offer(
                         statics["kind"],

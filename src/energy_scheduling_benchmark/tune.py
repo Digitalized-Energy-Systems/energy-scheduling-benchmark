@@ -26,7 +26,9 @@ import tempfile
 from mango_energy_environments import LOAD, load_network
 
 from . import consensus, datasets
+from .outputs import RENEWABLES_COVER
 from .run import build_parser, run, window, without_storage
+from .world import predispatched
 
 
 def _floats(text: str) -> list[float]:
@@ -40,8 +42,12 @@ async def _meta(argv: list[str]) -> dict:
 
 def score(meta: dict, central: dict, demand_mwh: float) -> float | None:
     """|cost gap| + imbalance / demand (both relative); None unless the run used its whole
-    budget (stop rule off, so "max_iter"; "stalled" = diverged)."""
-    if meta["stop_reason"] != "max_iter" or meta["total_cost"] is None:
+    budget (stop rule off, so "max_iter"; "stalled" = diverged) or needed no ED at all (a window
+    the renewables cover: the same for every candidate)."""
+    if (
+        meta["stop_reason"] not in ("max_iter", RENEWABLES_COVER)
+        or meta["total_cost"] is None
+    ):
         return None
     gap = meta["total_cost"] / central["total_cost"] - 1
     imbalance = meta["imbalance"]["shortfall_mwh"] + meta["imbalance"]["surplus_mwh"]
@@ -66,11 +72,12 @@ def write_section(name: str, values: dict) -> None:
 
 
 def max_sensitivity(network) -> float:
-    """Largest bus price sensitivity Σ 1/(2c₂) (MW per €/MWh): constant steps need
-    α < 2 / it at that bus, so the α₀ / κ grids are factors of its inverse."""
+    """Largest bus price sensitivity Σ 1/(2c₂) (MW per €/MWh) over the units that answer λ (not
+    the pre-dispatched ones): constant steps need α < 2 / it at that bus, so the α₀ / κ grids
+    are factors of its inverse."""
     per_bus: dict[str, float] = {}
     for c in network.components.values():
-        if c.kind != LOAD:
+        if c.kind != LOAD and not predispatched(c.kind, c.cost[0]):
             per_bus[c.bus] = per_bus.get(c.bus, 0.0) + 1 / (2 * c.cost[1])
     return max(per_bus.values())
 

@@ -2,7 +2,9 @@
 
 One cvxpy model over the whole window: units within p_min … p_max at c₁p + c₂p², storage per
 :mod:`.storage`, optional slack (import at :data:`SLACK_IMPORT_PRICE`, export free), and per hour
-Σ injections = demand. No tie-break terms (Q-C4). HiGHS solves the LP, Clarabel the QP (HiGHS' QP
+Σ injections = demand. Pre-dispatched units (:func:`.world.predispatched`) are fixed at p_max;
+islanded, a free surplus variable takes what nobody can absorb (reported, not curtailed; S1 plan
+D6). No tie-break terms (Q-C4). HiGHS solves the LP, Clarabel the QP (HiGHS' QP
 fails or stalls on PyPSA-Eur networks).
 """
 
@@ -13,7 +15,7 @@ import numpy as np
 from mango_energy_environments import LOAD, STORAGE, Network
 
 from . import storage
-from .world import SLACK_IMPORT_PRICE
+from .world import SLACK_IMPORT_PRICE, predispatched
 
 
 def solve_central(
@@ -22,9 +24,13 @@ def solve_central(
     """Return ``({component id: MW per hour}, solver status)``; no schedules unless optimal."""
     steps = len(network.time_index)
     demand = sum(c.p_max for c in network.components.values() if c.kind == LOAD)
-    injection, cost, cons, schedules = 0, 0, [], {}
+    injection, cost, cons, schedules, fixed = 0, 0, [], {}, {}
     for cid, c in network.components.items():
         if c.kind == LOAD:
+            continue
+        if predispatched(c.kind, c.cost[0]):
+            fixed[cid] = c.p_max  # a constant: its cost does not change the optimum
+            injection += c.p_max
             continue
         if c.kind == STORAGE:
             p_c, p_d = cp.Variable(steps), cp.Variable(steps)
@@ -41,6 +47,9 @@ def solve_central(
         imp, exp = cp.Variable(steps, nonneg=True), cp.Variable(steps, nonneg=True)
         injection += imp - exp
         cost += SLACK_IMPORT_PRICE * cp.sum(imp)
+    else:
+        # islanded: renewables are never curtailed, so a surplus must go somewhere to stay feasible
+        injection -= cp.Variable(steps, nonneg=True)
     problem = cp.Problem(cp.Minimize(cost), [*cons, injection == demand])
     if any(c.cost[1] for c in network.components.values()):
         # Clarabel's equilibration mis-scales the 4000 €/MWh import next to ~10–100 €/MWh units:
@@ -50,4 +59,5 @@ def solve_central(
         problem.solve(solver=cp.HIGHS)
     if problem.status != cp.OPTIMAL:
         return {}, problem.status
-    return {cid: np.asarray(p.value) for cid, p in schedules.items()}, problem.status
+    solved = {cid: np.asarray(p.value) for cid, p in schedules.items()}
+    return fixed | solved, problem.status

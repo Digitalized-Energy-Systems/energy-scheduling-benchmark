@@ -1,6 +1,8 @@
 import shutil
 import tomllib
 
+import pytest
+
 from energy_scheduling_benchmark import consensus, tune
 
 
@@ -29,15 +31,17 @@ async def test_sweep_picks_a_converged_candidate():
         write=False, storage=True,
     )  # fmt: skip
     best = await tune.sweep(args)
-    # toy max bus dP/dλ = 40 → κ = 1.2/40 = 0.03 (stable), 8/40 = 0.2 oscillates
-    assert best["steps"] == "constant" and best["kappa"] == 0.03
+    # toy max bus dP/dλ = 35.15 → κ = 1.2/35.15 = 0.0341 (stable), 8/35.15 = 0.23 oscillates
+    assert best["steps"] == "constant"
+    assert best["kappa"] == pytest.approx(1.2 / 35.15, rel=1e-3)
     assert "best: constant" in best["note"]
 
 
 def test_max_sensitivity_toy():
     from energy_scheduling_benchmark import datasets
 
-    assert tune.max_sensitivity(datasets.load("toy")) == 40.0  # wind: 1/(2·0.0125)
+    # bus0 gas 1/(2·0.033) + battery 1/(2·0.025); the wind bus (40) is pre-dispatched (S1)
+    assert tune.max_sensitivity(datasets.load("toy")) == pytest.approx(1 / 0.066 + 20)
 
 
 def test_parameter_routes():
