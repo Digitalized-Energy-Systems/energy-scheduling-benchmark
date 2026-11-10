@@ -182,10 +182,15 @@ async def run(args: argparse.Namespace) -> Path:
     began = time.perf_counter()
     variant = ""
     setup = _dummy
+    simultaneous = (
+        None  # MWh charged + discharged in the same hour; only central knows it
+    )
     covered = no_dispatch(network)
     if args.algorithm == "central" and covered is None:
         behavior = CopperPlateBehavior(network)
-        behavior.schedules, stop_reason = solve_central(network, args.slack)
+        behavior.schedules, stop_reason, simultaneous = solve_central(
+            network, args.slack
+        )
         messages, iterations = {"sent": 0, "delivered": 0, "lost": 0}, 1
     elif args.algorithm == "consensus":
         if bad := [kv for kv in args.set if "=" not in kv]:
@@ -242,6 +247,7 @@ async def run(args: argparse.Namespace) -> Path:
         stop_reason=stop_reason,
         wall_time_s=wall_time_s,
         slack=args.slack,
+        storage_simultaneous_mwh=simultaneous,
     )
     return out
 

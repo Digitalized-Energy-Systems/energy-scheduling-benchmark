@@ -22,6 +22,7 @@ import pypsa
 from mango_energy_environments import (
     LOAD,
     RENEWABLE,
+    STORAGE,
     Network,
     add_quadratic_cost,
     drop_unusable_units,
@@ -56,17 +57,28 @@ NETWORKS = {
 #: rounded to 0.11. The marginal cost then rises from c₁ at zero output to (1 + 2k)·c₁ ≈ 1.22·c₁
 #: at full output. ``k = 0`` is the linear cost model.
 QUADRATIC_K = 0.11
-#: Curvature band (€/MWh) for renewables, storage and free thermal units: c₂ = band/(2·p_nom),
-#: so their marginal cost rises by the band from zero to full output (decision 2026-11-04,
-#: `docs/consensus-plan.md` Q2). Why: price-responding algorithms (consensus + innovations,
-#: Kar & Hug 2012 / Hug, Kar & Wu 2015) need a strictly convex cost — with c₂ = 0 the answer to a
-#: price is all-or-nothing and flips every iteration. It is in the problem itself (central and
-#: every algorithm), so no algorithm gets a method-made gap. It is a modelling device, not a
-#: physical cost: kept as cheap as possible — 1 €/MWh is far below the cheapest thermal c₁
-#: (~20 €/MWh), so merit order is unchanged and renewables still run first; it only decides how a
-#: surplus is curtailed (by capacity) and adds ≤ 0.5 €/MWh to renewable/storage energy at full
-#: output. ``band = 0`` (with ``k = 0``) is the linear cost model again.
+#: Curvature band (€/MWh) for **storage only**: c₂ = band/(2·p_nom), so its marginal cost rises by
+#: the band from zero to full output (decision 2026-11-04, `docs/consensus-plan.md` Q2; since
+#: 2026-11-10 only storage — renewables and free thermal units are pre-dispatched, S1, and keep
+#: c₂ = 0). Why: price-responding algorithms (consensus + innovations, Kar & Hug 2012 / Hug, Kar &
+#: Wu 2015) need a strictly convex cost — with c₂ = 0 the answer to a price is all-or-nothing and
+#: flips every iteration. It is in the problem itself (central and every algorithm), so no
+#: algorithm gets a method-made gap. It is a modelling device, not a physical cost (deviation P1);
+#: the physical cost of storage is :data:`STORAGE_COST`. ``band = 0`` (with ``k = 0``) is the
+#: linear cost model again.
 CURVATURE_BAND = 1.0
+BAND_KINDS = (STORAGE,)
+#: Storage ageing cost c₁ (€/MWh **discharged**) per carrier (decision 2026-11-10, S2,
+#: `docs/storage-cost-plan.md`). Battery: Xu, Zhao, Zheng, Litvinov & Kirschen 2018, "Factoring
+#: the Cycle Aging Cost of Batteries Participating in Electricity Markets", IEEE TPWRS 33(2),
+#: eq. 5 with one segment: c = R·Φ(1)/η_dis — ageing only on discharge, R = cell replacement
+#: cost, Φ(1) = 1/N (life loss of one full cycle). Values from the Danish Energy Agency, "Technology
+#: Data for Energy Storage", data sheet v0011, chapter 180 Lithium-ion battery (utility-scale),
+#: 2025 (EUR 2020): R = energy component (battery pack) 0.065 M€/MWh, N = lifetime in total number
+#: of cycles 6 000 (LFP/NMC; taken as full cycles), η_dis = discharge efficiency 97 %
+#: → 11.17 €/MWh. PHS: **placeholder** 0 €/MWh = DEA chapter 160 variable O&M; to be replaced by
+#: Zakeri & Syri 2015 (RSER 42, 569–596) once the PDF is available (Jonas, 2026-11-10).
+STORAGE_COST = {"battery": 65_000 / (6_000 * 0.97), "PHS": 0.0}
 #: Storage energy capacity in hours of p_nom per carrier (old Q25); others keep the network's.
 STORAGE_MAX_HOURS = {"PHS": 6.0, "battery": 2.0}
 #: Initial state of charge as a fraction of the energy capacity (old Q25).
@@ -91,8 +103,10 @@ def load(
     else:
         net = from_pypsa(pypsa.Network(NETWORKS[name]))
     drop_unusable_units(net, DROP_STORAGE_CARRIERS)
-    add_quadratic_cost(net, k, band)
-    set_storage_defaults(net, storage_max_hours or STORAGE_MAX_HOURS, soc_initial)
+    add_quadratic_cost(net, k, band, BAND_KINDS)
+    set_storage_defaults(
+        net, storage_max_hours or STORAGE_MAX_HOURS, soc_initial, STORAGE_COST
+    )
     return net
 
 
@@ -111,6 +125,8 @@ def prepare(
         "source": str(NETWORKS[name].name) if name in NETWORKS else "toy_network()",
         "quadratic_k": k,
         "curvature_band": band,
+        "band_kinds": list(BAND_KINDS),
+        "storage_cost": STORAGE_COST,
         "storage_max_hours": STORAGE_MAX_HOURS,
         "soc_initial": SOC_INITIAL,
         "drop_storage_carriers": list(DROP_STORAGE_CARRIERS),

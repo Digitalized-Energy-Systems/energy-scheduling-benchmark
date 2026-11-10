@@ -93,7 +93,9 @@ def test_no_storage(tmp_path):
     meta_on, meta_off = (json.loads((d / "meta.json").read_text()) for d in (on, off))
     assert "battery" not in pd.read_csv(off / "schedule.csv").columns
     assert meta_off["inputs"]["storage"] is False
-    assert meta_off["total_cost"] >= meta_on["total_cost"]  # storage can only help
+    # storage can only help — up to the QP solver's tolerance (Clarabel ~1e-8 relative): with the
+    # ageing cost the battery is almost idle on toy, and both optima agree to ~1e-9
+    assert meta_off["total_cost"] >= meta_on["total_cost"] * (1 - 1e-8)
 
 
 def test_prepare_once_run_from_file(tmp_path):

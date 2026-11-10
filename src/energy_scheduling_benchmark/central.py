@@ -4,7 +4,9 @@ One cvxpy model over the whole window: units within p_min … p_max at c₁p + c
 :mod:`.storage`, optional slack (import at :data:`SLACK_IMPORT_PRICE`, export free), and per hour
 Σ injections = demand. Pre-dispatched units (:func:`.world.predispatched`) are fixed at p_max;
 islanded, a free surplus variable takes what nobody can absorb (reported, not curtailed; S1 plan
-D6). No tie-break terms (Q-C4). HiGHS solves the LP, Clarabel the QP (HiGHS' QP
+D6). No tie-break terms (Q-C4). Charging and discharging in the same hour is never optimal with the
+ageing cost on discharge and η < 1 (Zhu et al. 2025 Thm 1; Xu et al. 2018 §IV), so it is only
+checked and reported, not forbidden by binaries (S2, `docs/storage-cost-plan.md` Q-S4). HiGHS solves the LP, Clarabel the QP (HiGHS' QP
 fails or stalls on PyPSA-Eur networks).
 """
 
@@ -20,11 +22,12 @@ from .world import SLACK_IMPORT_PRICE, predispatched
 
 def solve_central(
     network: Network, slack: bool = False
-) -> tuple[dict[str, np.ndarray], str]:
-    """Return ``({component id: MW per hour}, solver status)``; no schedules unless optimal."""
+) -> tuple[dict[str, np.ndarray], str, float | None]:
+    """Return ``({component id: MW per hour}, solver status, simultaneous MWh)``; no schedules
+    (and None) unless optimal. Simultaneous = Σ over storage and hours of min(charge, discharge)."""
     steps = len(network.time_index)
     demand = sum(c.p_max for c in network.components.values() if c.kind == LOAD)
-    injection, cost, cons, schedules, fixed = 0, 0, [], {}, {}
+    injection, cost, cons, schedules, fixed, flows = 0, 0, [], {}, {}, []
     for cid, c in network.components.items():
         if c.kind == LOAD:
             continue
@@ -36,6 +39,7 @@ def solve_central(
             p_c, p_d = cp.Variable(steps), cp.Variable(steps)
             cons += storage.constraints(c, p_c, p_d)
             p = p_d - p_c
+            flows.append((p_c, p_d))
             cost += c.cost[0] * cp.sum(p_d) + c.cost[1] * cp.sum_squares(p)
         else:
             p = cp.Variable(steps)
@@ -58,6 +62,7 @@ def solve_central(
     else:
         problem.solve(solver=cp.HIGHS)
     if problem.status != cp.OPTIMAL:
-        return {}, problem.status
+        return {}, problem.status, None
     solved = {cid: np.asarray(p.value) for cid, p in schedules.items()}
-    return fixed | solved, problem.status
+    both = sum(float(np.minimum(c.value, d.value).clip(0).sum()) for c, d in flows)
+    return fixed | solved, problem.status, both

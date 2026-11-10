@@ -26,7 +26,7 @@ def net(*extra, demand=(4.0, 8.0)):
 
 
 def test_merit_order_lp():
-    schedules, status = solve_central(net())
+    schedules, status, _ = solve_central(net())
     assert status == "optimal"
     np.testing.assert_allclose(schedules["cheap"], [4, 5], atol=1e-6)
     np.testing.assert_allclose(schedules["dear"], [0, 3], atol=1e-6)
@@ -41,23 +41,23 @@ def test_storage_shifts_cheap_energy():
         state_of_charge_initial=0.0,
     )
     bat = Component(STORAGE, "b", flat(-5), flat(5), params=params)
-    schedules, _ = solve_central(net(("bat", bat)))
+    schedules, *_ = solve_central(net(("bat", bat)))
     # store the cheap unit's 1 MW surplus (losses make storing 'dear' energy not worth it)
     np.testing.assert_allclose(schedules["bat"], [-1, 0.81], atol=1e-6)
     np.testing.assert_allclose(storage.soc(bat, schedules["bat"]), [0.9, 0], atol=1e-6)
 
 
 def test_islanded_infeasible_and_slack():
-    schedules, status = solve_central(net(demand=(4.0, 12.0)))
+    schedules, status, _ = solve_central(net(demand=(4.0, 12.0)))
     assert status == "infeasible" and schedules == {}
-    schedules, status = solve_central(net(demand=(4.0, 12.0)), slack=True)
+    schedules, status, _ = solve_central(net(demand=(4.0, 12.0)), slack=True)
     assert status == "optimal"
     np.testing.assert_allclose(schedules["dear"], [0, 5], atol=1e-6)
 
 
 def test_quadratic_toy_balances():
     toy = window(datasets.load("toy"), None, 24)
-    schedules, status = solve_central(toy)
+    schedules, status, _ = solve_central(toy)
     assert status == "optimal"
     demand = sum(c.p_max for c in toy.components.values() if c.kind == LOAD)
     np.testing.assert_allclose(sum(schedules.values()), demand, atol=1e-5)

@@ -54,6 +54,7 @@ def write_run(
     stop_reason: str,
     wall_time_s: float,
     slack: bool = False,
+    storage_simultaneous_mwh: float | None = None,
 ) -> None:
     """Write ``schedule.csv`` and ``meta.json`` into *out_dir*.
 
@@ -65,7 +66,9 @@ def write_run(
     ``null`` (CSV ``slack`` empty) when the central solve is not optimal. Distributed runs always
     report their cost, also over only the units that got a schedule; ``imbalance`` = shortfall /
     surplus MWh of the final ``residual`` (islanded: a renewable surplus stays there, it is never
-    curtailed); ``renewable_available_mwh`` = energy of the pre-dispatched units.
+    curtailed); ``renewable_available_mwh`` = energy of the pre-dispatched units;
+    ``storage_simultaneous_mwh`` = MWh charged and discharged in the same hour (central only,
+    expected 0; ``null`` elsewhere).
     ``messages``: sent / delivered / lost counts.
     ``inputs``: all CLI args incl. seed and network name; ``network_file``: the prepared ``.nc``
     the run read (its SHA-256 goes into meta).
@@ -123,6 +126,7 @@ def write_run(
             "shortfall_mwh": float(np.maximum(-residual, 0.0).sum()),
             "surplus_mwh": float(np.maximum(residual, 0.0).sum()),
         },
+        "storage_simultaneous_mwh": storage_simultaneous_mwh,
         "renewable_available_mwh": sum(
             float(c.p_max.sum())
             for c in network.components.values()

@@ -23,7 +23,9 @@ def test_compare_pairs_runs_with_central(tmp_path, capsys):
     row = rows.iloc[0]
     assert row.start == "2024-01-01 00:00:00" and row.hours == 24
     assert row.gap_pct == (row.total_cost / row.central_cost - 1) * 100
-    assert row.gap_pct >= 0  # dummy cannot beat the optimum
+    assert (
+        row.gap_pct >= -1e-6
+    )  # dummy cannot beat the optimum (up to Clarabel's ~1e-8 rel.)
     assert any("no central run" in m and "6h" in m for m in missing)
     assert any(
         m.startswith("toy central any_loss0_seed0:") and " 6 h " in m for m in missing

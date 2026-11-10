@@ -7,7 +7,7 @@ from energy_scheduling_benchmark.central import solve_central
 
 def test_response_at_central_prices_is_central_schedule():
     net = datasets.load("toy")
-    schedules, _ = solve_central(net)
+    schedules, *_ = solve_central(net)
     # λ per hour = marginal cost of a unit strictly inside its bounds (KKT of central)
     lam = np.full(len(net.time_index), np.nan)
     for cid, c in net.components.items():

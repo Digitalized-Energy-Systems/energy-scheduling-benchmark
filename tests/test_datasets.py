@@ -20,9 +20,11 @@ def test_toy_through_pipeline():
     assert len(net.time_index) == 48
     assert nx.is_connected(connection_graph(net))
     assert net.components["gas"].cost == pytest.approx((30.0, 0.11 * 30 / 100))
-    wind = net.components["wind"]
-    assert wind.cost[1] == pytest.approx(
-        datasets.CURVATURE_BAND / (2 * wind.params["p_nom"])
+    # band only on storage (S1: wind is pre-dispatched, c₂ = 0); battery c₁ = ageing cost (S2)
+    assert net.components["wind"].cost[1] == 0.0
+    bat = net.components["battery"]
+    assert bat.cost == pytest.approx(
+        (65_000 / (6_000 * 0.97), datasets.CURVATURE_BAND / (2 * bat.params["p_nom"]))
     )
     # the recipe overrides the toy's 4 h
     assert net.components["battery"].params["max_hours"] == 2.0
@@ -89,13 +91,22 @@ def test_prepared_file_matches_recipe(name):
 
 @pytest.mark.parametrize("name", ["synthetic_10", "synthetic_50"])
 def test_synthetic_balanced_and_varied(name):
-    """Pick rule (TODO Next #8a): bus Σ 1/(2c₂) within 2× with storage on and off; all mixes."""
+    """Pick rule (TODO Next #8a): bus Σ 1/(2c₂) within 2× with storage on and off; all mixes.
+
+    Checked as at the pick (build_synthetic.py: renewables p_nom/band). Since S1 renewables are
+    pre-dispatched (c₂ = 0) and the dispatchable buses are no longer balanced (max/min 10 / 201);
+    the networks stay frozen (Jonas, 2026-11-10), S3 per-agent steps handle the spread."""
     comps = load_network(datasets.prepared_path(name)).components.values()
     for kinds in (("gen", "sgen", "storage"), ("gen", "sgen")):
         sens = {}
         for c in comps:
             if c.kind in kinds:
-                sens[c.bus] = sens.get(c.bus, 0.0) + 1 / (2 * c.cost[1])
+                s = (
+                    c.params["p_nom"] / datasets.CURVATURE_BAND
+                    if c.kind == "sgen"
+                    else 1 / (2 * c.cost[1])
+                )
+                sens[c.bus] = sens.get(c.bus, 0.0) + s
         assert max(sens.values()) / min(sens.values()) < 2
     assert {c.kind for c in comps} == {"gen", "sgen", "storage", "load"}
     unit_buses = {c.bus for c in comps if c.kind != "load"}

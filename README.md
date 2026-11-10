@@ -45,12 +45,14 @@ mango-agents comes from PyPI.
 
 Prepare once, run many times. `esb-prepare --network NAME` loads the raw network from
 `resources/networks/` (PyPSA `.nc`, or pandapower `.json` for SimBench), converts it into an MEE `Network`, applies the benchmark's preparation recipe
-(drop unusable units, quadratic cost incl. a curvature band for renewables/storage, storage defaults) and saves it as NetCDF to
+(drop unusable units, quadratic cost incl. a curvature band for storage, storage defaults incl. a
+battery ageing cost — Xu et al. 2018 eq. 5 with DEA 2025 values, `datasets.STORAGE_COST`) and saves it as NetCDF to
 `resources/prepared/NAME.nc` (committed; the recipe is stored in the file's `meta` attribute). The
 prepared file does not depend on the environment that runs it. Names: `toy` (tiny built-in 4-bus
 chain), `base_s_1_elec_2019`, `lower_saxony_2030` (built by
 `resources/networks/build_lower_saxony_2030.py`), `synthetic_10`, `synthetic_50` (seeded networks
-with balanced bus price sensitivities, built once by `resources/networks/build_synthetic.py`),
+picked for balanced bus price sensitivities incl. renewables — since renewables are pre-dispatched
+the dispatchable buses are not balanced any more; built once by `resources/networks/build_synthetic.py`),
 `simbench_lower_saxony` (SimBench EHV cut to Lower Saxony, pandapower JSON, built by
 `resources/networks/build_simbench_lower_saxony.py`), `pypsa_eur_germany_100` (PyPSA-Eur Germany, 100
 clusters, 2025 weather/demand/fleet). The PyPSA-Eur configs both PyPSA-Eur networks were built with
