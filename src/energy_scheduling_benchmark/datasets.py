@@ -76,9 +76,12 @@ BAND_KINDS = (STORAGE,)
 #: Data for Energy Storage", data sheet v0011, chapter 180 Lithium-ion battery (utility-scale),
 #: 2025 (EUR 2020): R = energy component (battery pack) 0.065 M€/MWh, N = lifetime in total number
 #: of cycles 6 000 (LFP/NMC; taken as full cycles), η_dis = discharge efficiency 97 %
-#: → 11.17 €/MWh. PHS: **placeholder** 0 €/MWh = DEA chapter 160 variable O&M; to be replaced by
-#: Zakeri & Syri 2015 (RSER 42, 569–596) once the PDF is available (Jonas, 2026-11-10).
-STORAGE_COST = {"battery": 65_000 / (6_000 * 0.97), "PHS": 0.0}
+#: → 11.17 €/MWh. PHS: 0.22 €/MWh discharged = variable O&M of PHS, Zakeri & Syri 2015, "Electrical
+#: energy storage systems: A comparative life cycle cost analysis", RSER 42, 569–596, Appendix A
+#: Table A1 (median of the reviewed sources; IQR 0.20–0.79, range 0.19–0.84; euro inflation-
+#: adjusted to ~2013, footnote 2; unchanged by the 2016 corrigendum) — replaces the placeholder 0
+#: (DEA ch. 160), decided 2026-11-10/11 (Jonas). Their VOM is per MWh discharged (eq. 5), as our c₁.
+STORAGE_COST = {"battery": 65_000 / (6_000 * 0.97), "PHS": 0.22}
 #: Storage energy capacity in hours of p_nom per carrier (old Q25); others keep the network's.
 STORAGE_MAX_HOURS = {"PHS": 6.0, "battery": 2.0}
 #: Initial state of charge as a fraction of the energy capacity (old Q25).

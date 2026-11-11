@@ -48,6 +48,7 @@ def test_base_s_1_elec_2019():
     assert "DE0 0AC 0 offwind-dc" not in c  # p_nom = 0
     assert c["DE0 0AC biomass"].kind == "gen" and c["DE0 0AC biomass"].cost[1] > 0
     assert c["DE0 0AC PHS"].params["max_hours"] == 6.0
+    assert c["DE0 0AC PHS"].cost[0] == 0.22  # Zakeri & Syri 2015 Table A1 variable O&M
 
 
 def test_lower_saxony_2025():
