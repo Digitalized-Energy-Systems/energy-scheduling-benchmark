@@ -137,7 +137,8 @@ overrides any value; the route and values used are stored in `meta.json`. Per-ag
 (`agent_scale`, decided 2026-11-11, `../docs/per-agent-steps-plan.md`): `"none"` (default, the
 paper route) = one α, β for all agents as in the papers; `"capacity"` (sweep sets) = each bus runs
 with s_j·α and s_j·β, s_j = median / the bus's dispatchable capacity, so big buses take smaller
-steps (both scaled together: the optimum stays the papers' one).
+steps (both scaled together: the optimum stays the papers' one); the factors always come from the
+network with storage, also in `--no-storage` runs, so one tuned set fits both.
 
 `esb-compare [--root outputs] [--out FILE]` reads every `<root>/<network>/<algorithm>/<run>/meta.json`
 (read-only), pairs each run with the central run of the same network, window, storage and slack
