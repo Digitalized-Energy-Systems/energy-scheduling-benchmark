@@ -21,7 +21,6 @@ import pandas as pd
 import pypsa
 from mango_energy_environments import (
     LOAD,
-    RENEWABLE,
     STORAGE,
     Network,
     add_quadratic_cost,
@@ -31,6 +30,8 @@ from mango_energy_environments import (
     save_network,
     set_storage_defaults,
 )
+
+from .world import predispatched
 
 # shortcut: path relative to the source checkout (editable install); package data when distributed.
 RESOURCES = Path(__file__).resolve().parents[2] / "resources"
@@ -149,12 +150,12 @@ SEASONS = {
 
 def typical_days(network: Network) -> dict[str, tuple[str, str]]:
     """Per season (standard day, tuning day): the full days whose residual load (load −
-    available renewables, MWh) is closest / second-closest to the season's median day
-    (decisions 2026-11-09). The dates live in the README and ``run_all.sh``; regenerate with
-    ``typical_days(load_network(prepared_path(name)))``."""
+    available pre-dispatched units, MWh — the same rule as the runs, ``world.predispatched``) is
+    closest / second-closest to the season's median day (decisions 2026-11-09). The dates live in
+    the README and ``run_all.sh``; regenerate with ``typical_days(load_network(prepared_path(name)))``."""
     comps = network.components.values()
     residual = sum(c.p_max for c in comps if c.kind == LOAD) - sum(
-        c.p_max for c in comps if c.kind == RENEWABLE
+        c.p_max for c in comps if c.kind != LOAD and predispatched(c.kind, c.cost[0])
     )
     hourly = pd.Series(residual, index=network.time_index)
     daily = hourly.resample("D").sum()[hourly.resample("D").count() == 24]
@@ -184,7 +185,7 @@ def main(argv: list[str] | None = None) -> None:
         "--band",
         type=float,
         default=CURVATURE_BAND,
-        help="curvature band €/MWh for renewables/storage (0 = linear)",
+        help="curvature band €/MWh for storage (0 = linear)",
     )
     parser.add_argument(
         "--out", help="output .nc (default resources/prepared/<name>.nc)"
