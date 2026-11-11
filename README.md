@@ -46,7 +46,8 @@ mango-agents comes from PyPI.
 Prepare once, run many times. `esb-prepare --network NAME` loads the raw network from
 `resources/networks/` (PyPSA `.nc`, or pandapower `.json` for SimBench), converts it into an MEE `Network`, applies the benchmark's preparation recipe
 (drop unusable units, quadratic cost incl. a curvature band for storage, storage defaults incl. a
-battery ageing cost — Xu et al. 2018 eq. 5 with DEA 2025 values, `datasets.STORAGE_COST`) and saves it as NetCDF to
+battery ageing cost — Xu et al. 2018 eq. 5 with DEA 2025 values — and a PHS wear cost — Zakeri &
+Syri 2015 variable O&M, `datasets.STORAGE_COST`) and saves it as NetCDF to
 `resources/prepared/NAME.nc` (committed; the recipe is stored in the file's `meta` attribute). The
 prepared file does not depend on the environment that runs it. Names: `toy` (tiny built-in 4-bus
 chain), `base_s_1_elec_2019`, `lower_saxony_2025` (PyPSA-Eur Germany unclustered,
