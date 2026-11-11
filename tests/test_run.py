@@ -79,7 +79,8 @@ async def test_end_to_end_all_lost_times_out(tmp_path):
     out = await run(args)
     meta = json.loads((out / "meta.json").read_text())
     assert meta["stop_reason"] == "timeout"
-    assert meta["messages"]["sent"] == meta["messages"]["lost"] > 0
+    # every offer request is lost; the leader's finish messages are control messages and arrive (S5)
+    assert 0 < meta["messages"]["lost"] < meta["messages"]["sent"]
     csv = pd.read_csv(out / "schedule.csv", index_col="time")
     assert csv[["gas", "coal", "wind", "battery"]].isna().all().all()
     np.testing.assert_allclose(csv["residual"], 0.0)  # the slack takes all demand
@@ -208,3 +209,46 @@ def test_renewables_cover_every_hour_needs_no_dispatch(tmp_path):
             meta["total_cost"] == 0.0
         )  # gas idle, wind free; a valid result, not null
         assert meta["imbalance"]["surplus_mwh"] == pytest.approx(3.0)
+
+
+def test_lossy_consensus_finishes_with_deadline_rounds(tmp_path):
+    # S5: 20 % of the λ messages lost — without round deadlines one lost λ stalled the whole run;
+    # control messages always arrive; the same seed gives the same run
+    common = ["--algorithm", "consensus", "--hours", "2", "--topology", "ring"]
+    common += ["--loss-rate", "0.2", "--set", "max_iter=600"]
+    metas = []
+    for out in ("a", "b"):
+        main([*common, "--out", str(tmp_path / out)])
+        metas.append(
+            json.loads(
+                next(tmp_path.glob(f"{out}/toy/consensus/*/meta.json")).read_text()
+            )
+        )
+    a, b = metas
+    assert a["stop_reason"] in ("converged", "max_iter")  # not "stalled"
+    assert a["messages"]["lost"] > 0
+    assert (
+        a["messages"]["rounds_by_deadline"] > 0 and a["messages"]["missing_edges"] > 0
+    )
+    assert a["total_cost"] == b["total_cost"] and a["messages"] == b["messages"]
+
+
+def test_control_messages_are_never_lost():
+    from distributed_resource_optimization.algorithm.firstorder.consensus.innovations import (
+        ConsensusMessage,
+        ConsensusReport,
+    )
+    from mango.simulation.communication import MessagePackage
+
+    from energy_scheduling_benchmark.world import CountingCommunication
+
+    sim = CountingCommunication(loss_percent=1.0, default_delay_s=0.01)
+    report = ConsensusReport("a", True, 1)
+    packages = [
+        MessagePackage("a", "b", 0.0, (ConsensusMessage(np.zeros(1), 1), {})),
+        MessagePackage("a", "b", 0.0, (report, {})),
+    ]
+    reached = [
+        r.reached for r in sim.calculate_communication(0.0, packages).package_results
+    ]
+    assert reached == [False, True] and (sim.sent, sim.lost) == (2, 1)

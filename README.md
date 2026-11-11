@@ -76,7 +76,7 @@ esb-run --algorithm consensus --tuning paper    # or manual / sweep; --set key=v
 esb-run --trace ...   # debugging: mango trace (mango_trace.jsonl + .html viewer) in the run folder; slow, large
 esb-tune --network toy --topology ring --steps constant   # sweep → [consensus.toy.ring.sweep]
 esb-compare                      # all runs under outputs/ vs. their central run → outputs/compare.csv
-esb-run --help   # --algorithm, --loss-rate (fraction per hop), --delay-s, --slack, --no-storage, --set, --out, --trace, ...
+esb-run --help   # --algorithm, --loss-rate (fraction per hop, algorithm messages only), --delay-s, --slack, --no-storage, --set, --out, --trace, ...
 ```
 
 ### Standard and tuning days
@@ -156,7 +156,13 @@ One mango agent per bus; it owns every component at its bus (units, storage and 
 reaches them through MEE's copper-plate behaviour (`register(..., bus=b)`). A `leader` (and with
 `--slack` a `slack` agent) sits at the first bus / position 0. The leader knows no demand: it
 only learns it from the bus agents' messages. Topologies: `grid` (buses joined by lines),
-`ring` (over the buses), `complete`; non-neighbours are reached hop by hop, every hop lossy and counted.
+`ring` (over the buses), `complete`; non-neighbours are reached hop by hop, every hop counted.
+`--loss-rate p` loses each hop of the **algorithms' own messages** (consensus λ, dummy offers) with
+probability p; control messages (start, stop, converged reports) always arrive (decided 2026-11-11,
+`../docs/message-loss-plan.md`). Lossy consensus runs end each round for every agent at
+t0 + (k+1)·2·`delay_s`: a neighbour's λ missing by then is a failed link of that round (Kar & Hug
+2012 §IV); meta `messages` then also reports `rounds_by_deadline` and `missing_edges`. Lossless
+runs wait for every λ as before.
 
 ## Package layout
 

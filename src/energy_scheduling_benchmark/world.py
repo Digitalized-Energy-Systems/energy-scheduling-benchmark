@@ -11,9 +11,18 @@ from __future__ import annotations
 import random
 
 import networkx as nx
-from distributed_resource_optimization.carrier.mango_carrier import next_hops
+from distributed_resource_optimization.algorithm.firstorder.consensus.innovations import (
+    ConsensusReport,
+    ConsensusStart,
+)
+from distributed_resource_optimization.carrier.mango_carrier import (
+    OptimizationFinishedMessage,
+    StartCoordinatedDistributedOptimization,
+    _Routed,
+    next_hops,
+)
 from mango import RoleAgent, auto_assign, graph_topology, topology_to_aid_graph
-from mango.simulation.communication import SimpleCommunicationSimulation
+from mango.simulation.communication import PackageResult, SimpleCommunicationSimulation
 from mango.simulation.environment import DefaultEnvironment
 from mango.simulation.world import create_world
 from mango_energy_environments import RENEWABLE, THERMAL, CopperPlateBehavior, Network
@@ -32,8 +41,21 @@ def predispatched(kind: str, c1: float) -> bool:
     return kind == RENEWABLE or (kind == THERMAL and c1 <= 0)
 
 
+#: Control messages of the run protocol (start, stop, converged reports): never lost. Only the
+#: algorithms' own messages (consensus λ, dummy offers) are lossy — the benchmark measures the
+#: algorithm under lossy links (KH12 §IV), not our self-made protocol (S5 Q-L2, Jonas 2026-11-11;
+#: deviation from M4 "all messages lossy", deviations.md C8).
+CONTROL = (
+    ConsensusStart,
+    ConsensusReport,
+    StartCoordinatedDistributedOptimization,
+    OptimizationFinishedMessage,
+)
+
+
 class CountingCommunication(SimpleCommunicationSimulation):
-    """mango's loss/delay simulation that also counts sent and lost messages (per hop).
+    """mango's loss/delay simulation that also counts sent and lost messages (per hop), and never
+    loses a :data:`CONTROL` message (also inside a routed envelope).
 
     Kept (decision 2026-11-09, TODO 14d): mango counts only delivered messages
     (``world.messages_delivered_count``); sent/lost exist only as trace events, and tracing
@@ -45,6 +67,12 @@ class CountingCommunication(SimpleCommunicationSimulation):
 
     def calculate_communication(self, current_time, messages):
         result = super().calculate_communication(current_time, messages)
+        for i, (message, r) in enumerate(zip(messages, result.package_results)):
+            content = message.content[0]  # MessagePackage.content = (content, meta)
+            if isinstance(content, _Routed):
+                content = content.content
+            if not r.reached and isinstance(content, CONTROL):
+                result.package_results[i] = PackageResult(True, r.delay_s)
         self.sent += len(messages)
         self.lost += sum(not r.reached for r in result.package_results)
         return result

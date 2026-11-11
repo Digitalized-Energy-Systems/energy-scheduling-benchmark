@@ -102,14 +102,11 @@ def _dummy(behavior, agents, routes):
             unit = DummyBus(None if node == SLACK else behavior, agent.aid)
             role = DistributedOptimizationRole(unit, routes=routes[agent.aid])
         agent.add_role(role)
-    return lambda: (coordinator.stop_reason, 1)
+    return lambda: (coordinator.stop_reason, 1, {})
 
 
-def settle_s(routes: dict, buses: list[str], leader: str, delay_s: float) -> float:
-    """Longest report delay to the leader (hops × *delay_s*) for the consensus stop; 0 when every
-    bus is a neighbour (equal delays). Without it a late "not converged" report on a longer route
-    could be overtaken by a near "converged" one and the leader would stop on a stale snapshot
-    (audit 2026-11-11; LS2025 ring: up to 34 hops)."""
+def longest_hops(routes: dict, buses: list[str], leader: str) -> int:
+    """Most hops between the leader and a bus agent (start messages and reports travel them)."""
 
     def hops(aid: str) -> int:
         n = 0
@@ -117,11 +114,21 @@ def settle_s(routes: dict, buses: list[str], leader: str, delay_s: float) -> flo
             aid, n = routes[aid][leader], n + 1
         return n
 
-    longest = max((hops(b) for b in buses), default=1)
+    return max((hops(b) for b in buses), default=1)
+
+
+def settle_s(routes: dict, buses: list[str], leader: str, delay_s: float) -> float:
+    """Longest report delay to the leader (hops × *delay_s*) for the consensus stop; 0 when every
+    bus is a neighbour (equal delays). Without it a late "not converged" report on a longer route
+    could be overtaken by a near "converged" one and the leader would stop on a stale snapshot
+    (audit 2026-11-11; LS2025 ring: up to 34 hops)."""
+    longest = longest_hops(routes, buses, leader)
     return 0.0 if longest <= 1 else longest * delay_s
 
 
-def _consensus(params: dict, steps: int, full: Network, delay_s: float):
+def _consensus(
+    params: dict, steps: int, full: Network, delay_s: float, loss_rate: float
+):
     """Adds the consensus roles (bus agents + leader; the slack takes no part, plan Q6).
 
     *full*: the network with storage — the per-agent factors come from it also in a
@@ -132,13 +139,22 @@ def _consensus(params: dict, steps: int, full: Network, delay_s: float):
         alpha, beta = consensus.steps(params)
         factors = consensus.agent_factors(full, params["agent_scale"])
         buses = [a for node, a in agents.items() if node not in (LEADER, SLACK)]
-        settle = settle_s(routes, [a.aid for a in buses], agents[LEADER].aid, delay_s)
+        aids, leader = [a.aid for a in buses], agents[LEADER].aid
+        # lossy links (S5): a round ends for everyone at t0 + (k+1)·2·delay_s (Q-L1); t0 after the
+        # slowest start message. Lossless runs keep waiting for every λ (unchanged baseline).
+        lossy = loss_rate > 0
         coordinator = ConsensusCoordinator(
-            [a.addr for a in buses], np.zeros(steps), settle_s=settle
+            [a.addr for a in buses],
+            np.zeros(steps),
+            settle_s=settle_s(routes, aids, leader, delay_s),
+            start_latency=longest_hops(routes, aids, leader) * delay_s
+            if lossy
+            else 0.0,
         )
         agents[LEADER].add_role(
             CoordinatorRole(coordinator, routes=routes[agents[LEADER].aid])
         )
+        algorithms = []
         for agent in buses:
             actor = consensus.BusActor(behavior, agent.aid, params["eps_p"])
             s = factors[agent.aid]  # agent ids are the bus names (world.build_world)
@@ -150,14 +166,22 @@ def _consensus(params: dict, steps: int, full: Network, delay_s: float):
                 params["eps_lambda"],
                 params["max_iter"],
                 consensus.LAM_MIN,
+                round_timeout=2 * delay_s if lossy else None,
             )
+            algorithms.append(algorithm)
             agent.add_role(
                 DistributedOptimizationRole(algorithm, routes=routes[agent.aid])
             )
 
         def outcome():
             r = coordinator.result
-            return ("stalled", None) if r is None else (r.stop_reason, r.iterations)
+            # KH12 §IV: how often a round ended by deadline and how many λ were missing (Q-L5)
+            counts = {
+                "rounds_by_deadline": sum(a.rounds_by_deadline for a in algorithms),
+                "missing_edges": sum(a.missing_edges for a in algorithms),
+            }
+            stop = ("stalled", None) if r is None else (r.stop_reason, r.iterations)
+            return *stop, counts
 
         return outcome
 
@@ -166,7 +190,7 @@ def _consensus(params: dict, steps: int, full: Network, delay_s: float):
 
 async def _simulate(network, args, setup, trace=None):
     """Run the mango world with the roles *setup* adds; returns
-    (behavior, messages, stop_reason, iterations)."""
+    (behavior, messages, stop_reason, iterations); algorithm counts join *messages*."""
     world, behavior, agents, communication, routes = build_world(
         network,
         args.topology,
@@ -182,12 +206,14 @@ async def _simulate(network, args, setup, trace=None):
         agents[LEADER].handle_message(StartCoordinatedDistributedOptimization(None), {})
         while await world.step(DISCRETE_EVENT) is not None:
             pass
+    stop_reason, iterations, counts = outcome()
     messages = {
         "sent": communication.sent,
         "delivered": world.messages_delivered_count,
         "lost": communication.lost,
+        **counts,
     }
-    return behavior, messages, *outcome()
+    return behavior, messages, stop_reason, iterations
 
 
 def _value(text: str):
@@ -232,7 +258,9 @@ async def run(args: argparse.Namespace) -> Path:
         if args.set:
             digest = hashlib.sha1(" ".join(sorted(args.set)).encode()).hexdigest()
             variant += f"_set{digest[:6]}"
-        setup = _consensus(params, len(network.time_index), full, args.delay_s)
+        setup = _consensus(
+            params, len(network.time_index), full, args.delay_s, args.loss_rate
+        )
     out = run_dir(
         args.out,
         network_file.stem,
@@ -286,7 +314,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--algorithm", choices=ALGORITHMS, default="dummy")
     parser.add_argument("--topology", choices=TOPOLOGIES, default="grid")
     parser.add_argument(
-        "--loss-rate", type=float, default=0.0, help="fraction 0–1 per hop"
+        "--loss-rate",
+        type=float,
+        default=0.0,
+        help="fraction 0–1 per hop of the algorithm messages (control messages always arrive)",
     )
     parser.add_argument("--delay-s", type=float, default=0.01)
     parser.add_argument("--seed", type=int, default=0)
