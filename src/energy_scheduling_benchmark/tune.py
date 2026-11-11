@@ -128,7 +128,7 @@ async def sweep(args: argparse.Namespace) -> dict | None:
     if not args.storage:
         raw = without_storage(raw)
     sensitivity = max_sensitivity(raw, "capacity")
-    print(f"max bus dP/dλ = {sensitivity:.4g} MW per €/MWh", flush=True)
+    print(f"max scaled bus dP/dλ = {sensitivity:.4g} MW per €/MWh", flush=True)
     starts = args.start or [None]
     best: dict[str, tuple] = {}  # variant -> (score, iterations, values, {start: gap})
     partial = None  # (failed windows, values, gaps) of the best candidate that did not run through
@@ -218,13 +218,17 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--hours", type=int, default=24)
     parser.add_argument(
-        "--alpha0", default="0.1,0.3,1,1.5", help="decaying grid, × 1/max bus dP/dλ"
+        "--alpha0",
+        default="0.1,0.3,1,1.5",
+        help="decaying grid, × 1/max bus s_j·dP/dλ (per-agent steps)",
     )
     parser.add_argument(
         "--beta0", default="0.003,0.01,0.03,0.1,0.2", help="decaying grid (× alpha0)"
     )
     parser.add_argument(
-        "--kappa", default="0.1,0.3,1,1.5", help="constant grid, × 1/max bus dP/dλ"
+        "--kappa",
+        default="0.1,0.3,1,1.5",
+        help="constant grid, × 1/max bus s_j·dP/dλ (per-agent steps)",
     )
     parser.add_argument("--gamma", default="1,4,16", help="constant grid")
     parser.add_argument(
