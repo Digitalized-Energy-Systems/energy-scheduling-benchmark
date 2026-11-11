@@ -77,12 +77,13 @@ def write_section(name: str, values: dict) -> None:
         f.truncate()
 
 
-def max_sensitivity(network, agent_scale: str = "none") -> float:
+def max_sensitivity(network, agent_scale: str = "none", full=None) -> float:
     """Largest bus price sensitivity Σ 1/(2c₂) (MW per €/MWh) over the units that answer λ (not
     the pre-dispatched ones), times the bus's step factor s_j (`consensus.agent_factors`):
     constant steps need s_j·α < 2 / it at that bus, so the α₀ / κ grids are factors of its
-    inverse (S3 Q-A4: the scaled maximum when the steps are scaled per agent)."""
-    factors = consensus.agent_factors(network, agent_scale)
+    inverse (S3 Q-A4: the scaled maximum when the steps are scaled per agent). The factors come from
+    *full* (the network with storage, as in the runs; default *network*)."""
+    factors = consensus.agent_factors(full or network, agent_scale)
     per_bus: dict[str, float] = {}
     for c in network.components.values():
         if c.kind != LOAD and not predispatched(c.kind, c.cost[0]):
@@ -124,10 +125,10 @@ async def sweep(args: argparse.Namespace) -> dict | None:
     the worst over the windows."""
     base = ["--network", args.network, "--topology", args.topology]
     base += ["--hours", str(args.hours)] + ([] if args.storage else ["--no-storage"])
-    raw = load_network(datasets.prepared_path(args.network))
+    raw = full = load_network(datasets.prepared_path(args.network))
     if not args.storage:
         raw = without_storage(raw)
-    sensitivity = max_sensitivity(raw, "capacity")
+    sensitivity = max_sensitivity(raw, "capacity", full)
     print(f"max scaled bus dP/dλ = {sensitivity:.4g} MW per €/MWh", flush=True)
     starts = args.start or [None]
     best: dict[str, tuple] = {}  # variant -> (score, iterations, values, {start: gap})

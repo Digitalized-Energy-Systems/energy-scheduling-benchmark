@@ -105,12 +105,16 @@ def _dummy(behavior, agents, routes):
     return lambda: (coordinator.stop_reason, 1)
 
 
-def _consensus(params: dict, steps: int):
-    """Adds the consensus roles (bus agents + leader; the slack takes no part, plan Q6)."""
+def _consensus(params: dict, steps: int, full: Network):
+    """Adds the consensus roles (bus agents + leader; the slack takes no part, plan Q6).
+
+    *full*: the network with storage — the per-agent factors come from it also in a
+    ``--no-storage`` run, as the one tuned set (tuned with storage) serves both (review 2026-11-11:
+    without storage the factors moved up to 14× on PyPSA-Eur)."""
 
     def setup(behavior, agents, routes):
         alpha, beta = consensus.steps(params)
-        factors = consensus.agent_factors(behavior.network, params["agent_scale"])
+        factors = consensus.agent_factors(full, params["agent_scale"])
         buses = [a for node, a in agents.items() if node not in (LEADER, SLACK)]
         coordinator = ConsensusCoordinator([a.addr for a in buses], np.zeros(steps))
         agents[LEADER].add_role(
@@ -177,7 +181,7 @@ def _value(text: str):
 
 async def run(args: argparse.Namespace) -> Path:
     network_file = datasets.prepared_path(args.network)
-    network = window(load_network(network_file), args.start, args.hours)
+    network = full = window(load_network(network_file), args.start, args.hours)
     if not args.storage:
         network = without_storage(network)
     inputs = {**vars(args), "start": str(network.time_index[0])}
@@ -209,7 +213,7 @@ async def run(args: argparse.Namespace) -> Path:
         if args.set:
             digest = hashlib.sha1(" ".join(sorted(args.set)).encode()).hexdigest()
             variant += f"_set{digest[:6]}"
-        setup = _consensus(params, len(network.time_index))
+        setup = _consensus(params, len(network.time_index), full)
     out = run_dir(
         args.out,
         network_file.stem,

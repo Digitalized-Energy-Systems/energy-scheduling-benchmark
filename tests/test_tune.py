@@ -118,3 +118,13 @@ def test_agent_factors_toy():
     assert set(consensus.agent_factors(toy, "none").values()) == {1.0}
     with pytest.raises(ValueError, match="agent_scale"):
         consensus.agent_factors(toy, "size")
+
+
+def test_factors_come_from_the_network_with_storage():
+    from energy_scheduling_benchmark import datasets
+    from energy_scheduling_benchmark.run import without_storage
+
+    toy = datasets.load("toy")
+    # without the battery bus0 would get 0.8 (median 80 of 100/60); the tuned set uses 0.75
+    no_storage = tune.max_sensitivity(without_storage(toy), "capacity", toy)
+    assert no_storage == pytest.approx(0.75 / 0.066)
