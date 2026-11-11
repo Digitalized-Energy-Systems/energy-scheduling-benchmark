@@ -110,6 +110,7 @@ def _consensus(params: dict, steps: int):
 
     def setup(behavior, agents, routes):
         alpha, beta = consensus.steps(params)
+        factors = consensus.agent_factors(behavior.network, params["agent_scale"])
         buses = [a for node, a in agents.items() if node not in (LEADER, SLACK)]
         coordinator = ConsensusCoordinator([a.addr for a in buses], np.zeros(steps))
         agents[LEADER].add_role(
@@ -117,11 +118,12 @@ def _consensus(params: dict, steps: int):
         )
         for agent in buses:
             actor = consensus.BusActor(behavior, agent.aid, params["eps_p"])
+            s = factors[agent.aid]  # agent ids are the bus names (world.build_world)
             algorithm = ConsensusInnovationsAlgorithm(
                 lambda alg, carrier: alg.actor.finish(),
                 actor,
-                alpha,
-                beta,
+                lambda i, s=s: s * alpha(i),
+                lambda i, s=s: s * beta(i),
                 params["eps_lambda"],
                 params["max_iter"],
                 consensus.LAM_MIN,

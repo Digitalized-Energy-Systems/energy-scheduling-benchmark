@@ -125,6 +125,20 @@ def test_consensus_reaches_central_cost(tmp_path, topology):
     assert consensus["total_cost"] == pytest.approx(central["total_cost"], rel=1e-3)
 
 
+def test_consensus_per_agent_steps_reach_central_cost(tmp_path):
+    # S3: α and β scaled per bus keep the optimum (scaling only α would bias it, plan §2)
+    common = ["--hours", "24", "--topology", "ring", "--out", str(tmp_path)]
+    main(["--algorithm", "central", *common])
+    main(["--algorithm", "consensus", *common, "--set", "agent_scale=capacity"])
+    central, scaled = (
+        json.loads(next(tmp_path.glob(f"toy/{a}/*/meta.json")).read_text())
+        for a in ("central", "consensus")
+    )
+    assert scaled["inputs"]["consensus"]["agent_scale"] == "capacity"
+    assert scaled["stop_reason"] == "converged"
+    assert scaled["total_cost"] == pytest.approx(central["total_cost"], rel=1e-3)
+
+
 def test_consensus_settings_get_own_folders(tmp_path):
     common = ["--algorithm", "consensus", "--hours", "2", "--out", str(tmp_path)]
     main([*common, "--tuning", "paper", "--set", "max_iter=2"])

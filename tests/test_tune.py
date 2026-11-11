@@ -31,9 +31,9 @@ async def test_sweep_picks_a_converged_candidate():
         write=False, storage=True,
     )  # fmt: skip
     best = await tune.sweep(args)
-    # toy max bus dP/dλ = 35.15 → κ = 1.2/35.15 = 0.0341 (stable), 8/35.15 = 0.23 oscillates
-    assert best["steps"] == "constant"
-    assert best["kappa"] == pytest.approx(1.2 / 35.15, rel=1e-3)
+    # toy max scaled bus dP/dλ = 0.75 · 35.15 (bus0, S3) → κ = 1.2/26.36 stable, 8/26.36 oscillates
+    assert best["steps"] == "constant" and best["agent_scale"] == "capacity"
+    assert best["kappa"] == pytest.approx(1.2 / (0.75 * 35.15), rel=1e-3)
     assert "best: constant" in best["note"]
 
 
@@ -41,7 +41,12 @@ def test_max_sensitivity_toy():
     from energy_scheduling_benchmark import datasets
 
     # bus0 gas 1/(2·0.033) + battery 1/(2·0.025); the wind bus (40) is pre-dispatched (S1)
-    assert tune.max_sensitivity(datasets.load("toy")) == pytest.approx(1 / 0.066 + 20)
+    toy = datasets.load("toy")
+    assert tune.max_sensitivity(toy) == pytest.approx(1 / 0.066 + 20)
+    # per-agent steps (S3): bus0 (s = 0.75) still the worst scaled bus; coal bus1 1.5 · 5.45
+    assert tune.max_sensitivity(toy, "capacity") == pytest.approx(
+        0.75 * (1 / 0.066 + 20)
+    )
 
 
 def test_parameter_routes():
@@ -100,3 +105,16 @@ def test_score_zero_cost_window_and_unavoidable_surplus():
         "surplus_mwh": 3.0,
     }  # 2 MWh off the optimum
     assert tune.score(run, covered, 100.0) == pytest.approx(0.02)
+
+
+def test_agent_factors_toy():
+    from energy_scheduling_benchmark import datasets
+
+    toy = datasets.load("toy")
+    # dispatchable capacity: bus0 gas 100 + battery 20, bus1 coal 60 → median 90; bus2 (wind
+    # only) and bus3 (load only) get the median factor of the others
+    f = consensus.agent_factors(toy, "capacity")
+    assert f == pytest.approx({"bus0": 0.75, "bus1": 1.5, "bus2": 1.125, "bus3": 1.125})
+    assert set(consensus.agent_factors(toy, "none").values()) == {1.0}
+    with pytest.raises(ValueError, match="agent_scale"):
+        consensus.agent_factors(toy, "size")

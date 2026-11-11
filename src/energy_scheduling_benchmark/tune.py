@@ -77,15 +77,17 @@ def write_section(name: str, values: dict) -> None:
         f.truncate()
 
 
-def max_sensitivity(network) -> float:
+def max_sensitivity(network, agent_scale: str = "none") -> float:
     """Largest bus price sensitivity Σ 1/(2c₂) (MW per €/MWh) over the units that answer λ (not
-    the pre-dispatched ones): constant steps need α < 2 / it at that bus, so the α₀ / κ grids
-    are factors of its inverse."""
+    the pre-dispatched ones), times the bus's step factor s_j (`consensus.agent_factors`):
+    constant steps need s_j·α < 2 / it at that bus, so the α₀ / κ grids are factors of its
+    inverse (S3 Q-A4: the scaled maximum when the steps are scaled per agent)."""
+    factors = consensus.agent_factors(network, agent_scale)
     per_bus: dict[str, float] = {}
     for c in network.components.values():
         if c.kind != LOAD and not predispatched(c.kind, c.cost[0]):
             per_bus[c.bus] = per_bus.get(c.bus, 0.0) + 1 / (2 * c.cost[1])
-    return max(per_bus.values())
+    return max(factors[b] * v for b, v in per_bus.items())
 
 
 def _grid(args: argparse.Namespace, sensitivity: float) -> list[dict]:
@@ -94,12 +96,13 @@ def _grid(args: argparse.Namespace, sensitivity: float) -> list[dict]:
     def scaled(text):
         return [float(f"{f / sensitivity:.4g}") for f in _floats(text)]
 
+    # sweep sets use the per-agent steps (S3 Q-A3; the paper route stays "none")
     decaying = [
-        {"steps": "decaying", "alpha0": a, "beta0": b}
+        {"steps": "decaying", "agent_scale": "capacity", "alpha0": a, "beta0": b}
         for a, b in itertools.product(scaled(args.alpha0), _floats(args.beta0))
     ]
     constant = [
-        {"steps": "constant", "kappa": k, "gamma": g}
+        {"steps": "constant", "agent_scale": "capacity", "kappa": k, "gamma": g}
         for k, g in itertools.product(scaled(args.kappa), _floats(args.gamma))
     ]
     return {"decaying": decaying, "constant": constant, "both": decaying + constant}[
@@ -124,7 +127,7 @@ async def sweep(args: argparse.Namespace) -> dict | None:
     raw = load_network(datasets.prepared_path(args.network))
     if not args.storage:
         raw = without_storage(raw)
-    sensitivity = max_sensitivity(raw)
+    sensitivity = max_sensitivity(raw, "capacity")
     print(f"max bus dP/dλ = {sensitivity:.4g} MW per €/MWh", flush=True)
     starts = args.start or [None]
     best: dict[str, tuple] = {}  # variant -> (score, iterations, values, {start: gap})

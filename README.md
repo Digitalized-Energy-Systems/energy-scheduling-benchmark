@@ -133,7 +133,11 @@ hand-tuned `[consensus.<network>.<topology>.manual]` (default when present), `sw
 written whatever its gap, the gap per window is in its `note`; nothing if every candidate
 diverges; use `esb-tune --no-write` for trial sweeps and check `git diff
 resources/tuned_parameters.toml` after a real one). `--set key=value`
-overrides any value; the route and values used are stored in `meta.json`.
+overrides any value; the route and values used are stored in `meta.json`. Per-agent steps
+(`agent_scale`, decided 2026-11-11, `../docs/per-agent-steps-plan.md`): `"none"` (default, the
+paper route) = one α, β for all agents as in the papers; `"capacity"` (sweep sets) = each bus runs
+with s_j·α and s_j·β, s_j = median / the bus's dispatchable capacity, so big buses take smaller
+steps (both scaled together: the optimum stays the papers' one).
 
 `esb-compare [--root outputs] [--out FILE]` reads every `<root>/<network>/<algorithm>/<run>/meta.json`
 (read-only), pairs each run with the central run of the same network, window, storage and slack

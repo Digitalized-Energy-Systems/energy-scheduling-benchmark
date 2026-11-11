@@ -14,7 +14,7 @@ import tomllib
 
 import numpy as np
 from distributed_resource_optimization import ConsensusActor, power_step
-from mango_energy_environments import LOAD, STORAGE, Component
+from mango_energy_environments import LOAD, STORAGE, Component, Network
 
 from . import storage
 from .datasets import RESOURCES
@@ -70,6 +70,34 @@ def steps(p: dict):
     if p["steps"] == "constant":
         return power_step(p["kappa"], 0), power_step(p["kappa"] * p["gamma"], 0)
     raise ValueError(f"steps must be 'decaying' or 'constant', got {p['steps']!r}")
+
+
+AGENT_SCALES = ("none", "capacity")
+
+
+def agent_factors(network: Network, agent_scale: str) -> dict[str, float]:
+    """Per-bus step factor s_j: each bus agent runs with s_j·α_i and s_j·β_i (S3,
+    `docs/per-agent-steps-plan.md`, deviation C2b — KH12/HKW15 use one α, β for all agents).
+
+    "capacity": s_j = median / Σ p_nom of bus j's dispatchable units (not pre-dispatched), so the
+    median bus keeps the tuned values; buses without such units get the median factor. α and β
+    are scaled together: scaling α alone moves the fixed point off the power balance (plan §2).
+    "none": every bus 1 (the papers' update; the default and the paper route)."""
+    if agent_scale not in AGENT_SCALES:
+        raise ValueError(
+            f"agent_scale must be one of {AGENT_SCALES}, got {agent_scale!r}"
+        )
+    buses = {c.bus for c in network.components.values()}
+    if agent_scale == "none":
+        return dict.fromkeys(buses, 1.0)
+    cap: dict[str, float] = {}
+    for c in network.components.values():
+        if c.kind != LOAD and not predispatched(c.kind, c.cost[0]):
+            cap[c.bus] = cap.get(c.bus, 0.0) + c.params["p_nom"]
+    median = float(np.median(list(cap.values())))
+    factors = {b: median / v for b, v in cap.items()}
+    rest = float(np.median(list(factors.values())))
+    return {b: factors.get(b, rest) for b in buses}
 
 
 class BusActor(ConsensusActor):
