@@ -69,3 +69,16 @@ async def test_build_world_and_loss_count(toy):
         )
         await world.step_until(1.0)
     assert (comm.sent, comm.lost) == (1, 1)
+
+
+async def test_settle_time_for_multi_hop_reports():
+    from energy_scheduling_benchmark import datasets
+    from energy_scheduling_benchmark.run import settle_s, window
+    from energy_scheduling_benchmark.world import LEADER, build_world
+
+    toy = window(datasets.load("toy"), None, 2)
+    for topology, expected in [("complete", 0.0), ("ring", 3 * 0.01)]:
+        _, _, agents, _, routes = build_world(toy, topology, 0.0, 0.01)
+        buses = [a.aid for node, a in agents.items() if node != LEADER]
+        # complete: every bus 1 hop → no wait; ring of 4 with the leader on bus0: bus2 is 3 hops
+        assert settle_s(routes, buses, agents[LEADER].aid, 0.01) == expected

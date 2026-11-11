@@ -105,7 +105,23 @@ def _dummy(behavior, agents, routes):
     return lambda: (coordinator.stop_reason, 1)
 
 
-def _consensus(params: dict, steps: int, full: Network):
+def settle_s(routes: dict, buses: list[str], leader: str, delay_s: float) -> float:
+    """Longest report delay to the leader (hops × *delay_s*) for the consensus stop; 0 when every
+    bus is a neighbour (equal delays). Without it a late "not converged" report on a longer route
+    could be overtaken by a near "converged" one and the leader would stop on a stale snapshot
+    (audit 2026-11-11; LS2025 ring: up to 34 hops)."""
+
+    def hops(aid: str) -> int:
+        n = 0
+        while aid != leader:
+            aid, n = routes[aid][leader], n + 1
+        return n
+
+    longest = max((hops(b) for b in buses), default=1)
+    return 0.0 if longest <= 1 else longest * delay_s
+
+
+def _consensus(params: dict, steps: int, full: Network, delay_s: float):
     """Adds the consensus roles (bus agents + leader; the slack takes no part, plan Q6).
 
     *full*: the network with storage — the per-agent factors come from it also in a
@@ -116,7 +132,10 @@ def _consensus(params: dict, steps: int, full: Network):
         alpha, beta = consensus.steps(params)
         factors = consensus.agent_factors(full, params["agent_scale"])
         buses = [a for node, a in agents.items() if node not in (LEADER, SLACK)]
-        coordinator = ConsensusCoordinator([a.addr for a in buses], np.zeros(steps))
+        settle = settle_s(routes, [a.aid for a in buses], agents[LEADER].aid, delay_s)
+        coordinator = ConsensusCoordinator(
+            [a.addr for a in buses], np.zeros(steps), settle_s=settle
+        )
         agents[LEADER].add_role(
             CoordinatorRole(coordinator, routes=routes[agents[LEADER].aid])
         )
@@ -213,7 +232,7 @@ async def run(args: argparse.Namespace) -> Path:
         if args.set:
             digest = hashlib.sha1(" ".join(sorted(args.set)).encode()).hexdigest()
             variant += f"_set{digest[:6]}"
-        setup = _consensus(params, len(network.time_index), full)
+        setup = _consensus(params, len(network.time_index), full, args.delay_s)
     out = run_dir(
         args.out,
         network_file.stem,
