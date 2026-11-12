@@ -2,7 +2,8 @@
 # Routes (esb-run --tuning): paper = the [consensus] values below (the papers' numbers, used in
 # MW / €/MWh as printed); manual = [consensus.<network>.<topology>.manual] (hand-tuned, with a
 # note on how); sweep = [consensus.<network>.<topology>.sweep] (written by esb-tune).
-# Default route: manual if present, else paper. esb-run --set key=value overrides any value.
+# Default route: manual if present, else sweep, else paper (with a warning; audit 2026-11-12 Q-A10).
+# esb-run --set key=value overrides any value.
 [consensus]
 steps = "decaying"  # or "constant"
 # decaying: alpha_i = alpha0 / i^alpha_exp, beta_i = beta0 / i^beta_exp (HKW15 eq. 32)

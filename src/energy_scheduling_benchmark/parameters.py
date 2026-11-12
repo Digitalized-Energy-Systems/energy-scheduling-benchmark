@@ -8,6 +8,7 @@ Generic for every algorithm since audit 2026-11-12 Q-A4 (was consensus-only).
 from __future__ import annotations
 
 import fcntl
+import sys
 import tomllib
 
 from .datasets import RESOURCES
@@ -30,13 +31,21 @@ def parameters(
 ) -> dict:
     """``[<algorithm>]`` defaults, then the *tuning* route's set, then *overrides* (``--set``).
 
-    ``tuning=None``: "manual" if that set exists, else "paper".
+    ``tuning=None``: the first set that exists of "manual", "sweep", else "paper" with a warning
+    on stderr — the paper values stall on most benchmark networks (audit 2026-11-12 Q-A10;
+    was manual → paper).
     """
     table = _read()[algorithm]
     defaults = {k: v for k, v in table.items() if not isinstance(v, dict)}
     routes = table.get(network, {}).get(topology, {})
     if tuning is None:
-        tuning = "manual" if "manual" in routes else "paper"
+        tuning = next((r for r in ("manual", "sweep") if r in routes), "paper")
+        if tuning == "paper":
+            print(
+                f"warning: no tuned {algorithm} set for {network}/{topology}; using the paper "
+                "values (--tuning paper to silence)",
+                file=sys.stderr,
+            )
     if tuning not in TUNINGS:
         raise ValueError(f"tuning must be one of {TUNINGS}, got {tuning!r}")
     if tuning != "paper" and tuning not in routes:

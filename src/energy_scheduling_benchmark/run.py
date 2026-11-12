@@ -249,7 +249,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tuning",
         choices=TUNINGS,
-        help="the algorithm's parameter set (default: manual if tuned, else paper)",
+        help="the algorithm's parameter set (default: manual, else sweep, else paper + warning)",
     )
     parser.add_argument(
         "--set",

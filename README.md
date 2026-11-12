@@ -141,7 +141,7 @@ plan `../docs/consensus-plan.md`, deviations `../docs/deviations.md`) and `dummy
 the leader, a plumbing test). Consensus parameters (step sizes, tolerances, `max_iter`) come from
 `resources/tuned_parameters.toml`, one set per tuning route and network × topology:
 `--tuning paper` = the papers' values (`[consensus]`, used in MW / €/MWh as printed), `manual` =
-hand-tuned `[consensus.<network>.<topology>.manual]` (default when present), `sweep` = written by
+hand-tuned `[consensus.<network>.<topology>.manual]`, `sweep` = written by
 `esb-tune` (each algorithm's `sweep_grid`, 32 candidates per algorithm; consensus: constant 4 κ ×
 4 β, decaying 4 α₀ × 2 β₀ × α exponent {0.6, 0.98}, α × 1/max scaled bus sensitivity, β ×
 1/λ_max(L) of the bus topology; fixed budget with the stop rule off, a run ends as `diverged` once
@@ -150,7 +150,9 @@ its variant; `--jobs N` runs in parallel; the best candidate that runs through e
 written whatever its gap, the gap per window is in its `note`; nothing if every candidate
 fails; use `esb-tune --no-write` for trial sweeps and check `git diff
 resources/tuned_parameters.toml` after a real one). `--set key=value`
-overrides any value; the route and values used are stored in `meta.json`. Per-agent steps
+overrides any value; the route and values used are stored in `meta.json`. Without `--tuning` a
+run takes `manual` if present, else `sweep`, else `paper` with a warning (decided 2026-11-12).
+Per-agent steps
 (`agent_scale`, decided 2026-11-11, `../docs/per-agent-steps-plan.md`): `"none"` (default, the
 paper route) = one α, β for all agents as in the papers; `"capacity"` (sweep sets) = each bus runs
 with s_j·α and s_j·β, s_j = median / the bus's dispatchable capacity, so big buses take smaller

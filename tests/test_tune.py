@@ -91,17 +91,24 @@ def test_sweep_grid_toy():
     assert "λ_max(L)" in note
 
 
-def test_parameter_routes():
+def test_parameter_routes(capsys):
     import pytest
 
     assert (
         parameters.parameters("consensus", "toy", "ring")["tuning"] == "manual"
     )  # default if present
+    # Q-A10: no manual set → the sweep set (synthetic_10 complete has one)
+    swept = parameters.parameters("consensus", "synthetic_10", "complete")
+    assert swept["tuning"] == "sweep" and swept["agent_scale"] == "capacity"
     paper = parameters.parameters("consensus", "toy", "ring", "paper")
     assert (paper["steps"], paper["alpha0"]) == ("decaying", 0.055)
+    assert "warning" not in capsys.readouterr().err  # explicit/tuned routes are quiet
     assert (
         parameters.parameters("consensus", "base_s_1_elec_2019", "grid")["tuning"]
         == "paper"
+    )
+    assert (
+        "no tuned consensus set for base_s_1_elec_2019/grid" in capsys.readouterr().err
     )
     with pytest.raises(ValueError):
         parameters.parameters("consensus", "base_s_1_elec_2019", "grid", "sweep")
