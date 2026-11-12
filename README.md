@@ -74,7 +74,7 @@ esb-run --network synthetic_10 --start 2019-01-16 # standard winter day (table b
 esb-run --network path/to/prepared.nc ...        # any prepared file
 esb-run --algorithm consensus --tuning paper    # or manual / sweep; --set key=value overrides
 esb-run --trace ...   # debugging: mango trace (mango_trace.jsonl + .html viewer) in the run folder; slow, large
-esb-tune --network toy --topology ring --steps constant   # sweep → [consensus.toy.ring.sweep]
+esb-tune --network toy --topology ring --jobs 4   # sweep → [consensus.toy.ring.sweep]; --algorithm consensus (default)
 esb-compare                      # all runs under outputs/ vs. their central run → outputs/compare.csv
 esb-run --help   # --algorithm, --loss-rate (fraction per hop, algorithm messages only), --delay-s, --slack, --no-storage, --set, --out, --trace, ...
 ```
@@ -130,9 +130,13 @@ the leader, a plumbing test). Consensus parameters (step sizes, tolerances, `max
 `resources/tuned_parameters.toml`, one set per tuning route and network × topology:
 `--tuning paper` = the papers' values (`[consensus]`, used in MW / €/MWh as printed), `manual` =
 hand-tuned `[consensus.<network>.<topology>.manual]` (default when present), `sweep` = written by
-`esb-tune` (grid over the step sizes; the best candidate that runs through every window is
+`esb-tune` (each algorithm's `sweep_grid`, 32 candidates per algorithm; consensus: constant 4 κ ×
+4 β, decaying 4 α₀ × 2 β₀ × α exponent {0.6, 0.98}, α × 1/max scaled bus sensitivity, β ×
+1/λ_max(L) of the bus topology; fixed budget with the stop rule off, a run ends as `diverged` once
+|λ| > 4000 €/MWh (sweeps only), a candidate is pruned once one window scores worse than the best of
+its variant; `--jobs N` runs in parallel; the best candidate that runs through every window is
 written whatever its gap, the gap per window is in its `note`; nothing if every candidate
-diverges; use `esb-tune --no-write` for trial sweeps and check `git diff
+fails; use `esb-tune --no-write` for trial sweeps and check `git diff
 resources/tuned_parameters.toml` after a real one). `--set key=value`
 overrides any value; the route and values used are stored in `meta.json`. Per-agent steps
 (`agent_scale`, decided 2026-11-11, `../docs/per-agent-steps-plan.md`): `"none"` (default, the
