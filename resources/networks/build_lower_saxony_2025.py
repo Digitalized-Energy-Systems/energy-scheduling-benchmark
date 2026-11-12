@@ -4,8 +4,9 @@ the default keeps the network's own.
 
 Replaces ``lower_saxony_2030`` (supervisor meeting 2026-11-10: no 2030 uplift — with the EEG 2030
 targets renewables covered the load in 82 % of the hours). Same data as ``pypsa_eur_germany_100``:
-2025 weather + demand, fleet in service in 2025, renewable capacities from 2024 statistics, 2025
-costs, no uplift (`docs/renewables-predispatch-plan.md` D9).
+2025 weather + demand, fleet in service at the end of 2024 with renewables topped up to the IRENA
+2024 country totals (`from_irenastat`, audit 2026-11-12 Q-A2), 2025 costs, no uplift
+(`docs/renewables-predispatch-plan.md` D9).
 
 Inputs (not in git, in ``data/pypsa-eur/``): ``base_s_all_elec_2025.nc`` = the PyPSA-Eur output
 ``resources/lower-saxony-2025/networks/base_s_all_elec_.nc`` (built with
@@ -47,7 +48,8 @@ def build(profiles: str = "pypsa-eur") -> pypsa.Network:
     keep_buses(n, region_buses(n, DATA / "nuts3_shapes.geojson"))
     # Offshore wind dropped (Jonas, 2026-11-11): 8.8 of Germany's 11.2 GW land in DE9 and serve the
     # national grid, not an islanded Lower Saxony — with it renewables were 1.54× the load (63 %
-    # surplus hours, 125 days fully covered); without: 0.74× (27 %, 29 days).
+    # surplus hours, 125 days fully covered); without: 0.74× (27 %, 29 days). Since the Q-A2 rebuild
+    # (2026-11-12, PV 3.8 → 10.5 GW, onshore 15.5 → 13.7 GW): 0.81× (34 %, 24 days).
     n.remove(
         "Generator", n.generators.index[n.generators.carrier.str.startswith("offwind")]
     )

@@ -6,7 +6,7 @@
 # Germany, unclustered (`clusters: [all]` → every OSM substation bus kept; needs the
 # powerplant bus-mapping patch of this branch, ed1a8356), with the settings of
 # config.germany-100-2025.yaml: 2025 weather (europe-2025-sarah3-era5) and 2025 demand,
-# fleet in service in 2025, renewable capacities from 2024 statistics, 2025 costs, no
+# fleet in service at the end of 2024, renewables topped up to the IRENA 2024 statistics, 2025 costs, no
 # uplift. Raw input of the ESB dataset `lower_saxony_2025` (ESB build script cuts NUTS1 DE9,
 # islanded); replaces lower_saxony_2030 (supervisor meeting 2026-11-10: no 2030 uplift).
 #
@@ -76,12 +76,16 @@ electricity:
   - offwind-dc
   - hydro
 
-  # units in service in 2025: retired before 2025 or commissioned after 2025 are dropped
-  powerplants_filter: "(DateOut > 2025 or DateOut != DateOut) and (DateIn < 2026 or DateIn != DateIn)"
+  # units in service at the end of 2024 (= the IRENA 2024 statistics below): retired before 2025
+  # or commissioned after 2024 are dropped (ESB audit 2026-11-12 Q-A2; was "in service in 2025")
+  powerplants_filter: "(DateOut > 2024 or DateOut != DateOut) and (DateIn < 2025 or DateIn != DateIn)"
 
   estimate_renewable_capacities:
     enable: true
     from_powerplantmatching: true
+    # top up to the IRENA country totals of `year` (default false left solar at the MaStR extract's
+    # 48.8 GW vs IRENA 2024 89.9 GW: small rooftop units missing; ESB audit 2026-11-12 Q-A2)
+    from_irenastat: true
     year: 2024                       # newest statistics year PyPSA-Eur supports
     expansion_limit: false
     technology_mapping:

@@ -51,14 +51,18 @@ Syri 2015 variable O&M, `datasets.STORAGE_COST`) and saves it as NetCDF to
 `resources/prepared/NAME.nc` (committed; the recipe is stored in the file's `meta` attribute). The
 prepared file does not depend on the environment that runs it. Names: `toy` (tiny built-in 4-bus
 chain), `base_s_1_elec_2019`, `lower_saxony_2025` (PyPSA-Eur Germany unclustered,
-2025 weather/demand/fleet, cut to Lower Saxony, built by `resources/networks/build_lower_saxony_2025.py`;
+2025 weather/demand, cut to Lower Saxony, built by `resources/networks/build_lower_saxony_2025.py`;
 offshore wind dropped — it lands in Lower Saxony but serves all of Germany; replaces
 `lower_saxony_2030` since 2026-11-11 — its EEG 2030 uplift left almost no dispatch), `synthetic_10`, `synthetic_50` (seeded networks
 picked for balanced bus price sensitivities incl. renewables — since renewables are pre-dispatched
 the dispatchable buses are not balanced any more; built once by `resources/networks/build_synthetic.py`),
 `simbench_lower_saxony` (SimBench EHV cut to Lower Saxony, pandapower JSON, built by
 `resources/networks/build_simbench_lower_saxony.py`), `pypsa_eur_germany_100` (PyPSA-Eur Germany, 100
-clusters, 2025 weather/demand/fleet). The PyPSA-Eur configs both PyPSA-Eur networks were built with
+clusters, 2025 weather/demand). Both PyPSA-Eur networks (since 2026-11-12, audit Q-A2): fleet in
+service at the end of 2024, renewables topped up to the IRENA 2024 country totals (PV 89.9,
+onshore 63.6, offshore 9.2 GW; before, solar was only the MaStR extract's 48.8 GW); PyPSA-Eur
+spreads the top-up over the buses by a heuristic, so Lower Saxony gets 10.5 GW PV vs 8.8 GW in
+the state's statistics (+20 %, `docs/deviations.md` P7). The PyPSA-Eur configs both PyPSA-Eur networks were built with
 are kept next to them: `resources/networks/config.germany-100-2025.yaml`,
 `config.lower-saxony-2025.yaml` (run them from a PyPSA-Eur checkout). Lower Saxony (`clusters: [all]`)
 also needs `pypsa-eur-powerplant-bus-mapping.patch` (`git apply` in the checkout): upstream
@@ -96,12 +100,12 @@ standard day, the second-closest is the tuning day. The dates live here, in `../
 | | tuning | 2019-01-09 | 2019-04-15 | 2019-06-24 | 2019-10-25 |
 | synthetic_50 | standard | 2019-01-14 | 2019-03-05 | 2019-06-13 | 2019-09-20 |
 | | tuning | 2019-01-15 | 2019-05-03 | 2019-07-02 | 2019-10-02 |
-| lower_saxony_2025 | standard | 2025-01-25 | 2025-03-15 | 2025-06-19 | 2025-09-19 |
-| | tuning | 2025-02-09 | 2025-05-10 | 2025-07-28 | 2025-09-26 |
+| lower_saxony_2025 | standard | 2025-12-02 | 2025-03-28 | 2025-06-27 | 2025-09-26 |
+| | tuning | 2025-12-30 | 2025-04-20 | 2025-08-12 | 2025-11-02 |
 | simbench_lower_saxony | standard | 2016-12-18 | 2016-03-15 | 2016-07-01 | 2016-11-04 |
 | | tuning | 2016-12-30 | 2016-05-16 | 2016-08-24 | 2016-10-23 |
-| pypsa_eur_germany_100 | standard | 2025-12-11 | 2025-04-17 | 2025-07-28 | 2025-11-05 |
-| | tuning | 2025-01-14 | 2025-03-06 | 2025-08-17 | 2025-11-22 |
+| pypsa_eur_germany_100 | standard | 2025-12-11 | 2025-03-03 | 2025-06-26 | 2025-09-28 |
+| | tuning | 2025-12-27 | 2025-03-28 | 2025-07-12 | 2025-10-31 |
 | base_s_1_elec_2019 | standard | 2019-01-28 | 2019-04-16 | 2019-06-26 | 2019-09-04 |
 | | tuning | 2019-12-10 | 2019-03-24 | 2019-08-13 | 2019-09-13 |
 

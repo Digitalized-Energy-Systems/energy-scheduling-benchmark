@@ -4,7 +4,7 @@
 # config/config.germany-100-2025.yaml
 #
 # Germany, 100 clusters (PyPSA-Eur's own k-means), most recent data: 2025 weather
-# (prebuilt europe-2025-sarah3-era5 cutout) and 2025 demand, fleet in service in 2025,
+# (prebuilt europe-2025-sarah3-era5 cutout) and 2025 demand, fleet in service at the end of 2024 + IRENA 2024 renewables,
 # 2025 technology-data costs. Raw input of the ESB dataset `pypsa_eur_germany_100`
 # (decided 2026-11-09, ESB TODO Next #8c). Islanded (Germany only), nothing extendable.
 #
@@ -74,12 +74,16 @@ electricity:
   - offwind-dc
   - hydro
 
-  # units in service in 2025: retired before 2025 or commissioned after 2025 are dropped
-  powerplants_filter: "(DateOut > 2025 or DateOut != DateOut) and (DateIn < 2026 or DateIn != DateIn)"
+  # units in service at the end of 2024 (= the IRENA 2024 statistics below): retired before 2025
+  # or commissioned after 2024 are dropped (ESB audit 2026-11-12 Q-A2; was "in service in 2025")
+  powerplants_filter: "(DateOut > 2024 or DateOut != DateOut) and (DateIn < 2025 or DateIn != DateIn)"
 
   estimate_renewable_capacities:
     enable: true
     from_powerplantmatching: true
+    # top up to the IRENA country totals of `year` (default false left solar at the MaStR extract's
+    # 48.8 GW vs IRENA 2024 89.9 GW: small rooftop units missing; ESB audit 2026-11-12 Q-A2)
+    from_irenastat: true
     year: 2024                       # newest statistics year PyPSA-Eur supports
     expansion_limit: false
     technology_mapping:
