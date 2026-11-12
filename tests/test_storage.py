@@ -21,3 +21,21 @@ def test_response_at_central_prices_is_central_schedule():
     np.testing.assert_allclose(
         storage.response(battery)(lam), schedules["battery"], atol=1e-3
     )
+
+
+def test_response_equals_cvxpy_solve():
+    """The direct Clarabel path (audit T1) gives cvxpy's schedules bit for bit."""
+    import cvxpy as cp
+
+    c = datasets.load("toy").components["battery"]
+    steps = len(c.p_max)
+    lam = cp.Parameter(steps)
+    p_c, p_d = cp.Variable(steps), cp.Variable(steps)
+    p = p_d - p_c
+    cost = c.cost[0] * cp.sum(p_d) + c.cost[1] * cp.sum_squares(p) - lam @ p
+    problem = cp.Problem(cp.Minimize(cost), storage.constraints(c, p_c, p_d))
+    respond = storage.response(c)
+    for prices in np.random.default_rng(0).uniform(0, 80, (5, steps)):
+        lam.value = prices
+        problem.solve(solver=cp.CLARABEL)
+        np.testing.assert_array_equal(respond(prices), p.value)

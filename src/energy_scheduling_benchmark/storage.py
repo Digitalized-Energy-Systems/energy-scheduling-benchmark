@@ -8,8 +8,11 @@ Schedules are net power p = p_d − p_c.
 
 from __future__ import annotations
 
+import clarabel
 import cvxpy as cp
 import numpy as np
+import scipy.sparse as sp
+from cvxpy.reductions.solvers.conic_solvers.clarabel_conif import dims_to_solver_cones
 from mango_energy_environments import Component
 
 
@@ -44,20 +47,39 @@ def constraints(c: Component, p_c: cp.Variable, p_d: cp.Variable) -> list:
 def response(c: Component):
     """``respond(λ)`` → net schedule P = argmin cost(P) − λᵀP over the Q15 set (HKW15 eq. 19).
 
-    The cvxpy problem is built once, λ is a Parameter; each call re-solves it.
+    The cvxpy model is canonicalised once; per λ only the linear term q changes (−λ·p_d + λ·p_c),
+    and Clarabel is called directly, updating one solver the way cvxpy's solver cache does.
+    Why: cvxpy re-canonicalised on every call — 85–95 % of the sweep time (audit 2026-11-12, T1);
+    the schedules are bit-identical to ``problem.solve(solver=cp.CLARABEL)`` (test_storage).
     """
     steps = len(c.p_max)
-    lam = cp.Parameter(steps)
+    lam = cp.Parameter(steps, value=np.zeros(steps))
     p_c, p_d = cp.Variable(steps), cp.Variable(steps)
     p = p_d - p_c
     cost = c.cost[0] * cp.sum(p_d) + c.cost[1] * cp.sum_squares(p) - lam @ p
     problem = cp.Problem(cp.Minimize(cost), constraints(c, p_c, p_d))
+    data, _, _ = problem.get_problem_data(cp.CLARABEL)  # at λ = 0
+    col = data["param_prob"].var_id_to_col
+    i_c, i_d = col[p_c.id], col[p_d.id]
+    P, A, b, q0 = sp.triu(data["P"]).tocsc(), data["A"], data["b"], data["c"]
+    cones = dims_to_solver_cones(data["dims"])
+    settings = clarabel.DefaultSettings()
+    settings.verbose = False
+    solver = None
 
     def respond(prices: np.ndarray) -> np.ndarray:
-        lam.value = np.asarray(prices, dtype=float)
-        problem.solve(solver=cp.CLARABEL)
-        if problem.status != cp.OPTIMAL:
-            raise RuntimeError(f"storage response: {problem.status}")
-        return np.asarray(p.value)
+        nonlocal solver
+        q = q0.copy()
+        q[i_c : i_c + steps] += prices
+        q[i_d : i_d + steps] -= prices
+        if solver is None or not solver.is_data_update_allowed():
+            solver = clarabel.DefaultSolver(P, q, A, b, cones, settings)
+        else:
+            solver.update(P=P, q=q, A=A, b=b, settings=solver.get_settings())
+        solution = solver.solve()
+        if solution.status != clarabel.SolverStatus.Solved:
+            raise RuntimeError(f"storage response: {solution.status}")
+        x = np.asarray(solution.x)
+        return x[i_d : i_d + steps] - x[i_c : i_c + steps]
 
     return respond
