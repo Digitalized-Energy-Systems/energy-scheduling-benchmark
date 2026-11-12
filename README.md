@@ -181,6 +181,12 @@ t0 + (k+1)·2·`delay_s`: a neighbour's λ missing by then is a failed link of t
 2012 §IV); meta `messages` then also reports `rounds_by_deadline` and `missing_edges`. Lossless
 runs wait for every λ as before.
 
+The benchmark runs in mango's simulated world (discrete event, simulated delays and loss). The
+same agents also run unchanged on real mango TCP containers: `tests/test_tcp.py` spreads the toy
+network's consensus over three local containers (grid topology, routed messages, DRO
+`json_codec()`) and reaches the simulated run's cost within 1e-4 (audit 2026-11-12 Q-A8). There
+time is wall-clock and there is no loss model.
+
 ## Adding an algorithm
 
 One ESB module per algorithm, registered in `run.ALGORITHMS` (decided 2026-11-12, audit Q-A4):

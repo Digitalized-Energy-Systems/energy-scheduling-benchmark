@@ -312,7 +312,11 @@ def setup(params: dict, network: Network, full: Network, args):
             if lossy
             else 0.0,
         )
-        agents[LEADER].add_role(CoordinatorRole(coordinator, routes=routes[leader]))
+        # full addresses: the agents may live in several (real) containers (audit Q-A8)
+        addresses = {a.aid: a.addr for a in agents.values()}
+        agents[LEADER].add_role(
+            CoordinatorRole(coordinator, routes=routes[leader], addresses=addresses)
+        )
         algorithms = []
         # every agent's clock is the world's simulated clock (audit Q-A3)
         trace = IterationTrace(

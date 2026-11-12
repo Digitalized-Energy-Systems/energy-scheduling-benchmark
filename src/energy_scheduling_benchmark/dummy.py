@@ -43,9 +43,14 @@ def setup(params: dict, network, full, args):
 
     def add_roles(behavior, agents, routes):
         coordinator = MeritOrderCoordinator(TIMEOUT_S)
+        addresses = {
+            a.aid: a.addr for a in agents.values()
+        }  # several containers (Q-A8)
         for node, agent in agents.items():
             if node == LEADER:
-                role = CoordinatorRole(coordinator, routes=routes[agent.aid])
+                role = CoordinatorRole(
+                    coordinator, routes=routes[agent.aid], addresses=addresses
+                )
             else:
                 unit = DummyBus(behavior, agent.aid)
                 role = DistributedOptimizationRole(unit, routes=routes[agent.aid])
