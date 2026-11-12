@@ -159,7 +159,7 @@ network with storage, also in `--no-storage` runs, so one tuned set fits both.
 
 `esb-compare [--root outputs] [--out FILE]` reads every `<root>/<network>/<algorithm>/<run>/meta.json`
 (read-only), pairs each run with the central run of the same network, window, storage and grid-exchange
-setting (old run folders' `slack` key is read too), and writes one row per run to `<root>/compare.csv` (signed cost gap in %, central cost,
+setting (only run folders of the current code: older ones are rerun, no fallbacks), and writes one row per run to `<root>/compare.csv` (signed cost gap in %, central cost,
 imbalance shortfall/surplus, iterations, stop reason, messages, wall time, window start/hours)
 plus a printed markdown table. Missing runs go to stderr: runs without
 their central run (skipped) and, per network, windows an algorithm setting lacks that other runs

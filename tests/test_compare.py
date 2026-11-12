@@ -1,5 +1,3 @@
-import shutil
-
 from energy_scheduling_benchmark.compare import compare, load_runs, main
 from energy_scheduling_benchmark.run import main as esb_run
 
@@ -12,13 +10,9 @@ def test_compare_pairs_runs_with_central(tmp_path, capsys):
     # same central on another topology (esb-run's default grid): one setting, not "missing"
     grid = ["--network", "toy", "--out", str(tmp_path), "--hours", "24"]
     esb_run([*grid, "--algorithm", "central"])
-    # a run folder named before the _[no]storage suffix (2026-11-09) still loads
-    dummy = tmp_path / "toy" / "dummy"
-    shutil.copytree(dummy / "complete_loss0_seed0_from20240101T00_24h_storage",
-                    dummy / "ring_loss0_seed0_from20240101T00_24h")  # fmt: skip
 
     rows, missing = compare(load_runs(tmp_path))
-    assert len(rows) == 2  # 24 h dummy + its old-named copy; the 6 h one is skipped
+    assert len(rows) == 1  # the 24 h dummy; the 6 h one is skipped
     assert set(rows.variant) == {""}
     row = rows.iloc[0]
     assert row.start == "2024-01-01 00:00:00" and row.hours == 24
@@ -37,18 +31,3 @@ def test_compare_pairs_runs_with_central(tmp_path, capsys):
     out = capsys.readouterr()
     assert "| toy | dummy |" in out.out and "missing:" in out.err
     assert (tmp_path / "compare.csv").read_text().startswith("network,algorithm,")
-
-
-def test_old_slack_runs_pair_as_grid_exchange(tmp_path):
-    """Run folders written before the rename (audit 2026-11-12 Q-A6) say ``slack``."""
-    import json
-
-    common = ["--network", "toy", "--hours", "6", "--out", str(tmp_path)]
-    for alg in ("central", "dummy"):
-        esb_run([*common, "--algorithm", alg, "--grid-exchange"])
-    (meta_path,) = (tmp_path / "toy" / "dummy").glob("*/meta.json")
-    meta = json.loads(meta_path.read_text())
-    meta["inputs"]["slack"] = meta["inputs"].pop("grid_exchange")
-    meta_path.write_text(json.dumps(meta))
-    rows, _ = compare(load_runs(tmp_path))
-    assert len(rows) == 1 and bool(rows.iloc[0].grid_exchange)

@@ -29,20 +29,21 @@ def load_runs(root: Path) -> pd.DataFrame:
         meta = json.loads(path.read_text())
         i = meta["inputs"]
         network, algorithm, name = path.parts[-4:-1]
+        # only runs of the current code: no fallbacks for older run folders (audit 2026-11-12
+        # Q-A7, Jonas) — rerun them
         rows.append(
             {
                 "network": network,
                 "algorithm": algorithm,
-                # folder suffix after [no]storage: consensus tuning route (+ --set hash)
-                "variant": name.partition("storage")[2].lstrip("_"),  # "" for old names
+                # folder suffix after [no]storage: tuning route (+ --set hash), "" without
+                "variant": name.partition("storage")[2].lstrip("_"),
                 "topology": i["topology"],
                 "loss_rate": i["loss_rate"],
                 "seed": i["seed"],
                 "start": i["start"],
                 "hours": i["hours"],
-                "storage": i.get("storage", True),  # older runs had no --no-storage
-                # runs before 2026-11-12 (audit Q-A6) call it "slack"
-                "grid_exchange": i.get("grid_exchange", i.get("slack", False)),
+                "storage": i["storage"],
+                "grid_exchange": i["grid_exchange"],
                 "total_cost": meta["total_cost"],
                 "shortfall_mwh": meta["imbalance"]["shortfall_mwh"],
                 "surplus_mwh": meta["imbalance"]["surplus_mwh"],
@@ -51,9 +52,7 @@ def load_runs(root: Path) -> pd.DataFrame:
                 "messages_sent": meta["messages"]["sent"],
                 "messages_delivered": meta["messages"]["delivered"],
                 "messages_lost": meta["messages"]["lost"],
-                "sim_time_s": meta.get(
-                    "sim_time_s"
-                ),  # runs before 2026-11-12 have none
+                "sim_time_s": meta["sim_time_s"],
                 "wall_time_s": meta["wall_time_s"],
                 "run": str(path.parent),
             }
