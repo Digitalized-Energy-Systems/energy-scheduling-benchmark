@@ -156,7 +156,9 @@ def _consensus(
         )
         algorithms = []
         for agent in buses:
-            actor = consensus.BusActor(behavior, agent.aid, params["eps_p"])
+            actor = consensus.BusActor(
+                behavior, agent.aid, params["eps_p"], params["lam_abort"]
+            )
             s = factors[agent.aid]  # agent ids are the bus names (world.build_world)
             algorithm = ConsensusInnovationsAlgorithm(
                 lambda alg, carrier: alg.actor.finish(),
@@ -180,7 +182,12 @@ def _consensus(
                 "rounds_by_deadline": sum(a.rounds_by_deadline for a in algorithms),
                 "missing_edges": sum(a.missing_edges for a in algorithms),
             }
-            stop = ("stalled", None) if r is None else (r.stop_reason, r.iterations)
+            if r is not None:
+                stop = (r.stop_reason, r.iterations)
+            elif any(a.actor.diverged for a in algorithms):  # sweep abort (audit T4)
+                stop = ("diverged", None)
+            else:
+                stop = ("stalled", None)
             return *stop, counts
 
         return outcome

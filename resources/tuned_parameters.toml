@@ -20,6 +20,9 @@ max_iter = 10000
 # per-agent steps (S3, deviation C2b): "none" = one α, β for all agents (the papers, paper route);
 # "capacity" = bus j runs with s_j·α, s_j·β, s_j = median / its dispatchable capacity (esb-tune sets)
 agent_scale = "none"
+# sweep-only divergence abort (audit 2026-11-12 T4): a bus agent ends the run once |λ| exceeds it
+# (€/MWh; esb-tune sets 4000 = the slack import price), stop_reason "diverged"; inf = off
+lam_abort = inf
 
 # toy (2024-01-01, 24 h): hand-tuned 2026-11-08; κ = 0.05, γ = 4 oscillates on ring/complete
 # (α·dP/dλ at bus0 ≈ 1.75), κ = 0.03 is stable on all three; gap vs central −0.014 / −0.015 /
