@@ -49,10 +49,10 @@ def test_storage_shifts_cheap_energy():
     np.testing.assert_allclose(storage.soc(bat, schedules["bat"]), [0.9, 0], atol=1e-6)
 
 
-def test_islanded_infeasible_and_slack():
+def test_islanded_infeasible_and_grid_exchange():
     schedules, status, _ = solve_central(net(demand=(4.0, 12.0)))
     assert status == "infeasible" and schedules == {}
-    schedules, status, _ = solve_central(net(demand=(4.0, 12.0)), slack=True)
+    schedules, status, _ = solve_central(net(demand=(4.0, 12.0)), grid_exchange=True)
     assert status == "optimal"
     np.testing.assert_allclose(schedules["dear"], [0, 5], atol=1e-6)
 
@@ -82,9 +82,9 @@ def test_window_bad_start():
         window(datasets.load("toy"), "2030-01-01", 2)
 
 
-def test_slack_never_worse_on_real_network(tmp_path):
+def test_grid_exchange_never_worse_on_real_network(tmp_path):
     costs = {}
-    for flags in ([], ["--slack"]):
+    for flags in ([], ["--grid-exchange"]):
         out = tmp_path / str(len(flags))
         args = ["--algorithm", "central", "--network", "base_s_1_elec_2019"]
         main([*args, "--hours", "168", "--out", str(out), *flags])

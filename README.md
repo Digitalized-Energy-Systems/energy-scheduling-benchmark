@@ -80,7 +80,7 @@ esb-run --algorithm consensus --tuning paper    # or manual / sweep; --set key=v
 esb-run --trace ...   # debugging: mango trace (mango_trace.jsonl + .html viewer) in the run folder; slow, large
 esb-tune --network toy --topology ring --jobs 4   # sweep → [consensus.toy.ring.sweep]; --algorithm consensus (default)
 esb-compare                      # all runs under outputs/ vs. their central run → outputs/compare.csv
-esb-run --help   # --algorithm, --loss-rate (fraction per hop, algorithm messages only), --delay-s, --slack, --no-storage, --set, --out, --trace, ...
+esb-run --help   # --algorithm, --loss-rate (fraction per hop, algorithm messages only), --delay-s, --grid-exchange, --no-storage, --set, --out, --trace, ...
 ```
 
 ### Standard and tuning days
@@ -113,16 +113,18 @@ Consensus is tuned with storage on; that set is used for runs with and without s
 
 Each run writes `outputs/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_from<start>_<hours>h_[no]storage[_<variant>]/`
 (consensus: variant = tuning route, plus `_set<hash>` when `--set` is used)
-with `schedule.csv` (time × unit MW, `slack`, `residual`, `soc:<storage>`) and `meta.json` (inputs,
+with `schedule.csv` (time × unit MW, `grid_exchange`, `residual`, `soc:<storage>`) and `meta.json` (inputs,
 prepared-file SHA-256, total cost (`null` for a failed central solve or a run that scheduled
-nothing without slack), slack use, imbalance shortfall/surplus, messages
+nothing without grid exchange), `grid_exchange` (import/export MWh, import share, import cost at
+4000 €/MWh; with `--grid-exchange` it takes the remaining imbalance after the run — named `slack`
+before 2026-11-12), imbalance shortfall/surplus, messages
 sent/delivered/lost, iterations, stop reason, `sim_time_s` = simulated time of the stop (time to
 solution of a distributed run; communication only — mango's simulation has no computation-time
 model, agents compute in zero simulated time; `null` for central), wall time,
 `renewable_available_mwh`, `storage_simultaneous_mwh` = MWh charged and discharged in the same
 hour, central only, expected 0). Consensus runs also write `trace.csv`: one row per iteration k
 (the state at λ after k updates) with `sim_time_s`, `imbalance_mwh` (Σ over hours of
-|Σ agents' mismatch|), `cost` (€ of the current schedules, slack not included), `lambda_mean`,
+|Σ agents' mismatch|), `cost` (€ of the current schedules, grid exchange not included), `lambda_mean`,
 `lambda_spread` (largest per-hour spread of λ across agents). With `--trace` also
 `mango_trace.jsonl` and its HTML viewer `mango_trace.html`.
 
@@ -130,7 +132,7 @@ hour, central only, expected 0). Consensus runs also write `trace.csv`: one row 
 renewables and thermal units with c₁ ≤ 0 run at their available power p_max; every algorithm
 (central included) only dispatches thermal units and storage against the residual load (each bus
 agent: its own load minus its own renewables). Renewables are never curtailed: a surplus is
-exported by the slack (`--slack`) or stays in `residual` / `imbalance.surplus_mwh` (islanded).
+exported by the grid exchange (`--grid-exchange`) or stays in `residual` / `imbalance.surplus_mwh` (islanded).
 Consensus keeps λ ≥ 0 (the renewables' marginal cost) so a surplus hour cannot drive λ down
 without bound. A window whose renewables cover the load in every hour needs no ED: every
 algorithm returns at once with `stop_reason = "renewables_cover"`. Algorithms so far: `central` (the
@@ -156,8 +158,8 @@ steps (both scaled together: the optimum stays the papers' one); the factors alw
 network with storage, also in `--no-storage` runs, so one tuned set fits both.
 
 `esb-compare [--root outputs] [--out FILE]` reads every `<root>/<network>/<algorithm>/<run>/meta.json`
-(read-only), pairs each run with the central run of the same network, window, storage and slack
-setting, and writes one row per run to `<root>/compare.csv` (signed cost gap in %, central cost,
+(read-only), pairs each run with the central run of the same network, window, storage and grid-exchange
+setting (old run folders' `slack` key is read too), and writes one row per run to `<root>/compare.csv` (signed cost gap in %, central cost,
 imbalance shortfall/surplus, iterations, stop reason, messages, wall time, window start/hours)
 plus a printed markdown table. Missing runs go to stderr: runs without
 their central run (skipped) and, per network, windows an algorithm setting lacks that other runs
@@ -167,8 +169,9 @@ have. The batch over the standard grid is `../run_all.sh` (workspace root): all 
 ## World
 
 One mango agent per bus; it owns every component at its bus (units, storage and its load) and
-reaches them through MEE's copper-plate behaviour (`register(..., bus=b)`). A `leader` (and with
-`--slack` a `slack` agent) sits at the first bus / position 0. The leader knows no demand: it
+reaches them through MEE's copper-plate behaviour (`register(..., bus=b)`). A `leader` sits at the
+first bus / position 0; the grid exchange is no agent (it takes the remaining imbalance after the
+run; the slack agent had no role and was removed 2026-11-12). The leader knows no demand: it
 only learns it from the bus agents' messages. Topologies: `grid` (buses joined by lines),
 `ring` (over the buses), `complete`; non-neighbours are reached hop by hop, every hop counted.
 `--loss-rate p` loses each hop of the **algorithms' own messages** (consensus λ, dummy offers) with
@@ -194,7 +197,7 @@ links. `consensus.py` is the worked example, `dummy.py` the smallest one.
 
 ```
 src/energy_scheduling_benchmark/
-├── problem.py    # problem rules shared by all: pre-dispatched units, slack import price
+├── problem.py    # problem rules shared by all: pre-dispatched units, grid import price
 ├── datasets.py   # benchmark networks + preparation recipe; esb-prepare
 ├── central.py    # central dispatch: the reference optimum (cvxpy)
 ├── storage.py    # shared storage model + price response (central dispatch + algorithms)
@@ -203,7 +206,7 @@ src/energy_scheduling_benchmark/
 ├── dummy.py      # dummy merit-order algorithm (test fixture), setup
 ├── tune.py       # esb-tune: parameter sweep for one algorithm × network × topology
 ├── compare.py    # esb-compare: cost gap of every run vs. its central run
-├── world.py      # mango world: bus agents, topologies, counted lossy links, leader/slack
+├── world.py      # mango world: bus agents, topologies, counted lossy links, leader
 ├── run.py        # esb-run: one run end-to-end; ALGORITHMS (the algorithm interface)
 └── outputs.py    # schedule.csv + meta.json (+ trace.csv), Outcome
 resources/

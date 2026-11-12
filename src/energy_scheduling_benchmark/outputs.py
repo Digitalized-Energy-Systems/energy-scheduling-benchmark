@@ -15,8 +15,10 @@ import pandas as pd
 from mango_energy_environments import LOAD, STORAGE, CopperPlateBehavior
 
 from . import storage
-from .problem import SLACK_IMPORT_PRICE, predispatched
-from .world import SLACK
+from .problem import GRID_IMPORT_PRICE, predispatched
+
+#: schedule.csv column + meta block of the grid exchange (was "slack", audit 2026-11-12 Q-A6)
+GRID_EXCHANGE = "grid_exchange"
 
 #: stop_reason of a run that needed no ED: pre-dispatched units cover the load in every hour
 #: (S1 plan D7); a valid result for every algorithm, central included.
@@ -68,7 +70,7 @@ def write_run(
     iterations: int,
     stop_reason: str,
     wall_time_s: float,
-    slack: bool = False,
+    grid_exchange: bool = False,
     storage_simultaneous_mwh: float | None = None,
     sim_time_s: float | None = None,
     iteration_trace: pd.DataFrame | None = None,
@@ -82,11 +84,12 @@ def write_run(
     row per iteration, see ``consensus.IterationTrace.frame``.
 
     ``schedule.csv``: time × non-load unit MW (empty = the unit never set a schedule), plus
-    ``slack`` (the difference it takes, if enabled), ``residual`` = gen + slack − demand and
+    ``grid_exchange`` (import > 0 / export < 0 at the grid connection: it takes the remaining
+    imbalance after the run, if enabled), ``residual`` = gen + grid exchange − demand and
     ``soc:<unit>`` (storage energy at the end of each hour, MWh).
-    ``total_cost`` includes the slack import (also reported separately under ``slack``,
-    with ``import_share`` = import / total demand); the costs and all ``slack`` fields are
-    ``null`` (CSV ``slack`` empty) when the central solve is not optimal. Distributed runs always
+    ``total_cost`` includes the grid import (also reported separately under ``grid_exchange``,
+    with ``import_share`` = import / total demand); the costs and all ``grid_exchange`` fields are
+    ``null`` (CSV ``grid_exchange`` empty) when the central solve is not optimal. Distributed runs always
     report their cost, also over only the units that got a schedule; ``imbalance`` = shortfall /
     surplus MWh of the final ``residual`` (islanded: a renewable surplus stays there, it is never
     curtailed); ``renewable_available_mwh`` = energy of the pre-dispatched units;
@@ -103,10 +106,10 @@ def write_run(
     )
     failed = algorithm == "central" and stop_reason not in ("optimal", RENEWABLES_COVER)
     residual = behavior.balance()
-    slack_p = -residual if slack and not failed else np.zeros_like(residual)
-    if slack:
-        schedule[SLACK] = np.nan if failed else slack_p
-    residual = residual + slack_p
+    grid_p = -residual if grid_exchange and not failed else np.zeros_like(residual)
+    if grid_exchange:
+        schedule[GRID_EXCHANGE] = np.nan if failed else grid_p
+    residual = residual + grid_p
     schedule["residual"] = residual
     for cid, c in network.components.items():
         if c.kind == STORAGE:
@@ -124,19 +127,19 @@ def write_run(
     demand = sum(
         float(c.p_max.sum()) for c in network.components.values() if c.kind == LOAD
     )
-    slack_import = float(np.maximum(slack_p, 0.0).sum())
-    slack_meta = {
-        "import_mwh": slack_import,
-        "export_mwh": float(np.maximum(-slack_p, 0.0).sum()),
-        "import_share": slack_import / demand if demand else 0.0,
-        "cost": SLACK_IMPORT_PRICE * slack_import,
+    grid_import = float(np.maximum(grid_p, 0.0).sum())
+    grid_meta = {
+        "import_mwh": grid_import,
+        "export_mwh": float(np.maximum(-grid_p, 0.0).sum()),
+        "import_share": grid_import / demand if demand else 0.0,
+        "cost": GRID_IMPORT_PRICE * grid_import,
     }
-    total_cost += slack_meta["cost"]
-    if failed or not (behavior.schedules or slack):
-        # no valid result (failed solve, or no unit scheduled and no slack import): 0 would
+    total_cost += grid_meta["cost"]
+    if failed or not (behavior.schedules or grid_exchange):
+        # no valid result (failed solve, or no unit scheduled and no grid import): 0 would
         # look like the cheapest run
         total_cost = None
-        slack_meta = dict.fromkeys(slack_meta)
+        grid_meta = dict.fromkeys(grid_meta)
 
     meta = {
         "inputs": inputs,
@@ -144,7 +147,7 @@ def write_run(
         and hashlib.sha256(Path(network_file).read_bytes()).hexdigest(),
         "algorithm": algorithm,
         "total_cost": total_cost,
-        "slack": slack_meta,
+        GRID_EXCHANGE: grid_meta,
         "imbalance": {
             "shortfall_mwh": float(np.maximum(-residual, 0.0).sum()),
             "surplus_mwh": float(np.maximum(residual, 0.0).sum()),

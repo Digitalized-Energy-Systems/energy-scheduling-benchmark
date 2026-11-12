@@ -8,13 +8,15 @@ from __future__ import annotations
 
 from mango_energy_environments import RENEWABLE, THERMAL
 
-#: Slack import price (€/MWh), export is free (Q3: SDAC harmonised maximum clearing price).
-SLACK_IMPORT_PRICE = 4000.0
+#: Grid import price (€/MWh) of ``--grid-exchange`` runs, export is free (Q3: SDAC harmonised
+#: maximum clearing price). Was SLACK_IMPORT_PRICE (renamed with the slack agent's removal,
+#: audit 2026-11-12 Q-A6).
+GRID_IMPORT_PRICE = 4000.0
 
 
 def predispatched(kind: str, c1: float) -> bool:
     """Runs at its available power p_max before any algorithm: renewables and free thermal units
     (marginal cost 0 → always first; KH12 eq. 27 / HKW15 §II must-take). Decided 2026-11-10
     (supervisor meeting, `docs/renewables-predispatch-plan.md` D1): no curtailment — a surplus is
-    exported by the slack or reported."""
+    exported by the grid exchange or reported."""
     return kind == RENEWABLE or (kind == THERMAL and c1 <= 0)

@@ -28,7 +28,7 @@ from mango_energy_environments import LOAD, STORAGE, Component, Network
 from . import storage
 from .outputs import Outcome
 from .problem import predispatched
-from .world import LEADER, SLACK, longest_hops, settle_s, topology_graph
+from .world import LEADER, longest_hops, settle_s, topology_graph
 
 #: Floor on λ (€/MWh) = the marginal cost of the pre-dispatched renewables: in a surplus hour
 #: nobody can absorb, λ would fall without bound; at 0 renewables are the marginal unit, so 0 is
@@ -90,10 +90,10 @@ def max_sensitivity(network, agent_scale: str = "none", full=None) -> float:
 
 
 def laplacian_max(network: Network, topology: str) -> float:
-    """Largest Laplacian eigenvalue of the bus agents' topology (leader/slack leaves excluded: they
-    do not iterate); the consensus term is stable only for β < 2 / it. 1 for a one-bus network."""
-    graph = topology_graph(network, topology, slack=True)
-    graph.remove_nodes_from([LEADER, SLACK])
+    """Largest Laplacian eigenvalue of the bus agents' topology (the leader excluded: it does not
+    iterate); the consensus term is stable only for β < 2 / it. 1 for a one-bus network."""
+    graph = topology_graph(network, topology)
+    graph.remove_node(LEADER)
     return float(nx.laplacian_spectrum(graph).max()) or 1.0
 
 
@@ -106,7 +106,7 @@ SWEEP_BETA_DECAYING = (0.3, 1.0)
 #: (synthetic_10: −100 %, T5); both > 0.5, so Σα² < ∞ (KH12 Theorem 5).
 SWEEP_ALPHA_EXP = (0.6, 0.98)
 #: settings of every sweep run (not stored in the tuned set): stop rule off (I19), divergence
-#: abort at the slack import price (T4)
+#: abort at the grid import price (T4)
 SWEEP_RUN = {"eps_lambda": -1, "lam_abort": 4000.0}
 #: esb-tune compares candidates per variant and notes the best of each
 VARIANT = "steps"
@@ -184,7 +184,7 @@ class IterationTrace:
 
     def frame(self) -> pd.DataFrame:
         """iteration, sim_time_s, imbalance_mwh (Σ_h |Σ_j mismatch|), cost (€, units without the
-        slack), lambda_mean, lambda_spread (max_h of max_j λ − min_j λ)."""
+        grid exchange), lambda_mean, lambda_spread (max_h of max_j λ − min_j λ)."""
         return pd.DataFrame(
             [
                 {
@@ -288,8 +288,8 @@ def _generator(cid, cost, p_min, p_max):
 
 def setup(params: dict, network: Network, full: Network, args):
     """Benchmark wiring (algorithm interface, ``run.ALGORITHMS``): returns
-    ``(behavior, agents, routes) -> outcome`` that adds the roles — bus agents + leader; the slack
-    takes no part (plan Q6) — and ``outcome() -> Outcome``.
+    ``(behavior, agents, routes) -> outcome`` that adds the roles — bus agents + leader; the grid
+    exchange takes no part (plan Q6) — and ``outcome() -> Outcome``.
 
     *full*: the network with storage — the per-agent factors come from it also in a
     ``--no-storage`` run, as the one tuned set (tuned with storage) serves both (review 2026-11-11:
@@ -299,7 +299,7 @@ def setup(params: dict, network: Network, full: Network, args):
     def add_roles(behavior, agents, routes):
         alpha, beta = steps(params)
         factors = agent_factors(full, params["agent_scale"])
-        buses = [a for node, a in agents.items() if node not in (LEADER, SLACK)]
+        buses = [a for node, a in agents.items() if node != LEADER]
         aids, leader = [a.aid for a in buses], agents[LEADER].aid
         # lossy links (S5): a round ends for everyone at t0 + (k+1)·2·delay_s (Q-L1); t0 after the
         # slowest start message. Lossless runs keep waiting for every λ (unchanged baseline).

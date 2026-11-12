@@ -30,7 +30,7 @@ from mango_energy_environments import LOAD, STORAGE
 
 from .outputs import Outcome
 from .problem import predispatched
-from .world import LEADER, SLACK
+from .world import LEADER
 
 #: Simulated seconds the leader waits for offers (a ring of ~70 bus agents at 0.01 s per hop
 #: needs < 1 s for request + reply).
@@ -47,7 +47,7 @@ def setup(params: dict, network, full, args):
             if node == LEADER:
                 role = CoordinatorRole(coordinator, routes=routes[agent.aid])
             else:
-                unit = DummyBus(None if node == SLACK else behavior, agent.aid)
+                unit = DummyBus(behavior, agent.aid)
                 role = DistributedOptimizationRole(unit, routes=routes[agent.aid])
             agent.add_role(role)
         return lambda: Outcome(coordinator.stop_reason, 1, sim_time_s=coordinator.time)
@@ -121,7 +121,7 @@ class MeritOrderCoordinator(Coordinator):
 
 
 class DummyBus(DistributedAlgorithm):
-    """Replies its bus offer and sets the schedules it gets; ``behavior=None``: no bus (slack)."""
+    """Replies its bus offer and sets the schedules it gets."""
 
     def __init__(self, behavior, aid: str) -> None:
         self.behavior = behavior
@@ -132,25 +132,22 @@ class DummyBus(DistributedAlgorithm):
             for cid, schedule in (message_data.result or {}).items():
                 self.behavior.act(self.aid, "set_schedule", schedule, cid)
             return
-        offer = None
-        if self.behavior is not None:
-            observe = self.behavior.observe
-            cids = observe(self.aid, "components")
-            units, load = {}, np.zeros_like(observe(self.aid, "p_max", cids[0]))
-            for cid in cids:
-                statics = observe(self.aid, "statics", cid)
-                if statics["kind"] == LOAD:
-                    load = load + observe(self.aid, "demand", cid)
-                elif predispatched(statics["kind"], statics["cost"][0]):
-                    p_max = observe(self.aid, "p_max", cid)
-                    self.behavior.act(self.aid, "set_schedule", p_max, cid)
-                    load = load - p_max
-                else:
-                    units[cid] = Offer(
-                        statics["kind"],
-                        statics["cost"][0],
-                        observe(self.aid, "p_min", cid),
-                        observe(self.aid, "p_max", cid),
-                    )
-            offer = BusOffer(units, load)
-        carrier.reply_to_other(offer, meta)
+        observe = self.behavior.observe
+        cids = observe(self.aid, "components")
+        units, load = {}, np.zeros_like(observe(self.aid, "p_max", cids[0]))
+        for cid in cids:
+            statics = observe(self.aid, "statics", cid)
+            if statics["kind"] == LOAD:
+                load = load + observe(self.aid, "demand", cid)
+            elif predispatched(statics["kind"], statics["cost"][0]):
+                p_max = observe(self.aid, "p_max", cid)
+                self.behavior.act(self.aid, "set_schedule", p_max, cid)
+                load = load - p_max
+            else:
+                units[cid] = Offer(
+                    statics["kind"],
+                    statics["cost"][0],
+                    observe(self.aid, "p_min", cid),
+                    observe(self.aid, "p_max", cid),
+                )
+        carrier.reply_to_other(BusOffer(units, load), meta)

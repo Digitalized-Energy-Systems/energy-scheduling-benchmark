@@ -101,7 +101,6 @@ async def _simulate(network, args, add_roles, trace=None):
         args.loss_rate,
         args.delay_s,
         args.seed,
-        args.slack,
         trace,
     )
     outcome = add_roles(behavior, agents, routes)
@@ -181,7 +180,7 @@ async def run(args: argparse.Namespace) -> Path:
     elif ALGORITHMS[args.algorithm] is None:  # central
         behavior = CopperPlateBehavior(network)
         behavior.schedules, stop_reason, simultaneous = solve_central(
-            network, args.slack
+            network, args.grid_exchange
         )
         messages, iterations = no_messages, 1
     else:
@@ -205,7 +204,7 @@ async def run(args: argparse.Namespace) -> Path:
         iterations=iterations,
         stop_reason=stop_reason,
         wall_time_s=wall_time_s,
-        slack=args.slack,
+        grid_exchange=args.grid_exchange,
         storage_simultaneous_mwh=simultaneous,
         sim_time_s=sim_time_s,
         iteration_trace=iteration_trace,
@@ -232,7 +231,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--delay-s", type=float, default=0.01)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
-        "--slack", action="store_true", help="grid import (islanded default)"
+        "--grid-exchange",
+        action="store_true",
+        help="import/export at the grid connection after the run (islanded default; was --slack)",
     )
     parser.add_argument(
         "--start",

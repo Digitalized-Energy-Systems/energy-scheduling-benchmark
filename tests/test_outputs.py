@@ -19,10 +19,10 @@ def test_run_dir():
     ).name == ("ring_loss0_seed0_from20190114T00_24h_nostorage_paper")
 
 
-@pytest.mark.parametrize("slack", [False, True])
-async def test_write_run(tmp_path, slack):
+@pytest.mark.parametrize("grid", [False, True])
+async def test_write_run(tmp_path, grid):
     net = datasets.load("toy")
-    world, behavior, agents, communication, _ = build_world(net, slack=slack)
+    world, behavior, agents, communication, _ = build_world(net)
     steps = len(net.time_index)
     behavior.act(agents["bus0"].aid, "set_schedule", np.full(steps, 50.0), "gas")
     behavior.act(agents["bus1"].aid, "set_schedule", np.full(steps, 10.0), "coal")
@@ -39,12 +39,12 @@ async def test_write_run(tmp_path, slack):
         iterations=1,
         stop_reason="done",
         wall_time_s=0.5,
-        slack=slack,
+        grid_exchange=grid,
     )
 
     csv = pd.read_csv(tmp_path / "schedule.csv", index_col="time")
     units = ["gas", "coal", "wind", "battery"]
-    extra = ["slack"] if slack else []
+    extra = ["grid_exchange"] if grid else []
     assert list(csv.columns) == units + extra + ["residual", "soc:battery"]
     assert csv["wind"].isna().all()  # never set a schedule
     battery = net.components["battery"]
@@ -53,9 +53,9 @@ async def test_write_run(tmp_path, slack):
         battery.params["efficiency_store"],
     )
     np.testing.assert_allclose(csv["soc:battery"], e0 + eta * np.arange(1, steps + 1))
-    if slack:
+    if grid:
         np.testing.assert_allclose(csv["residual"], 0.0)
-        np.testing.assert_allclose(csv["slack"], -behavior.balance())
+        np.testing.assert_allclose(csv["grid_exchange"], -behavior.balance())
     else:
         np.testing.assert_allclose(csv["residual"], behavior.balance())
 
@@ -63,11 +63,11 @@ async def test_write_run(tmp_path, slack):
     gas, coal = net.components["gas"].cost, net.components["coal"].cost
     per_step = gas[0] * 50 + gas[1] * 50**2 + coal[0] * 10 + coal[1] * 10**2
     per_step += battery.cost[1] * 1.0**2  # curvature band on the net power
-    imported = np.maximum(-behavior.balance(), 0).sum() if slack else 0.0
-    assert meta["slack"]["import_mwh"] == pytest.approx(imported)
-    assert meta["slack"]["cost"] == pytest.approx(4000 * imported)
+    imported = np.maximum(-behavior.balance(), 0).sum() if grid else 0.0
+    assert meta["grid_exchange"]["import_mwh"] == pytest.approx(imported)
+    assert meta["grid_exchange"]["cost"] == pytest.approx(4000 * imported)
     demand = sum(c.p_max.sum() for c in net.components.values() if c.kind == "load")
-    assert meta["slack"]["import_share"] == pytest.approx(imported / demand)
+    assert meta["grid_exchange"]["import_share"] == pytest.approx(imported / demand)
     final = csv["residual"]
     assert meta["imbalance"]["shortfall_mwh"] == pytest.approx(
         np.maximum(-final, 0).sum()
@@ -79,8 +79,8 @@ async def test_write_run(tmp_path, slack):
     assert meta["inputs"] == {"network": "toy", "seed": 0}
 
 
-def _write_empty(tmp_path, algorithm, stop_reason, slack=True):
-    _, behavior, _, _, _ = build_world(datasets.load("toy"), slack=slack)
+def _write_empty(tmp_path, algorithm, stop_reason, grid=True):
+    _, behavior, _, _, _ = build_world(datasets.load("toy"))
     write_run(
         tmp_path,
         behavior,
@@ -91,30 +91,30 @@ def _write_empty(tmp_path, algorithm, stop_reason, slack=True):
         iterations=0,
         stop_reason=stop_reason,
         wall_time_s=0.0,
-        slack=slack,
+        grid_exchange=grid,
     )
     csv = pd.read_csv(tmp_path / "schedule.csv", index_col="time")
     return json.loads((tmp_path / "meta.json").read_text()), csv, behavior
 
 
-async def test_failed_central_writes_null_cost_and_slack(tmp_path):
+async def test_failed_central_writes_null_cost_and_grid_exchange(tmp_path):
     meta, csv, behavior = _write_empty(tmp_path, "central", "infeasible")
     assert meta["total_cost"] is None
-    assert all(v is None for v in meta["slack"].values())
-    assert csv["slack"].isna().all()
+    assert all(v is None for v in meta["grid_exchange"].values())
+    assert csv["grid_exchange"].isna().all()
     np.testing.assert_allclose(csv["residual"], behavior.balance())  # = −demand, not 0
 
 
-async def test_lossy_run_without_schedules_keeps_slack_cost(tmp_path):
+async def test_lossy_run_without_schedules_keeps_grid_cost(tmp_path):
     meta, csv, behavior = _write_empty(tmp_path, "dummy", "timeout")
     demand = -behavior.balance().sum()
-    assert meta["slack"]["import_mwh"] == pytest.approx(demand)
-    assert meta["slack"]["import_share"] == pytest.approx(1.0)
+    assert meta["grid_exchange"]["import_mwh"] == pytest.approx(demand)
+    assert meta["grid_exchange"]["import_share"] == pytest.approx(1.0)
     assert meta["total_cost"] == pytest.approx(4000 * demand)
     assert meta["imbalance"] == {"shortfall_mwh": 0.0, "surplus_mwh": 0.0}
 
 
 async def test_stalled_run_without_schedules_has_no_cost(tmp_path):
-    """A diverged distributed run (nothing scheduled, no slack) must not look like cost 0."""
-    meta, _, _ = _write_empty(tmp_path, "consensus", "stalled", slack=False)
+    """A diverged distributed run (nothing scheduled, no grid exchange) must not look like cost 0."""
+    meta, _, _ = _write_empty(tmp_path, "consensus", "stalled", grid=False)
     assert meta["total_cost"] is None

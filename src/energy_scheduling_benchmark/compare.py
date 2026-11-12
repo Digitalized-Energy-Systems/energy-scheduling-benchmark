@@ -1,7 +1,7 @@
 """esb-compare: cost gap of every run vs. its central optimum (TODO Next #10, decided 2026-11-09).
 
 Read-only over ``<root>/<network>/<algorithm>/<run>/meta.json``. Each run is paired with the
-central run of the same network, window (start, hours), storage and slack setting; one row per
+central run of the same network, window (start, hours), storage and grid-exchange setting; one row per
 non-central run goes into a CSV (default ``outputs/compare.csv``) and a printed markdown table.
 Missing runs are reported, derived from what exists: a run without its central run (row
 skipped), and per network every window an algorithm setting lacks that another run has.
@@ -41,7 +41,8 @@ def load_runs(root: Path) -> pd.DataFrame:
                 "start": i["start"],
                 "hours": i["hours"],
                 "storage": i.get("storage", True),  # older runs had no --no-storage
-                "slack": i["slack"],
+                # runs before 2026-11-12 (audit Q-A6) call it "slack"
+                "grid_exchange": i.get("grid_exchange", i.get("slack", False)),
                 "total_cost": meta["total_cost"],
                 "shortfall_mwh": meta["imbalance"]["shortfall_mwh"],
                 "surplus_mwh": meta["imbalance"]["surplus_mwh"],
@@ -60,7 +61,7 @@ def load_runs(root: Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-WINDOW = ["network", "start", "hours", "storage", "slack"]
+WINDOW = ["network", "start", "hours", "storage", "grid_exchange"]
 SETTING = ["algorithm", "variant", "topology", "loss_rate", "seed"]
 
 
@@ -107,8 +108,8 @@ def compare(runs: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
 
 
 def _window(w) -> str:
-    start, hours, storage, slack = w
-    return f"{start} {hours} h {'' if storage else 'no '}storage{' slack' if slack else ''}"
+    start, hours, storage, grid = w
+    return f"{start} {hours} h {'' if storage else 'no '}storage{' grid_exchange' if grid else ''}"
 
 
 def markdown(df: pd.DataFrame) -> str:

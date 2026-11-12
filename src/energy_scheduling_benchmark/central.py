@@ -1,7 +1,7 @@
 """Central economic dispatch: the reference optimum (plan: ``docs/central-dispatch-plan.md``).
 
 One cvxpy model over the whole window: units within p_min … p_max at c₁p + c₂p², storage per
-:mod:`.storage`, optional slack (import at :data:`SLACK_IMPORT_PRICE`, export free), and per hour
+:mod:`.storage`, optional grid exchange (import at :data:`GRID_IMPORT_PRICE`, export free), and per hour
 Σ injections = demand. Pre-dispatched units (:func:`.problem.predispatched`) are fixed at p_max;
 islanded, a free surplus variable takes what nobody can absorb (reported, not curtailed; S1 plan
 D6). No tie-break terms (Q-C4). Charging and discharging in the same hour is never optimal with the
@@ -17,11 +17,11 @@ import numpy as np
 from mango_energy_environments import LOAD, STORAGE, Network
 
 from . import storage
-from .problem import SLACK_IMPORT_PRICE, predispatched
+from .problem import GRID_IMPORT_PRICE, predispatched
 
 
 def solve_central(
-    network: Network, slack: bool = False
+    network: Network, grid_exchange: bool = False
 ) -> tuple[dict[str, np.ndarray], str, float | None]:
     """Return ``({component id: MW per hour}, solver status, simultaneous MWh)``; no schedules
     (and None) unless optimal. Simultaneous = Σ over storage and hours of min(charge, discharge)."""
@@ -47,10 +47,10 @@ def solve_central(
             cost += c.cost[0] * cp.sum(p) + c.cost[1] * cp.sum_squares(p)
         injection += p
         schedules[cid] = p
-    if slack:
+    if grid_exchange:
         imp, exp = cp.Variable(steps, nonneg=True), cp.Variable(steps, nonneg=True)
         injection += imp - exp
-        cost += SLACK_IMPORT_PRICE * cp.sum(imp)
+        cost += GRID_IMPORT_PRICE * cp.sum(imp)
     else:
         # islanded: renewables are never curtailed, so a surplus must go somewhere to stay feasible
         injection -= cp.Variable(steps, nonneg=True)

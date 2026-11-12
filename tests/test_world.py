@@ -2,7 +2,7 @@ import networkx as nx
 import pytest
 
 from energy_scheduling_benchmark import datasets
-from energy_scheduling_benchmark.world import LEADER, SLACK, build_world, topology_graph
+from energy_scheduling_benchmark.world import LEADER, build_world, topology_graph
 
 BUSES = {"bus0", "bus1", "bus2", "bus3"}  # bus3: load only
 
@@ -19,12 +19,12 @@ def test_grid(toy):
     assert set(g[LEADER]) == {"bus0"}  # the first bus
 
 
-def test_ring_with_slack(toy):
-    g = topology_graph(toy, "ring", slack=True)
+def test_ring(toy):
+    g = topology_graph(toy, "ring")
+    assert set(g.nodes) == BUSES | {LEADER}  # no slack agent any more (audit Q-A6)
     buses = g.subgraph(BUSES)
     assert all(d == 2 for _, d in buses.degree)  # the buses form the ring
-    assert set(g[LEADER]) == {SLACK, "bus0"}  # leaves on the first bus
-    assert set(g[SLACK]) == {LEADER, "bus0"}
+    assert set(g[LEADER]) == {"bus0"}  # a leaf on the first bus
 
 
 def test_ring_one_bus_has_no_self_loop(toy):

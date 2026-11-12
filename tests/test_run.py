@@ -79,7 +79,7 @@ async def test_end_to_end_all_lost_times_out(tmp_path):
         loss_rate=1.0,
         delay_s=0.01,
         seed=0,
-        slack=True,
+        grid_exchange=True,
         start=None,
         hours=3,
         day=None,
@@ -96,7 +96,9 @@ async def test_end_to_end_all_lost_times_out(tmp_path):
     assert 0 < meta["messages"]["lost"] < meta["messages"]["sent"]
     csv = pd.read_csv(out / "schedule.csv", index_col="time")
     assert csv[["gas", "coal", "wind", "battery"]].isna().all().all()
-    np.testing.assert_allclose(csv["residual"], 0.0)  # the slack takes all demand
+    np.testing.assert_allclose(
+        csv["residual"], 0.0
+    )  # the grid exchange takes all demand
 
 
 def test_no_storage(tmp_path):
@@ -138,7 +140,7 @@ def test_consensus_reaches_central_cost(tmp_path, topology):
     assert consensus["inputs"]["consensus"]["tuning"] == "manual"
     assert consensus["total_cost"] == pytest.approx(central["total_cost"], rel=1e-3)
     # Q-A3: time to solution (≥ one 10 ms hop per iteration) and the per-iteration trace, whose
-    # last row is the final state (cost without slack = total_cost here, islanded)
+    # last row is the final state (cost without grid exchange = total_cost here, islanded)
     assert central["sim_time_s"] is None
     assert consensus["sim_time_s"] >= 0.01 * consensus["iterations"]
     trace = pd.read_csv(next(tmp_path.glob("toy/consensus/*/trace.csv")))

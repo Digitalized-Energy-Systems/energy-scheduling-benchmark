@@ -37,3 +37,18 @@ def test_compare_pairs_runs_with_central(tmp_path, capsys):
     out = capsys.readouterr()
     assert "| toy | dummy |" in out.out and "missing:" in out.err
     assert (tmp_path / "compare.csv").read_text().startswith("network,algorithm,")
+
+
+def test_old_slack_runs_pair_as_grid_exchange(tmp_path):
+    """Run folders written before the rename (audit 2026-11-12 Q-A6) say ``slack``."""
+    import json
+
+    common = ["--network", "toy", "--hours", "6", "--out", str(tmp_path)]
+    for alg in ("central", "dummy"):
+        esb_run([*common, "--algorithm", alg, "--grid-exchange"])
+    (meta_path,) = (tmp_path / "toy" / "dummy").glob("*/meta.json")
+    meta = json.loads(meta_path.read_text())
+    meta["inputs"]["slack"] = meta["inputs"].pop("grid_exchange")
+    meta_path.write_text(json.dumps(meta))
+    rows, _ = compare(load_runs(tmp_path))
+    assert len(rows) == 1 and bool(rows.iloc[0].grid_exchange)
