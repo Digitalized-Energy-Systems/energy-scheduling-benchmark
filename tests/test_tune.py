@@ -12,6 +12,7 @@ def test_write_section_replaces_only_its_table(tmp_path, monkeypatch):
     monkeypatch.setattr(parameters, "PARAMETERS", path)
     name = "consensus.toy.ring.sweep"
     tune.write_section(name, {"steps": "constant", "kappa": 0.01, "note": "a"})
+    path.write_text(path.read_text() + "# a comment after the section\n")
     tune.write_section(name, {"steps": "constant", "kappa": 0.02, "note": "b"})
     table = tomllib.loads(path.read_text())["consensus"]
     assert table["toy"]["ring"]["sweep"] == {
@@ -21,7 +22,9 @@ def test_write_section_replaces_only_its_table(tmp_path, monkeypatch):
     }
     assert table["toy"]["ring"]["manual"]["kappa"] == 0.03  # neighbours untouched
     assert table["alpha0"] == 0.055
-    assert path.read_text().count(f"[{name}]") == 1
+    text = path.read_text()
+    assert text.count(f"[{name}]") == 1
+    assert text.index("# a comment after") > text.index('note = "b"')  # kept, in place
 
 
 def _args(**kw):

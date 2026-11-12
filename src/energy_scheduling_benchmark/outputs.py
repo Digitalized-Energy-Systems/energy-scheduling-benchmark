@@ -38,6 +38,63 @@ class Outcome:
     trace: pd.DataFrame | None = None
 
 
+class IterationTrace:
+    """Per-iteration convergence trace of one distributed run (``trace.csv``; audit 2026-11-12
+    Q-A3, decided by Jonas: common columns + the algorithm's, recorded in the ESB actors, always
+    on). Generic for every iterative algorithm (moved out of ``consensus.py``, audit fix 5).
+
+    Iteration k = the state after k updates (k = 0: the start). Every bus actor adds its mismatch,
+    its current cost and its copy of the shared *vector* the algorithm iterates on (consensus: λ);
+    a row is kept only once all *n* actors reached it. ``sim_time_s`` = simulated time at which
+    the last actor got there (communication only: mango has no computation-time model)."""
+
+    def __init__(self, n: int, now, vector: str = "lambda") -> None:
+        self.n, self.now, self.vector = n, now, vector
+        # k -> [count, Σ mismatch, Σ vector, min vector, max vector, Σ cost, latest time]
+        self.rows: dict[int, list] = {}
+
+    def add(
+        self, k: int, mismatch: np.ndarray, cost: float, vector: np.ndarray
+    ) -> None:
+        row = self.rows.get(k)
+        if row is None:
+            self.rows[k] = [
+                1,
+                mismatch.copy(),
+                vector.copy(),
+                vector.copy(),
+                vector.copy(),
+                cost,
+                self.now(),
+            ]
+            return
+        row[0] += 1
+        row[1] += mismatch
+        row[2] += vector
+        np.minimum(row[3], vector, out=row[3])
+        np.maximum(row[4], vector, out=row[4])
+        row[5] += cost
+        row[6] = max(row[6], self.now())
+
+    def frame(self) -> pd.DataFrame:
+        """iteration, sim_time_s, imbalance_mwh (Σ_h |Σ_j mismatch|), cost (€, units without the
+        grid exchange), <vector>_mean, <vector>_spread (max_h of max_j − min_j)."""
+        return pd.DataFrame(
+            [
+                {
+                    "iteration": k,
+                    "sim_time_s": t,
+                    "imbalance_mwh": float(np.abs(mis).sum()),
+                    "cost": cost,
+                    f"{self.vector}_mean": float(v_sum.mean() / self.n),
+                    f"{self.vector}_spread": float((hi - lo).max()),
+                }
+                for k, (count, mis, v_sum, lo, hi, cost, t) in sorted(self.rows.items())
+                if count == self.n
+            ]
+        )
+
+
 def run_dir(
     root: Path | str,
     network: str,
@@ -81,7 +138,7 @@ def write_run(
     run (``null`` for central, a covered window or a run without a stop). Communication only:
     mango's simulation has no computation-time model, agents compute in zero simulated time
     (audit 2026-11-12 Q-A3). ``trace.csv`` (*iteration_trace*, distributed iterative runs): one
-    row per iteration, see ``consensus.IterationTrace.frame``.
+    row per iteration, see :meth:`IterationTrace.frame`.
 
     ``schedule.csv``: time × non-load unit MW (empty = the unit never set a schedule), plus
     ``grid_exchange`` (import > 0 / export < 0 at the grid connection: it takes the remaining

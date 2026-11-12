@@ -135,29 +135,39 @@ agent: its own load minus its own renewables). Renewables are never curtailed: a
 exported by the grid exchange (`--grid-exchange`) or stays in `residual` / `imbalance.surplus_mwh` (islanded).
 Consensus keeps λ ≥ 0 (the renewables' marginal cost) so a surplus hour cannot drive λ down
 without bound. A window whose renewables cover the load in every hour needs no ED: every
-algorithm returns at once with `stop_reason = "renewables_cover"`. Algorithms so far: `central` (the
-reference optimum), `consensus` (consensus + innovations, Kar & Hug 2012 / Hug, Kar & Wu 2015;
-plan `../docs/consensus-plan.md`, deviations `../docs/deviations.md`) and `dummy` (merit order in
-the leader, a plumbing test). Consensus parameters (step sizes, tolerances, `max_iter`) come from
-`resources/tuned_parameters.toml`, one set per tuning route and network × topology:
-`--tuning paper` = the papers' values (`[consensus]`, used in MW / €/MWh as printed), `manual` =
-hand-tuned `[consensus.<network>.<topology>.manual]`, `sweep` = written by
-`esb-tune` (each algorithm's `sweep_grid`, 32 candidates per algorithm; consensus: constant 4 κ ×
-4 β, decaying 4 α₀ × 2 β₀ × α exponent {0.6, 0.98}, α × 1/max scaled bus sensitivity, β ×
-1/λ_max(L) of the bus topology; fixed budget with the stop rule off, a run ends as `diverged` once
-|λ| > 4000 €/MWh (sweeps only), a candidate is pruned once one window scores worse than the best of
-its variant; `--jobs N` runs in parallel; the best candidate that runs through every window is
-written whatever its gap, the gap per window is in its `note`; nothing if every candidate
-fails; use `esb-tune --no-write` for trial sweeps and check `git diff
-resources/tuned_parameters.toml` after a real one). `--set key=value`
-overrides any value; the route and values used are stored in `meta.json`. Without `--tuning` a
-run takes `manual` if present, else `sweep`, else `paper` with a warning (decided 2026-11-12).
-Per-agent steps
-(`agent_scale`, decided 2026-11-11, `../docs/per-agent-steps-plan.md`): `"none"` (default, the
-paper route) = one α, β for all agents as in the papers; `"capacity"` (sweep sets) = each bus runs
-with s_j·α and s_j·β, s_j = median / the bus's dispatchable capacity, so big buses take smaller
-steps (both scaled together: the optimum stays the papers' one); the factors always come from the
-network with storage, also in `--no-storage` runs, so one tuned set fits both.
+algorithm returns at once with `stop_reason = "renewables_cover"`.
+
+### Algorithms and their parameters
+
+| `--algorithm` | what | parameters |
+|---|---|---|
+| `central` | the reference optimum (cvxpy, no agents) | none |
+| `consensus` | consensus + innovations, Kar & Hug 2012 / Hug, Kar & Wu 2015 (plan `../docs/consensus-plan.md`, deviations `../docs/deviations.md`) | `[consensus]` in `resources/tuned_parameters.toml`: step sizes, tolerances, `max_iter`, `agent_scale` |
+| `dummy` | merit order in the leader, a plumbing test | none |
+
+Parameters come in **tuning routes**, one set per network × topology (`--set key=value` overrides
+any value; the route and the values used are stored in `meta.json`):
+
+| route | TOML section | when it is used |
+|---|---|---|
+| `paper` | `[consensus]` — the papers' values, in MW / €/MWh as printed | `--tuning paper`, or the fallback (with a warning on stderr) when no tuned set exists |
+| `manual` | `[consensus.<network>.<topology>.manual]` — hand-tuned, with a `note` | default when present |
+| `sweep` | `[consensus.<network>.<topology>.sweep]` — written by `esb-tune` | default when there is no manual set (decided 2026-11-12) |
+
+`esb-tune --network N --topology T --start DAY … [--jobs N] [--no-write]` sweeps the algorithm's
+`sweep_grid` (32 candidates per algorithm; consensus: constant 4 κ × 4 β, decaying 4 α₀ × 2 β₀ ×
+α exponent {0.6, 0.98}; α × 1/max scaled bus sensitivity, β × 1/λ_max(L) of the bus topology) on
+a fixed budget with the stop rule off; a sweep run ends as `diverged` once |λ| > 4000 €/MWh, and a
+candidate is pruned once one window scores worse than the best of its variant. The best candidate
+that runs through every window is written whatever its gap (the gap per window is in its `note`);
+nothing is written if every candidate fails. Use `--no-write` for trial sweeps and check
+`git diff resources/tuned_parameters.toml` after a real one.
+
+Per-agent steps (`agent_scale`, decided 2026-11-11, `../docs/per-agent-steps-plan.md`): `"none"`
+(default, the paper route) = one α, β for all agents as in the papers; `"capacity"` (sweep sets) =
+each bus runs with s_j·α and s_j·β, s_j = median / the bus's dispatchable capacity, so big buses
+take smaller steps (both scaled together: the optimum stays the papers' one); the factors always
+come from the network with storage, also in `--no-storage` runs, so one tuned set fits both.
 
 `esb-compare [--root outputs] [--out FILE]` reads every `<root>/<network>/<algorithm>/<run>/meta.json`
 (read-only), pairs each run with the central run of the same network, window, storage and grid-exchange
@@ -205,18 +215,18 @@ links. `consensus.py` is the worked example, `dummy.py` the smallest one.
 
 ```
 src/energy_scheduling_benchmark/
-├── problem.py    # problem rules shared by all: pre-dispatched units, grid import price
+├── problem.py    # problem rules shared by all: pre-dispatched units, grid import price, no-dispatch window
 ├── datasets.py   # benchmark networks + preparation recipe; esb-prepare
 ├── central.py    # central dispatch: the reference optimum (cvxpy)
 ├── storage.py    # shared storage model + price response (central dispatch + algorithms)
 ├── parameters.py # algorithm parameters per route (tuned_parameters.toml)
-├── consensus.py  # consensus + innovations: bus actor, iteration trace, sweep grid, setup
+├── consensus.py  # consensus + innovations: bus actor, sweep grid, setup
 ├── dummy.py      # dummy merit-order algorithm (test fixture), setup
 ├── tune.py       # esb-tune: parameter sweep for one algorithm × network × topology
 ├── compare.py    # esb-compare: cost gap of every run vs. its central run
 ├── world.py      # mango world: bus agents, topologies, counted lossy links, leader
 ├── run.py        # esb-run: one run end-to-end; ALGORITHMS (the algorithm interface)
-└── outputs.py    # schedule.csv + meta.json (+ trace.csv), Outcome
+└── outputs.py    # schedule.csv + meta.json + trace.csv; Outcome, IterationTrace
 resources/
 ├── tuned_parameters.toml  # per-algorithm parameters
 ├── networks/     # raw inputs (PyPSA .nc, pandapower .json), build_*.py, PyPSA-Eur configs

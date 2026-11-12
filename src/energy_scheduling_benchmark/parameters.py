@@ -59,7 +59,18 @@ def parameters(
     return defaults | own | (overrides or {}) | {"tuning": tuning}
 
 
+def lock(f, operation: int) -> None:
+    """``flock`` *f* (esb-tune may be rewriting the parameter file in parallel), or do nothing
+    where the filesystem has no locks (Lustre/NFS without flock support raise OSError instead of
+    silently not holding; audit 2026-11-12 fix 2) — parallel sweeps write distinct sections and
+    the runbook's diff check catches a lost one."""
+    try:
+        fcntl.flock(f, operation)
+    except OSError:
+        pass
+
+
 def _read() -> dict:
     with open(PARAMETERS) as f:
-        fcntl.flock(f, fcntl.LOCK_SH)  # esb-tune may be rewriting it in parallel
+        lock(f, fcntl.LOCK_SH)
         return tomllib.loads(f.read())

@@ -67,19 +67,28 @@ def score(meta: dict, central: dict, demand_mwh: float) -> float | None:
 
 
 def write_section(name: str, values: dict) -> None:
-    """Replace (or append) table ``[name]`` in the parameter file; other text is kept.
+    """Replace table ``[name]`` in place (its header + the key lines that follow it) or append
+    it; every other line, comments after the table included, is kept.
 
-    Locked, so parallel sweeps (one per network × topology) do not lose each other's sections.
+    Locked (where the filesystem has locks, ``parameters.lock``), so parallel sweeps (one per
+    network × topology) do not lose each other's sections.
     """
+    section = "\n".join(
+        [f"[{name}]"] + [f"{k} = {json.dumps(v)}" for k, v in values.items()]
+    )
     with open(parameters.PARAMETERS, "r+") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+        parameters.lock(f, fcntl.LOCK_EX)
         text = f.read()
-        text = re.sub(
-            rf"\n\[{re.escape(name)}\]\n(?:[^\[\n].*\n|\n(?!\[))*", "\n", text
+        text, n = re.subn(
+            rf"^\[{re.escape(name)}\]\n(?:[^\[#\n].*\n?)*",
+            lambda _: section + "\n",  # a function: the note may contain backslashes
+            text,
+            flags=re.M,
         )
-        lines = [f"[{name}]"] + [f"{k} = {json.dumps(v)}" for k, v in values.items()]
+        if not n:
+            text = text.rstrip("\n") + "\n\n" + section + "\n"
         f.seek(0)
-        f.write(text.rstrip("\n") + "\n\n" + "\n".join(lines) + "\n")
+        f.write(text)
         f.truncate()
 
 

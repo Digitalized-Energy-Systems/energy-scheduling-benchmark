@@ -75,7 +75,7 @@ def response(c: Component):
         if solver is None or not solver.is_data_update_allowed():
             solver = clarabel.DefaultSolver(P, q, A, b, cones, settings)
         else:
-            solver.update(P=P, q=q, A=A, b=b, settings=solver.get_settings())
+            solver.update(q=q)  # only the linear term depends on λ
         solution = solver.solve()
         if solution.status != clarabel.SolverStatus.Solved:
             raise RuntimeError(f"storage response: {solution.status}")

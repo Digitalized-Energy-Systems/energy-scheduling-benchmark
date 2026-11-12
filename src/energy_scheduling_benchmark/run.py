@@ -24,12 +24,10 @@ import tomllib
 from dataclasses import replace
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from distributed_resource_optimization import StartCoordinatedDistributedOptimization
 from mango import DISCRETE_EVENT
 from mango_energy_environments import (
-    LOAD,
     STORAGE,
     CopperPlateBehavior,
     Network,
@@ -40,7 +38,7 @@ from . import consensus, datasets, dummy
 from .central import solve_central
 from .outputs import RENEWABLES_COVER, run_dir, write_run
 from .parameters import TUNINGS, has_parameters, parameters
-from .problem import predispatched
+from .problem import no_dispatch
 from .world import LEADER, TOPOLOGIES, build_world
 
 #: name → algorithm module (None: central dispatch, no world). Add a new algorithm here.
@@ -69,27 +67,6 @@ def without_storage(network: Network) -> Network:
     """*network* without its storage units (``--no-storage``)."""
     components = {cid: c for cid, c in network.components.items() if c.kind != STORAGE}
     return Network(network.time_index, components, network.lines)
-
-
-def no_dispatch(network: Network) -> dict[str, np.ndarray] | None:
-    """Schedules when the pre-dispatched units alone cover the load in every hour (no ED needed,
-    the same for every algorithm; S1 plan D7): those at p_max, other units at p_min, storage
-    idle. None if any hour needs dispatch."""
-    comps = network.components
-    fixed = {
-        cid: c.p_max
-        for cid, c in comps.items()
-        if c.kind != LOAD and predispatched(c.kind, c.cost[0])
-    }
-    demand = sum(c.p_max for c in comps.values() if c.kind == LOAD)
-    if not np.all(sum(fixed.values(), 0.0) >= demand):
-        return None
-    rest = {
-        cid: np.zeros_like(c.p_max) if c.kind == STORAGE else c.p_min
-        for cid, c in comps.items()
-        if c.kind != LOAD and cid not in fixed
-    }
-    return fixed | rest
 
 
 async def _simulate(network, args, add_roles, trace=None):
