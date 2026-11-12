@@ -178,20 +178,34 @@ t0 + (k+1)·2·`delay_s`: a neighbour's λ missing by then is a failed link of t
 2012 §IV); meta `messages` then also reports `rounds_by_deadline` and `missing_edges`. Lossless
 runs wait for every λ as before.
 
+## Adding an algorithm
+
+One ESB module per algorithm, registered in `run.ALGORITHMS` (decided 2026-11-12, audit Q-A4):
+`setup(params, network, full, args)` returns `(behavior, agents, routes) -> outcome` — it adds the
+algorithm's mango roles (DRO `DistributedOptimizationRole` / `CoordinatorRole`) to the world's
+agents and returns `outcome() -> outputs.Outcome` (stop reason, iterations, message counts,
+`sim_time_s`, optional per-iteration trace). Its parameters are the `[<algorithm>]` section of
+`resources/tuned_parameters.toml` (`--tuning`, `--set` work for every algorithm); with
+`sweep_grid`, `SWEEP_RUN` and `VARIANT` it can be tuned by `esb-tune --algorithm <name>`. Its
+start / stop / report messages subclass DRO's `ControlMessage`, so they stay reliable on lossy
+links. `consensus.py` is the worked example, `dummy.py` the smallest one.
+
 ## Package layout
 
 ```
 src/energy_scheduling_benchmark/
+├── problem.py    # problem rules shared by all: pre-dispatched units, slack import price
 ├── datasets.py   # benchmark networks + preparation recipe; esb-prepare
 ├── central.py    # central dispatch: the reference optimum (cvxpy)
 ├── storage.py    # shared storage model + price response (central dispatch + algorithms)
-├── consensus.py  # consensus bus actor + parameters (tuned_parameters.toml)
-├── tune.py       # esb-tune: step-size sweep for one network × topology
+├── parameters.py # algorithm parameters per route (tuned_parameters.toml)
+├── consensus.py  # consensus + innovations: bus actor, iteration trace, sweep grid, setup
+├── dummy.py      # dummy merit-order algorithm (test fixture), setup
+├── tune.py       # esb-tune: parameter sweep for one algorithm × network × topology
 ├── compare.py    # esb-compare: cost gap of every run vs. its central run
 ├── world.py      # mango world: bus agents, topologies, counted lossy links, leader/slack
-├── dummy.py      # dummy merit-order algorithm (test fixture)
-├── run.py        # esb-run: one run end-to-end
-└── outputs.py    # schedule.csv + meta.json
+├── run.py        # esb-run: one run end-to-end; ALGORITHMS (the algorithm interface)
+└── outputs.py    # schedule.csv + meta.json (+ trace.csv), Outcome
 resources/
 ├── tuned_parameters.toml  # per-algorithm parameters
 ├── networks/     # raw inputs (PyPSA .nc, pandapower .json), build_*.py, PyPSA-Eur configs

@@ -22,11 +22,37 @@ from distributed_resource_optimization.algorithm.core import (
     DistributedAlgorithm,
 )
 from distributed_resource_optimization.carrier.mango_carrier import (
+    CoordinatorRole,
+    DistributedOptimizationRole,
     OptimizationFinishedMessage,
 )
 from mango_energy_environments import LOAD, STORAGE
 
-from .world import predispatched
+from .outputs import Outcome
+from .problem import predispatched
+from .world import LEADER, SLACK
+
+#: Simulated seconds the leader waits for offers (a ring of ~70 bus agents at 0.01 s per hop
+#: needs < 1 s for request + reply).
+TIMEOUT_S = 60.0
+
+
+def setup(params: dict, network, full, args):
+    """Benchmark wiring (algorithm interface, ``run.ALGORITHMS``): adds the dummy roles and
+    returns ``outcome() -> Outcome``."""
+
+    def add_roles(behavior, agents, routes):
+        coordinator = MeritOrderCoordinator(TIMEOUT_S)
+        for node, agent in agents.items():
+            if node == LEADER:
+                role = CoordinatorRole(coordinator, routes=routes[agent.aid])
+            else:
+                unit = DummyBus(None if node == SLACK else behavior, agent.aid)
+                role = DistributedOptimizationRole(unit, routes=routes[agent.aid])
+            agent.add_role(role)
+        return lambda: Outcome(coordinator.stop_reason, 1, sim_time_s=coordinator.time)
+
+    return add_roles
 
 
 @dataclass

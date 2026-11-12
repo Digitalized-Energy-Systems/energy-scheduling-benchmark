@@ -47,7 +47,18 @@ def test_window():
 
 @pytest.mark.parametrize("topology", ["grid", "ring", "complete"])
 def test_end_to_end_lossless(tmp_path, topology):
-    main(["--topology", topology, "--hours", "6", "--out", str(tmp_path)])
+    main(
+        [
+            "--algorithm",
+            "dummy",
+            "--topology",
+            topology,
+            "--hours",
+            "6",
+            "--out",
+            str(tmp_path),
+        ]
+    )
     (out,) = tmp_path.glob("toy/dummy/*")
     csv = pd.read_csv(out / "schedule.csv", index_col="time")
     np.testing.assert_allclose(
@@ -75,6 +86,8 @@ async def test_end_to_end_all_lost_times_out(tmp_path):
         storage=True,
         out=str(tmp_path),
         trace=False,
+        tuning=None,
+        set=[],
     )
     out = await run(args)
     meta = json.loads((out / "meta.json").read_text())
@@ -160,7 +173,7 @@ def test_consensus_settings_get_own_folders(tmp_path):
 
 
 def test_trace_lands_in_run_folder(tmp_path):
-    main(["--hours", "2", "--trace", "--out", str(tmp_path)])
+    main(["--algorithm", "dummy", "--hours", "2", "--trace", "--out", str(tmp_path)])
     (folder,) = tmp_path.glob("toy/dummy/*")
     names = {p.name for p in folder.iterdir()}
     assert {"mango_trace.jsonl", "mango_trace.html", "meta.json"} <= names
@@ -261,3 +274,15 @@ def test_control_messages_are_never_lost():
         r.reached for r in sim.calculate_communication(0.0, packages).package_results
     ]
     assert reached == [False, True] and (sim.sent, sim.lost) == (2, 1)
+
+
+def test_algorithm_interface(tmp_path):
+    from energy_scheduling_benchmark import tune
+    from energy_scheduling_benchmark.run import ALGORITHMS, build_parser
+
+    # audit 2026-11-12 Q-A4: one dict; every distributed algorithm module has setup(...)
+    assert build_parser().parse_args([]).algorithm == "central"  # Q-A12a
+    assert all(callable(m.setup) for m in ALGORITHMS.values() if m is not None)
+    assert set(tune.ALGORITHMS) == {"consensus"}  # the tunable ones (sweep_grid)
+    with pytest.raises(SystemExit, match="no parameters"):
+        main(["--algorithm", "dummy", "--set", "kappa=1", "--out", str(tmp_path)])

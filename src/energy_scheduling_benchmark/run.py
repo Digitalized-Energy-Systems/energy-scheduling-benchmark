@@ -2,7 +2,16 @@
 
 Usage (after ``esb-prepare --network lower_saxony_2025``)::
 
-    esb-run --network lower_saxony_2025 --topology ring --start 2025-01-14 --hours 168 --slack
+    esb-run --network lower_saxony_2025 --algorithm consensus --topology ring --start 2025-01-14
+
+Algorithm interface (audit 2026-11-12 Q-A4, decided by Jonas: module convention): every
+distributed algorithm is one ESB module in :data:`ALGORITHMS` with
+``setup(params, network, full, args) -> (behavior, agents, routes) -> outcome`` that adds its mango
+roles to the world's agents and returns ``outcome() -> outputs.Outcome``; its parameters are the
+``[<algorithm>]`` section of ``resources/tuned_parameters.toml`` (``--tuning``, ``--set``); if it
+can be tuned it also has ``sweep_grid``, ``SWEEP_RUN`` and ``VARIANT`` (``esb-tune``). Control
+messages (start, stop, reports) are marked with DRO's ``ControlMessage`` and never lost.
+Central dispatch is the one case without a world.
 """
 
 from __future__ import annotations
@@ -17,15 +26,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from distributed_resource_optimization import (
-    ConsensusCoordinator,
-    ConsensusInnovationsAlgorithm,
-)
-from distributed_resource_optimization.carrier.mango_carrier import (
-    CoordinatorRole,
-    DistributedOptimizationRole,
-    StartCoordinatedDistributedOptimization,
-)
+from distributed_resource_optimization import StartCoordinatedDistributedOptimization
 from mango import DISCRETE_EVENT
 from mango_energy_environments import (
     LOAD,
@@ -35,16 +36,15 @@ from mango_energy_environments import (
     load_network,
 )
 
-from . import consensus, datasets
+from . import consensus, datasets, dummy
 from .central import solve_central
-from .dummy import DummyBus, MeritOrderCoordinator
 from .outputs import RENEWABLES_COVER, run_dir, write_run
-from .world import LEADER, SLACK, TOPOLOGIES, build_world, predispatched
+from .parameters import TUNINGS, has_parameters, parameters
+from .problem import predispatched
+from .world import LEADER, TOPOLOGIES, build_world
 
-ALGORITHMS = ("central", "consensus", "dummy")
-#: Simulated seconds the dummy leader waits for offers (a ring of ~70 bus agents at 0.01 s per
-#: hop needs < 1 s for request + reply).
-DUMMY_TIMEOUT_S = 60.0
+#: name → algorithm module (None: central dispatch, no world). Add a new algorithm here.
+ALGORITHMS = {"central": None, "consensus": consensus, "dummy": dummy}
 
 
 def window(network: Network, start, hours: int) -> Network:
@@ -92,122 +92,9 @@ def no_dispatch(network: Network) -> dict[str, np.ndarray] | None:
     return fixed | rest
 
 
-def _dummy(behavior, agents, routes):
-    """Adds the dummy roles; returns ``() -> (stop_reason, iterations)``."""
-    coordinator = MeritOrderCoordinator(DUMMY_TIMEOUT_S)
-    for node, agent in agents.items():
-        if node == LEADER:
-            role = CoordinatorRole(coordinator, routes=routes[agent.aid])
-        else:
-            unit = DummyBus(None if node == SLACK else behavior, agent.aid)
-            role = DistributedOptimizationRole(unit, routes=routes[agent.aid])
-        agent.add_role(role)
-    return lambda: (coordinator.stop_reason, 1, {}, {"sim_time_s": coordinator.time})
-
-
-def longest_hops(routes: dict, buses: list[str], leader: str) -> int:
-    """Most hops between the leader and a bus agent (start messages and reports travel them)."""
-
-    def hops(aid: str) -> int:
-        n = 0
-        while aid != leader:
-            aid, n = routes[aid][leader], n + 1
-        return n
-
-    return max((hops(b) for b in buses), default=1)
-
-
-def settle_s(routes: dict, buses: list[str], leader: str, delay_s: float) -> float:
-    """Longest report delay to the leader (hops × *delay_s*) for the consensus stop; 0 when every
-    bus is a neighbour (equal delays). Without it a late "not converged" report on a longer route
-    could be overtaken by a near "converged" one and the leader would stop on a stale snapshot
-    (audit 2026-11-11; LS2025 ring: up to 34 hops)."""
-    longest = longest_hops(routes, buses, leader)
-    return 0.0 if longest <= 1 else longest * delay_s
-
-
-def _consensus(
-    params: dict, steps: int, full: Network, delay_s: float, loss_rate: float
-):
-    """Adds the consensus roles (bus agents + leader; the slack takes no part, plan Q6).
-
-    *full*: the network with storage — the per-agent factors come from it also in a
-    ``--no-storage`` run, as the one tuned set (tuned with storage) serves both (review 2026-11-11:
-    without storage the factors moved up to 14× on PyPSA-Eur)."""
-
-    def setup(behavior, agents, routes):
-        alpha, beta = consensus.steps(params)
-        factors = consensus.agent_factors(full, params["agent_scale"])
-        buses = [a for node, a in agents.items() if node not in (LEADER, SLACK)]
-        aids, leader = [a.aid for a in buses], agents[LEADER].aid
-        # lossy links (S5): a round ends for everyone at t0 + (k+1)·2·delay_s (Q-L1); t0 after the
-        # slowest start message. Lossless runs keep waiting for every λ (unchanged baseline).
-        lossy = loss_rate > 0
-        coordinator = ConsensusCoordinator(
-            [a.addr for a in buses],
-            np.zeros(steps),
-            settle_s=settle_s(routes, aids, leader, delay_s),
-            start_latency=longest_hops(routes, aids, leader) * delay_s
-            if lossy
-            else 0.0,
-        )
-        agents[LEADER].add_role(
-            CoordinatorRole(coordinator, routes=routes[agents[LEADER].aid])
-        )
-        algorithms = []
-        # every agent's clock is the world's simulated clock (audit Q-A3)
-        trace = consensus.IterationTrace(
-            len(buses), lambda: agents[LEADER].context.current_timestamp
-        )
-        for agent in buses:
-            actor = consensus.BusActor(
-                behavior, agent.aid, params["eps_p"], params["lam_abort"], trace
-            )
-            s = factors[agent.aid]  # agent ids are the bus names (world.build_world)
-            algorithm = ConsensusInnovationsAlgorithm(
-                lambda alg, carrier: alg.actor.finish(),
-                actor,
-                lambda i, s=s: s * alpha(i),
-                lambda i, s=s: s * beta(i),
-                params["eps_lambda"],
-                params["max_iter"],
-                consensus.LAM_MIN,
-                round_timeout=2 * delay_s if lossy else None,
-            )
-            algorithms.append(algorithm)
-            agent.add_role(
-                DistributedOptimizationRole(algorithm, routes=routes[agent.aid])
-            )
-
-        def outcome():
-            r = coordinator.result
-            # KH12 §IV: how often a round ended by deadline and how many λ were missing (Q-L5)
-            counts = {
-                "rounds_by_deadline": sum(a.rounds_by_deadline for a in algorithms),
-                "missing_edges": sum(a.missing_edges for a in algorithms),
-            }
-            if r is not None:
-                stop = (r.stop_reason, r.iterations)
-            elif any(a.actor.diverged for a in algorithms):  # sweep abort (audit T4)
-                stop = ("diverged", None)
-            else:
-                stop = ("stalled", None)
-            # sim time of the coordinator's stop = time to solution (Q-A3); None without a stop
-            extra = {
-                "sim_time_s": None if r is None else r.time,
-                "trace": trace.frame(),
-            }
-            return *stop, counts, extra
-
-        return outcome
-
-    return setup
-
-
-async def _simulate(network, args, setup, trace=None):
-    """Run the mango world with the roles *setup* adds; returns
-    (behavior, messages, stop_reason, iterations, extra); algorithm counts join *messages*,
-    *extra* = ``sim_time_s`` and (iterative algorithms) the per-iteration ``trace``."""
+async def _simulate(network, args, add_roles, trace=None):
+    """Run the mango world with the roles *add_roles* adds; returns (behavior, messages, outcome);
+    the algorithm's counts join *messages*."""
     world, behavior, agents, communication, routes = build_world(
         network,
         args.topology,
@@ -217,20 +104,20 @@ async def _simulate(network, args, setup, trace=None):
         args.slack,
         trace,
     )
-    outcome = setup(behavior, agents, routes)
+    outcome = add_roles(behavior, agents, routes)
     async with world:
         # kick-off is local (not sent over the lossy network, not counted)
         agents[LEADER].handle_message(StartCoordinatedDistributedOptimization(None), {})
         while await world.step(DISCRETE_EVENT) is not None:
             pass
-    stop_reason, iterations, counts, extra = outcome()
+    result = outcome()
     messages = {
         "sent": communication.sent,
         "delivered": world.messages_delivered_count,
         "lost": communication.lost,
-        **counts,
+        **result.counts,
     }
-    return behavior, messages, stop_reason, iterations, extra
+    return behavior, messages, result
 
 
 def _value(text: str):
@@ -241,6 +128,26 @@ def _value(text: str):
         return text
 
 
+def _parameters(args, network_name: str) -> tuple[dict, str]:
+    """The algorithm's parameters and the run-folder variant (tuning route + a short hash of the
+    ``--set`` overrides, so settings do not overwrite each other); ({}, "") without a section."""
+    if not has_parameters(args.algorithm):
+        if args.set or args.tuning:
+            raise SystemExit(f"{args.algorithm} has no parameters (--set/--tuning)")
+        return {}, ""
+    if bad := [kv for kv in args.set if "=" not in kv]:
+        raise SystemExit(f"--set needs KEY=VALUE, got {bad}")
+    overrides = {k: _value(v) for k, v in (kv.split("=", 1) for kv in args.set)}
+    params = parameters(
+        args.algorithm, network_name, args.topology, args.tuning, overrides
+    )
+    variant = params["tuning"]
+    if args.set:
+        digest = hashlib.sha1(" ".join(sorted(args.set)).encode()).hexdigest()
+        variant += f"_set{digest[:6]}"
+    return params, variant
+
+
 async def run(args: argparse.Namespace) -> Path:
     network_file = datasets.prepared_path(args.network)
     network = full = window(load_network(network_file), args.start, args.hours)
@@ -248,37 +155,12 @@ async def run(args: argparse.Namespace) -> Path:
         network = without_storage(network)
     inputs = {**vars(args), "start": str(network.time_index[0])}
     began = time.perf_counter()
-    variant = ""
-    setup = _dummy
+    params, variant = _parameters(args, network_file.stem)
+    if params:
+        inputs[args.algorithm] = params
     # MWh charged + discharged in the same hour; only central knows it
-    simultaneous = None
-    extra = {}  # distributed runs: sim_time_s + per-iteration trace (Q-A3)
+    simultaneous = sim_time_s = iteration_trace = None
     covered = no_dispatch(network)
-    if args.algorithm == "central" and covered is None:
-        behavior = CopperPlateBehavior(network)
-        behavior.schedules, stop_reason, simultaneous = solve_central(
-            network, args.slack
-        )
-        messages, iterations = {"sent": 0, "delivered": 0, "lost": 0}, 1
-    elif args.algorithm == "consensus":
-        if bad := [kv for kv in args.set if "=" not in kv]:
-            raise SystemExit(f"--set needs KEY=VALUE, got {bad}")
-        overrides = dict(kv.split("=", 1) for kv in args.set)
-        params = consensus.parameters(
-            network_file.stem,
-            args.topology,
-            args.tuning,
-            {k: _value(v) for k, v in overrides.items()},
-        )
-        inputs["consensus"] = params
-        # tuning route, plus a short hash of --set overrides, so settings do not overwrite
-        variant = params["tuning"]
-        if args.set:
-            digest = hashlib.sha1(" ".join(sorted(args.set)).encode()).hexdigest()
-            variant += f"_set{digest[:6]}"
-        setup = _consensus(
-            params, len(network.time_index), full, args.delay_s, args.loss_rate
-        )
     out = run_dir(
         args.out,
         network_file.stem,
@@ -291,19 +173,26 @@ async def run(args: argparse.Namespace) -> Path:
         args.storage,
         variant,
     )
+    no_messages = {"sent": 0, "delivered": 0, "lost": 0}
     if covered is not None:
         behavior = CopperPlateBehavior(network)
         behavior.schedules = covered
-        stop_reason, iterations = RENEWABLES_COVER, 0
-        messages = {"sent": 0, "delivered": 0, "lost": 0}
-    elif args.algorithm != "central":
+        stop_reason, iterations, messages = RENEWABLES_COVER, 0, no_messages
+    elif ALGORITHMS[args.algorithm] is None:  # central
+        behavior = CopperPlateBehavior(network)
+        behavior.schedules, stop_reason, simultaneous = solve_central(
+            network, args.slack
+        )
+        messages, iterations = no_messages, 1
+    else:
         trace = None
         if args.trace:
             out.mkdir(parents=True, exist_ok=True)
             trace = out / "mango_trace.jsonl"
-        behavior, messages, stop_reason, iterations, extra = await _simulate(
-            network, args, setup, trace
-        )
+        add_roles = ALGORITHMS[args.algorithm].setup(params, network, full, args)
+        behavior, messages, result = await _simulate(network, args, add_roles, trace)
+        stop_reason, iterations = result.stop_reason, result.iterations
+        sim_time_s, iteration_trace = result.sim_time_s, result.trace
     wall_time_s = time.perf_counter() - began
 
     write_run(
@@ -318,8 +207,8 @@ async def run(args: argparse.Namespace) -> Path:
         wall_time_s=wall_time_s,
         slack=args.slack,
         storage_simultaneous_mwh=simultaneous,
-        sim_time_s=extra.get("sim_time_s"),
-        iteration_trace=extra.get("trace"),
+        sim_time_s=sim_time_s,
+        iteration_trace=iteration_trace,
     )
     return out
 
@@ -331,7 +220,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="toy",
         help="dataset name (its resources/prepared/<name>.nc) or a prepared .nc file",
     )
-    parser.add_argument("--algorithm", choices=ALGORITHMS, default="dummy")
+    # default central: the reference optimum (was the dummy test fixture; audit Q-A12a)
+    parser.add_argument("--algorithm", choices=ALGORITHMS, default="central")
     parser.add_argument("--topology", choices=TOPOLOGIES, default="grid")
     parser.add_argument(
         "--loss-rate",
@@ -357,15 +247,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--tuning",
-        choices=consensus.TUNINGS,
-        help="consensus parameter set (default: manual if tuned, else paper)",
+        choices=TUNINGS,
+        help="the algorithm's parameter set (default: manual if tuned, else paper)",
     )
     parser.add_argument(
         "--set",
         action="append",
         default=[],
         metavar="KEY=VALUE",
-        help="override a consensus parameter (resources/tuned_parameters.toml)",
+        help="override an algorithm parameter (resources/tuned_parameters.toml)",
     )
     parser.add_argument("--out", default="outputs")
     parser.add_argument(

@@ -73,8 +73,8 @@ async def test_build_world_and_loss_count(toy):
 
 async def test_settle_time_for_multi_hop_reports():
     from energy_scheduling_benchmark import datasets
-    from energy_scheduling_benchmark.run import settle_s, window
-    from energy_scheduling_benchmark.world import LEADER, build_world
+    from energy_scheduling_benchmark.run import window
+    from energy_scheduling_benchmark.world import LEADER, build_world, settle_s
 
     toy = window(datasets.load("toy"), None, 2)
     for topology, expected in [("complete", 0.0), ("ring", 3 * 0.01)]:

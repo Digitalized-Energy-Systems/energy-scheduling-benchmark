@@ -30,12 +30,14 @@ from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 
 from mango_energy_environments import LOAD, load_network
 
-from . import consensus, datasets
+from . import datasets, parameters
 from .outputs import RENEWABLES_COVER
+from .run import ALGORITHMS as RUN_ALGORITHMS
 from .run import build_parser, run, window, without_storage
 
-#: algorithm → module with ``sweep_grid(network, full, topology)``, ``SWEEP_RUN``, ``VARIANT``
-ALGORITHMS = {"consensus": consensus}
+#: the tunable algorithms: modules with ``sweep_grid(network, full, topology)``, ``SWEEP_RUN``,
+#: ``VARIANT`` (algorithm interface, ``run.ALGORITHMS``)
+ALGORITHMS = {n: m for n, m in RUN_ALGORITHMS.items() if hasattr(m, "sweep_grid")}
 
 
 def _meta(argv: list[str]) -> dict:
@@ -69,7 +71,7 @@ def write_section(name: str, values: dict) -> None:
 
     Locked, so parallel sweeps (one per network × topology) do not lose each other's sections.
     """
-    with open(consensus.PARAMETERS, "r+") as f:
+    with open(parameters.PARAMETERS, "r+") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         text = f.read()
         text = re.sub(

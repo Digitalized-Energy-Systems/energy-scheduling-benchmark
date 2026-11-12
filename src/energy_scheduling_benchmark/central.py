@@ -2,7 +2,7 @@
 
 One cvxpy model over the whole window: units within p_min … p_max at c₁p + c₂p², storage per
 :mod:`.storage`, optional slack (import at :data:`SLACK_IMPORT_PRICE`, export free), and per hour
-Σ injections = demand. Pre-dispatched units (:func:`.world.predispatched`) are fixed at p_max;
+Σ injections = demand. Pre-dispatched units (:func:`.problem.predispatched`) are fixed at p_max;
 islanded, a free surplus variable takes what nobody can absorb (reported, not curtailed; S1 plan
 D6). No tie-break terms (Q-C4). Charging and discharging in the same hour is never optimal with the
 ageing cost on discharge and η < 1 (Zhu et al. 2025 Thm 1; Xu et al. 2018 §IV), so it is only
@@ -17,7 +17,7 @@ import numpy as np
 from mango_energy_environments import LOAD, STORAGE, Network
 
 from . import storage
-from .world import SLACK_IMPORT_PRICE, predispatched
+from .problem import SLACK_IMPORT_PRICE, predispatched
 
 
 def solve_central(

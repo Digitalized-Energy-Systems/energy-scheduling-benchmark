@@ -11,51 +11,24 @@ from __future__ import annotations
 import random
 
 import networkx as nx
-from distributed_resource_optimization.algorithm.firstorder.consensus.innovations import (
-    ConsensusReport,
-    ConsensusStart,
-)
-from distributed_resource_optimization.carrier.mango_carrier import (
-    OptimizationFinishedMessage,
-    StartCoordinatedDistributedOptimization,
-    _Routed,
-    next_hops,
-)
+from distributed_resource_optimization import ControlMessage, next_hops, unwrap
 from mango import RoleAgent, auto_assign, graph_topology, topology_to_aid_graph
 from mango.simulation.communication import PackageResult, SimpleCommunicationSimulation
 from mango.simulation.environment import DefaultEnvironment
 from mango.simulation.world import create_world
-from mango_energy_environments import RENEWABLE, THERMAL, CopperPlateBehavior, Network
+from mango_energy_environments import CopperPlateBehavior, Network
 
 LEADER, SLACK = "leader", "slack"
-#: Slack import price (€/MWh), export is free (Q3: SDAC harmonised maximum clearing price).
-SLACK_IMPORT_PRICE = 4000.0
 TOPOLOGIES = ("grid", "complete", "ring")
-
-
-def predispatched(kind: str, c1: float) -> bool:
-    """Runs at its available power p_max before any algorithm: renewables and free thermal units
-    (marginal cost 0 → always first; KH12 eq. 27 / HKW15 §II must-take). Decided 2026-11-10
-    (supervisor meeting, `docs/renewables-predispatch-plan.md` D1): no curtailment — a surplus is
-    exported by the slack or reported."""
-    return kind == RENEWABLE or (kind == THERMAL and c1 <= 0)
-
-
-#: Control messages of the run protocol (start, stop, converged reports): never lost. Only the
-#: algorithms' own messages (consensus λ, dummy offers) are lossy — the benchmark measures the
-#: algorithm under lossy links (KH12 §IV), not our self-made protocol (S5 Q-L2, Jonas 2026-11-11;
-#: deviation from M4 "all messages lossy", deviations.md C8).
-CONTROL = (
-    ConsensusStart,
-    ConsensusReport,
-    StartCoordinatedDistributedOptimization,
-    OptimizationFinishedMessage,
-)
 
 
 class CountingCommunication(SimpleCommunicationSimulation):
     """mango's loss/delay simulation that also counts sent and lost messages (per hop), and never
-    loses a :data:`CONTROL` message (also inside a routed envelope).
+    loses a DRO ``ControlMessage`` (start, stop, converged reports; also inside a routed
+    envelope). Only the algorithms' own messages (consensus λ, dummy offers) are lossy — the
+    benchmark measures the algorithm under lossy links (KH12 §IV), not our self-made protocol (S5
+    Q-L2, Jonas 2026-11-11; deviation from M4 "all messages lossy", deviations.md C8). The DRO
+    marker replaced a hard-coded list of message classes (audit 2026-11-12 Q-A4).
 
     Kept (decision 2026-11-09, TODO 14d): mango counts only delivered messages
     (``world.messages_delivered_count``); sent/lost exist only as trace events, and tracing
@@ -68,10 +41,10 @@ class CountingCommunication(SimpleCommunicationSimulation):
     def calculate_communication(self, current_time, messages):
         result = super().calculate_communication(current_time, messages)
         for i, (message, r) in enumerate(zip(messages, result.package_results)):
-            content = message.content[0]  # MessagePackage.content = (content, meta)
-            if isinstance(content, _Routed):
-                content = content.content
-            if not r.reached and isinstance(content, CONTROL):
+            content = unwrap(
+                message.content[0]
+            )  # MessagePackage.content = (content, meta)
+            if not r.reached and isinstance(content, ControlMessage):
                 result.package_results[i] = PackageResult(True, r.delay_s)
         self.sent += len(messages)
         self.lost += sum(not r.reached for r in result.package_results)
@@ -142,3 +115,24 @@ def build_world(
     auto_assign(topo, list(agents.values()))
     routes = next_hops(topology_to_aid_graph(topo))
     return world, behavior, agents, communication, routes
+
+
+def longest_hops(routes: dict, buses: list[str], leader: str) -> int:
+    """Most hops between the leader and a bus agent (start messages and reports travel them)."""
+
+    def hops(aid: str) -> int:
+        n = 0
+        while aid != leader:
+            aid, n = routes[aid][leader], n + 1
+        return n
+
+    return max((hops(b) for b in buses), default=1)
+
+
+def settle_s(routes: dict, buses: list[str], leader: str, delay_s: float) -> float:
+    """Longest report delay to the leader (hops × *delay_s*) for a coordinator's stop; 0 when
+    every bus is a neighbour (equal delays). Without it a late "not converged" report on a longer
+    route could be overtaken by a near "converged" one and the leader would stop on a stale
+    snapshot (audit 2026-11-11; LS2025 ring: up to 34 hops)."""
+    longest = longest_hops(routes, buses, leader)
+    return 0.0 if longest <= 1 else longest * delay_s

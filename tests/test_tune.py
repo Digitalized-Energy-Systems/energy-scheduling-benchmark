@@ -3,13 +3,13 @@ import tomllib
 
 import pytest
 
-from energy_scheduling_benchmark import consensus, tune
+from energy_scheduling_benchmark import consensus, parameters, tune
 
 
 def test_write_section_replaces_only_its_table(tmp_path, monkeypatch):
     path = tmp_path / "p.toml"
-    shutil.copy(consensus.PARAMETERS, path)
-    monkeypatch.setattr(consensus, "PARAMETERS", path)
+    shutil.copy(parameters.PARAMETERS, path)
+    monkeypatch.setattr(parameters, "PARAMETERS", path)
     name = "consensus.toy.ring.sweep"
     tune.write_section(name, {"steps": "constant", "kappa": 0.01, "note": "a"})
     tune.write_section(name, {"steps": "constant", "kappa": 0.02, "note": "b"})
@@ -95,29 +95,39 @@ def test_parameter_routes():
     import pytest
 
     assert (
-        consensus.parameters("toy", "ring")["tuning"] == "manual"
+        parameters.parameters("consensus", "toy", "ring")["tuning"] == "manual"
     )  # default if present
-    paper = consensus.parameters("toy", "ring", "paper")
+    paper = parameters.parameters("consensus", "toy", "ring", "paper")
     assert (paper["steps"], paper["alpha0"]) == ("decaying", 0.055)
-    assert consensus.parameters("base_s_1_elec_2019", "grid")["tuning"] == "paper"
+    assert (
+        parameters.parameters("consensus", "base_s_1_elec_2019", "grid")["tuning"]
+        == "paper"
+    )
     with pytest.raises(ValueError):
-        consensus.parameters("base_s_1_elec_2019", "grid", "sweep")
-    assert consensus.parameters("toy", "ring", overrides={"kappa": 1.0})["kappa"] == 1.0
+        parameters.parameters("consensus", "base_s_1_elec_2019", "grid", "sweep")
+    assert (
+        parameters.parameters("consensus", "toy", "ring", overrides={"kappa": 1.0})[
+            "kappa"
+        ]
+        == 1.0
+    )
     with pytest.raises(ValueError, match="kapa"):
-        consensus.parameters("toy", "ring", overrides={"kapa": 1.0})  # typo
+        parameters.parameters(
+            "consensus", "toy", "ring", overrides={"kapa": 1.0}
+        )  # typo
 
 
 def test_sweep_writes_nothing_if_no_candidate_runs_through(monkeypatch):
     _grid(monkeypatch, (8,), (4.8,), decaying=False)
-    before = consensus.PARAMETERS.read_text()
+    before = parameters.PARAMETERS.read_text()
     assert tune.sweep(_args(max_iter=500, write=True)) is None  # β > 2/λ_max diverges
-    assert consensus.PARAMETERS.read_text() == before
+    assert parameters.PARAMETERS.read_text() == before
 
 
 def test_sweep_writes_the_best_whatever_its_gap(tmp_path, monkeypatch):
     path = tmp_path / "p.toml"
-    shutil.copy(consensus.PARAMETERS, path)
-    monkeypatch.setattr(consensus, "PARAMETERS", path)
+    shutil.copy(parameters.PARAMETERS, path)
+    monkeypatch.setattr(parameters, "PARAMETERS", path)
     _grid(monkeypatch, (0.26,), (0.16,), decaying=False)  # κ ≈ 0.01
     best = tune.sweep(_args(max_iter=20, write=True))  # λ barely moves → gap far from 0
     gap = float(best["note"].split(": ")[-1].split("%")[0])

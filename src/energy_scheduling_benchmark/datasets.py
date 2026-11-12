@@ -31,7 +31,7 @@ from mango_energy_environments import (
     set_storage_defaults,
 )
 
-from .world import predispatched
+from .problem import predispatched
 
 # shortcut: path relative to the source checkout (editable install); package data when distributed.
 RESOURCES = Path(__file__).resolve().parents[2] / "resources"
@@ -150,7 +150,7 @@ SEASONS = {
 
 def typical_days(network: Network) -> dict[str, tuple[str, str]]:
     """Per season (standard day, tuning day): the full days whose residual load (load −
-    available pre-dispatched units, MWh — the same rule as the runs, ``world.predispatched``) is
+    available pre-dispatched units, MWh — the same rule as the runs, ``problem.predispatched``) is
     closest / second-closest to the season's median day (decisions 2026-11-09). The dates live in
     the README and ``run_all.sh``; regenerate with ``typical_days(load_network(prepared_path(name)))``."""
     comps = network.components.values()

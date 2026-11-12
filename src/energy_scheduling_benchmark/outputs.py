@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -14,11 +15,25 @@ import pandas as pd
 from mango_energy_environments import LOAD, STORAGE, CopperPlateBehavior
 
 from . import storage
-from .world import SLACK, SLACK_IMPORT_PRICE, predispatched
+from .problem import SLACK_IMPORT_PRICE, predispatched
+from .world import SLACK
 
 #: stop_reason of a run that needed no ED: pre-dispatched units cover the load in every hour
 #: (S1 plan D7); a valid result for every algorithm, central included.
 RENEWABLES_COVER = "renewables_cover"
+
+
+@dataclass
+class Outcome:
+    """What a distributed algorithm reports after its run (algorithm interface, audit
+    2026-11-12 Q-A4): *counts* join meta ``messages``, *sim_time_s* = simulated time of the stop
+    (None without one), *trace* = per-iteration ``trace.csv`` (None for non-iterative ones)."""
+
+    stop_reason: str
+    iterations: int | None
+    counts: dict = field(default_factory=dict)
+    sim_time_s: float | None = None
+    trace: pd.DataFrame | None = None
 
 
 def run_dir(

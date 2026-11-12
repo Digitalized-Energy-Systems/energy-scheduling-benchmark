@@ -1,4 +1,5 @@
-"""Consensus + innovations for economic dispatch: the bus actor and its step parameters.
+"""Consensus + innovations for economic dispatch: the bus actor, its step parameters and the
+benchmark wiring (``setup``; algorithm interface: ``run.ALGORITHMS``, audit 2026-11-12 Q-A4).
 
 Plan: ``docs/consensus-plan.md`` (§7 I1–I10). The generic algorithm is DRO's
 ``ConsensusInnovationsAlgorithm``; here each bus agent answers a price vector λ (€/MWh per hour)
@@ -9,58 +10,30 @@ pre-dispatched units at p_max (KH12 eq. 27 fixed infeed; S1 plan D3).
 
 from __future__ import annotations
 
-import fcntl
-import tomllib
-
 import networkx as nx
 import numpy as np
 import pandas as pd
-from distributed_resource_optimization import ConsensusActor, power_step
+from distributed_resource_optimization import (
+    ConsensusActor,
+    ConsensusCoordinator,
+    ConsensusInnovationsAlgorithm,
+    power_step,
+)
+from distributed_resource_optimization.carrier.mango_carrier import (
+    CoordinatorRole,
+    DistributedOptimizationRole,
+)
 from mango_energy_environments import LOAD, STORAGE, Component, Network
 
 from . import storage
-from .datasets import RESOURCES
-from .world import LEADER, SLACK, predispatched, topology_graph
+from .outputs import Outcome
+from .problem import predispatched
+from .world import LEADER, SLACK, longest_hops, settle_s, topology_graph
 
-PARAMETERS = RESOURCES / "tuned_parameters.toml"
 #: Floor on λ (€/MWh) = the marginal cost of the pre-dispatched renewables: in a surplus hour
 #: nobody can absorb, λ would fall without bound; at 0 renewables are the marginal unit, so 0 is
 #: the clearing price (S1 plan D4, deviation C9; KH12/HKW15 have no bound).
 LAM_MIN = 0.0
-
-
-TUNINGS = ("paper", "manual", "sweep")
-
-
-def parameters(
-    network: str,
-    topology: str,
-    tuning: str | None = None,
-    overrides: dict | None = None,
-) -> dict:
-    """``[consensus]`` defaults (= the paper values), then the *tuning* route's set
-    ``[consensus.<network>.<topology>.<tuning>]``, then *overrides*.
-
-    ``tuning=None``: "manual" if that set exists, else "paper".
-    """
-    with open(PARAMETERS) as f:
-        fcntl.flock(f, fcntl.LOCK_SH)  # esb-tune may be rewriting it in parallel
-        table = tomllib.loads(f.read())["consensus"]
-    defaults = {k: v for k, v in table.items() if not isinstance(v, dict)}
-    routes = table.get(network, {}).get(topology, {})
-    if tuning is None:
-        tuning = "manual" if "manual" in routes else "paper"
-    if tuning not in TUNINGS:
-        raise ValueError(f"tuning must be one of {TUNINGS}, got {tuning!r}")
-    if tuning != "paper" and tuning not in routes:
-        raise ValueError(
-            f"no {tuning!r} parameters for {network}/{topology} in {PARAMETERS}"
-        )
-    unknown = set(overrides or {}) - set(defaults)
-    if unknown:
-        raise ValueError(f"unknown consensus parameters {sorted(unknown)}")
-    own = routes.get(tuning, {}) if tuning != "paper" else {}
-    return defaults | own | (overrides or {}) | {"tuning": tuning}
 
 
 def steps(p: dict):
@@ -311,3 +284,78 @@ def _generator(cid, cost, p_min, p_max):
             f"{cid}: consensus needs c2 > 0 (prepare with a curvature band)"
         )
     return lambda lam: np.clip((lam - c1) / (2 * c2), p_min, p_max)
+
+
+def setup(params: dict, network: Network, full: Network, args):
+    """Benchmark wiring (algorithm interface, ``run.ALGORITHMS``): returns
+    ``(behavior, agents, routes) -> outcome`` that adds the roles — bus agents + leader; the slack
+    takes no part (plan Q6) — and ``outcome() -> Outcome``.
+
+    *full*: the network with storage — the per-agent factors come from it also in a
+    ``--no-storage`` run, as the one tuned set (tuned with storage) serves both (review 2026-11-11:
+    without storage the factors moved up to 14× on PyPSA-Eur)."""
+    steps_n, delay_s = len(network.time_index), args.delay_s
+
+    def add_roles(behavior, agents, routes):
+        alpha, beta = steps(params)
+        factors = agent_factors(full, params["agent_scale"])
+        buses = [a for node, a in agents.items() if node not in (LEADER, SLACK)]
+        aids, leader = [a.aid for a in buses], agents[LEADER].aid
+        # lossy links (S5): a round ends for everyone at t0 + (k+1)·2·delay_s (Q-L1); t0 after the
+        # slowest start message. Lossless runs keep waiting for every λ (unchanged baseline).
+        lossy = args.loss_rate > 0
+        coordinator = ConsensusCoordinator(
+            [a.addr for a in buses],
+            np.zeros(steps_n),
+            settle_s=settle_s(routes, aids, leader, delay_s),
+            start_latency=longest_hops(routes, aids, leader) * delay_s
+            if lossy
+            else 0.0,
+        )
+        agents[LEADER].add_role(CoordinatorRole(coordinator, routes=routes[leader]))
+        algorithms = []
+        # every agent's clock is the world's simulated clock (audit Q-A3)
+        trace = IterationTrace(
+            len(buses), lambda: agents[LEADER].context.current_timestamp
+        )
+        for agent in buses:
+            actor = BusActor(
+                behavior, agent.aid, params["eps_p"], params["lam_abort"], trace
+            )
+            s = factors[agent.aid]  # agent ids are the bus names (world.build_world)
+            algorithm = ConsensusInnovationsAlgorithm(
+                lambda alg, carrier: alg.actor.finish(),
+                actor,
+                lambda i, s=s: s * alpha(i),
+                lambda i, s=s: s * beta(i),
+                params["eps_lambda"],
+                params["max_iter"],
+                LAM_MIN,
+                round_timeout=2 * delay_s if lossy else None,
+            )
+            algorithms.append(algorithm)
+            agent.add_role(
+                DistributedOptimizationRole(algorithm, routes=routes[agent.aid])
+            )
+
+        def outcome() -> Outcome:
+            r = coordinator.result
+            # KH12 §IV: how often a round ended by deadline and how many λ were missing (Q-L5)
+            counts = {
+                "rounds_by_deadline": sum(a.rounds_by_deadline for a in algorithms),
+                "missing_edges": sum(a.missing_edges for a in algorithms),
+            }
+            if r is not None:
+                # sim time of the coordinator's stop = time to solution (Q-A3)
+                return Outcome(
+                    r.stop_reason, r.iterations, counts, r.time, trace.frame()
+                )
+            # sweep abort (audit T4), else a run that never stopped
+            stop = (
+                "diverged" if any(a.actor.diverged for a in algorithms) else "stalled"
+            )
+            return Outcome(stop, None, counts, None, trace.frame())
+
+        return outcome
+
+    return add_roles
