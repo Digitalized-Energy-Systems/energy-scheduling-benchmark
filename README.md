@@ -116,9 +116,15 @@ Each run writes `outputs/<network>/<algorithm>/<topology>_loss<rate>_seed<seed>_
 with `schedule.csv` (time × unit MW, `slack`, `residual`, `soc:<storage>`) and `meta.json` (inputs,
 prepared-file SHA-256, total cost (`null` for a failed central solve or a run that scheduled
 nothing without slack), slack use, imbalance shortfall/surplus, messages
-sent/delivered/lost, iterations, stop reason, wall time, `renewable_available_mwh`,
-`storage_simultaneous_mwh` = MWh charged and discharged in the same hour, central only, expected 0); with
-`--trace` also `mango_trace.jsonl` and its HTML viewer `mango_trace.html`.
+sent/delivered/lost, iterations, stop reason, `sim_time_s` = simulated time of the stop (time to
+solution of a distributed run; communication only — mango's simulation has no computation-time
+model, agents compute in zero simulated time; `null` for central), wall time,
+`renewable_available_mwh`, `storage_simultaneous_mwh` = MWh charged and discharged in the same
+hour, central only, expected 0). Consensus runs also write `trace.csv`: one row per iteration k
+(the state at λ after k updates) with `sim_time_s`, `imbalance_mwh` (Σ over hours of
+|Σ agents' mismatch|), `cost` (€ of the current schedules, slack not included), `lambda_mean`,
+`lambda_spread` (largest per-hour spread of λ across agents). With `--trace` also
+`mango_trace.jsonl` and its HTML viewer `mango_trace.html`.
 
 **Renewables are pre-dispatched** (decided 2026-11-10, `../docs/renewables-predispatch-plan.md`):
 renewables and thermal units with c₁ ≤ 0 run at their available power p_max; every algorithm

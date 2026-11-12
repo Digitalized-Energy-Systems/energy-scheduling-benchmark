@@ -14,6 +14,7 @@ import tomllib
 
 import networkx as nx
 import numpy as np
+import pandas as pd
 from distributed_resource_optimization import ConsensusActor, power_step
 from mango_energy_environments import LOAD, STORAGE, Component, Network
 
@@ -173,29 +174,95 @@ def sweep_grid(
     return decaying + constant, note
 
 
+class IterationTrace:
+    """Per-iteration convergence trace of one run (``trace.csv``; audit 2026-11-12 Q-A3, decided
+    by Jonas: common columns + the algorithm's, recorded in the ESB actors, always on).
+
+    Iteration k = the state at λ after k updates (k = 0: the start λ⁰). Every bus actor adds its
+    mismatch, λ and current cost; a row is kept only once all *n* actors reached it.
+    ``sim_time_s`` = simulated time at which the last actor got there (communication only: mango
+    has no computation-time model)."""
+
+    def __init__(self, n: int, now) -> None:
+        self.n, self.now = n, now
+        # k -> [count, Σ mismatch, Σ λ, min λ, max λ, Σ cost, latest time]
+        self.rows: dict[int, list] = {}
+
+    def add(self, k: int, lam: np.ndarray, mismatch: np.ndarray, cost: float) -> None:
+        row = self.rows.get(k)
+        if row is None:
+            self.rows[k] = [
+                1,
+                mismatch.copy(),
+                lam.copy(),
+                lam.copy(),
+                lam.copy(),
+                cost,
+                self.now(),
+            ]
+            return
+        row[0] += 1
+        row[1] += mismatch
+        row[2] += lam
+        np.minimum(row[3], lam, out=row[3])
+        np.maximum(row[4], lam, out=row[4])
+        row[5] += cost
+        row[6] = max(row[6], self.now())
+
+    def frame(self) -> pd.DataFrame:
+        """iteration, sim_time_s, imbalance_mwh (Σ_h |Σ_j mismatch|), cost (€, units without the
+        slack), lambda_mean, lambda_spread (max_h of max_j λ − min_j λ)."""
+        return pd.DataFrame(
+            [
+                {
+                    "iteration": k,
+                    "sim_time_s": t,
+                    "imbalance_mwh": float(np.abs(mis).sum()),
+                    "cost": cost,
+                    "lambda_mean": float(lam_sum.mean() / self.n),
+                    "lambda_spread": float((hi - lo).max()),
+                }
+                for k, (count, mis, lam_sum, lo, hi, cost, t) in sorted(
+                    self.rows.items()
+                )
+                if count == self.n
+            ]
+        )
+
+
 class BusActor(ConsensusActor):
     """All components at one bus, seen through MEE's copper-plate behaviour.
 
     *lam_abort*: sweep-only divergence abort (audit 2026-11-12, T4): once |λ| exceeds it the actor
-    marks itself ``diverged`` and raises, which ends a lossless run at once."""
+    marks itself ``diverged`` and raises, which ends a lossless run at once. *trace*: an
+    :class:`IterationTrace` the actor feeds once per iteration."""
 
     def __init__(
-        self, behavior, aid: str, eps_p: float, lam_abort: float = np.inf
+        self,
+        behavior,
+        aid: str,
+        eps_p: float,
+        lam_abort: float = np.inf,
+        trace: IterationTrace | None = None,
     ) -> None:
         self.behavior, self.aid, self.lam_abort = behavior, aid, lam_abort
         self.diverged = False
+        self.trace, self.k = trace, 0
         observe = behavior.observe
         self.load = 0.0  # net load: own load − own pre-dispatched units
-        self.respond, self.tol, self.fixed = {}, {}, {}
+        self.respond, self.tol, self.fixed, self.cost = {}, {}, {}, {}
+        self.fixed_cost = 0.0  # the pre-dispatched units' cost (constant)
         for cid in observe(aid, "components"):
             s = observe(aid, "statics", cid)
             if s["kind"] == LOAD:
                 self.load = self.load + observe(aid, "demand", cid)
                 continue
             p_min, p_max = observe(aid, "p_min", cid), observe(aid, "p_max", cid)
-            if predispatched(s["kind"], s["cost"][0]):
+            c1, c2 = s["cost"]
+            if predispatched(s["kind"], c1):
                 self.fixed[cid] = p_max
                 self.load = self.load - p_max
+                self.fixed_cost += float(np.sum(c1 * p_max + c2 * p_max**2))
                 continue
             self.tol[cid] = eps_p * s["p_nom"]
             if s["kind"] == STORAGE:
@@ -204,8 +271,12 @@ class BusActor(ConsensusActor):
                 }
                 c = Component(s["kind"], s["bus"], p_min, p_max, s["cost"], params)
                 self.respond[cid] = storage.response(c)
+                self.cost[cid] = lambda p, c=c: storage.cost(c, p)
             else:
                 self.respond[cid] = _generator(cid, s["cost"], p_min, p_max)
+                self.cost[cid] = lambda p, c1=c1, c2=c2: float(
+                    np.sum(c1 * p + c2 * p**2)
+                )
         self.p: dict | None = None
         self.prev: dict | None = None
 
@@ -214,7 +285,12 @@ class BusActor(ConsensusActor):
             self.diverged = True
             raise RuntimeError(f"{self.aid}: |λ| > {self.lam_abort} €/MWh (diverged)")
         self.prev, self.p = self.p, {cid: f(lam) for cid, f in self.respond.items()}
-        return sum(self.p.values(), np.zeros_like(lam)) - self.load
+        mismatch = sum(self.p.values(), np.zeros_like(lam)) - self.load
+        if self.trace is not None:
+            cost = self.fixed_cost + sum(self.cost[cid](p) for cid, p in self.p.items())
+            self.trace.add(self.k, lam, mismatch, cost)
+        self.k += 1
+        return mismatch
 
     def converged(self) -> bool:
         return self.prev is not None and all(

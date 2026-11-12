@@ -124,6 +124,15 @@ def test_consensus_reaches_central_cost(tmp_path, topology):
     assert consensus["stop_reason"] == "converged"
     assert consensus["inputs"]["consensus"]["tuning"] == "manual"
     assert consensus["total_cost"] == pytest.approx(central["total_cost"], rel=1e-3)
+    # Q-A3: time to solution (≥ one 10 ms hop per iteration) and the per-iteration trace, whose
+    # last row is the final state (cost without slack = total_cost here, islanded)
+    assert central["sim_time_s"] is None
+    assert consensus["sim_time_s"] >= 0.01 * consensus["iterations"]
+    trace = pd.read_csv(next(tmp_path.glob("toy/consensus/*/trace.csv")))
+    assert list(trace.iteration) == list(range(len(trace)))
+    assert trace.iteration.iloc[-1] >= consensus["iterations"] - 1
+    assert trace.cost.iloc[-1] == pytest.approx(consensus["total_cost"], rel=1e-6)
+    assert trace.imbalance_mwh.iloc[-1] < trace.imbalance_mwh.iloc[0]
 
 
 def test_consensus_per_agent_steps_reach_central_cost(tmp_path):

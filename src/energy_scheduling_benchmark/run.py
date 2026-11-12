@@ -102,7 +102,7 @@ def _dummy(behavior, agents, routes):
             unit = DummyBus(None if node == SLACK else behavior, agent.aid)
             role = DistributedOptimizationRole(unit, routes=routes[agent.aid])
         agent.add_role(role)
-    return lambda: (coordinator.stop_reason, 1, {})
+    return lambda: (coordinator.stop_reason, 1, {}, {"sim_time_s": coordinator.time})
 
 
 def longest_hops(routes: dict, buses: list[str], leader: str) -> int:
@@ -155,9 +155,13 @@ def _consensus(
             CoordinatorRole(coordinator, routes=routes[agents[LEADER].aid])
         )
         algorithms = []
+        # every agent's clock is the world's simulated clock (audit Q-A3)
+        trace = consensus.IterationTrace(
+            len(buses), lambda: agents[LEADER].context.current_timestamp
+        )
         for agent in buses:
             actor = consensus.BusActor(
-                behavior, agent.aid, params["eps_p"], params["lam_abort"]
+                behavior, agent.aid, params["eps_p"], params["lam_abort"], trace
             )
             s = factors[agent.aid]  # agent ids are the bus names (world.build_world)
             algorithm = ConsensusInnovationsAlgorithm(
@@ -188,7 +192,12 @@ def _consensus(
                 stop = ("diverged", None)
             else:
                 stop = ("stalled", None)
-            return *stop, counts
+            # sim time of the coordinator's stop = time to solution (Q-A3); None without a stop
+            extra = {
+                "sim_time_s": None if r is None else r.time,
+                "trace": trace.frame(),
+            }
+            return *stop, counts, extra
 
         return outcome
 
@@ -197,7 +206,8 @@ def _consensus(
 
 async def _simulate(network, args, setup, trace=None):
     """Run the mango world with the roles *setup* adds; returns
-    (behavior, messages, stop_reason, iterations); algorithm counts join *messages*."""
+    (behavior, messages, stop_reason, iterations, extra); algorithm counts join *messages*,
+    *extra* = ``sim_time_s`` and (iterative algorithms) the per-iteration ``trace``."""
     world, behavior, agents, communication, routes = build_world(
         network,
         args.topology,
@@ -213,14 +223,14 @@ async def _simulate(network, args, setup, trace=None):
         agents[LEADER].handle_message(StartCoordinatedDistributedOptimization(None), {})
         while await world.step(DISCRETE_EVENT) is not None:
             pass
-    stop_reason, iterations, counts = outcome()
+    stop_reason, iterations, counts, extra = outcome()
     messages = {
         "sent": communication.sent,
         "delivered": world.messages_delivered_count,
         "lost": communication.lost,
         **counts,
     }
-    return behavior, messages, stop_reason, iterations
+    return behavior, messages, stop_reason, iterations, extra
 
 
 def _value(text: str):
@@ -242,6 +252,7 @@ async def run(args: argparse.Namespace) -> Path:
     setup = _dummy
     # MWh charged + discharged in the same hour; only central knows it
     simultaneous = None
+    extra = {}  # distributed runs: sim_time_s + per-iteration trace (Q-A3)
     covered = no_dispatch(network)
     if args.algorithm == "central" and covered is None:
         behavior = CopperPlateBehavior(network)
@@ -290,7 +301,7 @@ async def run(args: argparse.Namespace) -> Path:
         if args.trace:
             out.mkdir(parents=True, exist_ok=True)
             trace = out / "mango_trace.jsonl"
-        behavior, messages, stop_reason, iterations = await _simulate(
+        behavior, messages, stop_reason, iterations, extra = await _simulate(
             network, args, setup, trace
         )
     wall_time_s = time.perf_counter() - began
@@ -307,6 +318,8 @@ async def run(args: argparse.Namespace) -> Path:
         wall_time_s=wall_time_s,
         slack=args.slack,
         storage_simultaneous_mwh=simultaneous,
+        sim_time_s=extra.get("sim_time_s"),
+        iteration_trace=extra.get("trace"),
     )
     return out
 

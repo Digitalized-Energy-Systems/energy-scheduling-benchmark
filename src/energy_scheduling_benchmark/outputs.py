@@ -55,8 +55,16 @@ def write_run(
     wall_time_s: float,
     slack: bool = False,
     storage_simultaneous_mwh: float | None = None,
+    sim_time_s: float | None = None,
+    iteration_trace: pd.DataFrame | None = None,
 ) -> None:
-    """Write ``schedule.csv`` and ``meta.json`` into *out_dir*.
+    """Write ``schedule.csv`` and ``meta.json`` (and ``trace.csv``) into *out_dir*.
+
+    ``sim_time_s``: simulated time of the coordinator's stop = time to solution of a distributed
+    run (``null`` for central, a covered window or a run without a stop). Communication only:
+    mango's simulation has no computation-time model, agents compute in zero simulated time
+    (audit 2026-11-12 Q-A3). ``trace.csv`` (*iteration_trace*, distributed iterative runs): one
+    row per iteration, see ``consensus.IterationTrace.frame``.
 
     ``schedule.csv``: time × non-load unit MW (empty = the unit never set a schedule), plus
     ``slack`` (the difference it takes, if enabled), ``residual`` = gen + slack − demand and
@@ -135,10 +143,13 @@ def write_run(
         "messages": messages,
         "iterations": iterations,
         "stop_reason": stop_reason,
+        "sim_time_s": sim_time_s,
         "wall_time_s": wall_time_s,
     }
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     schedule.to_csv(out_dir / "schedule.csv")
+    if iteration_trace is not None:
+        iteration_trace.to_csv(out_dir / "trace.csv", index=False)
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")

@@ -50,6 +50,9 @@ def load_runs(root: Path) -> pd.DataFrame:
                 "messages_sent": meta["messages"]["sent"],
                 "messages_delivered": meta["messages"]["delivered"],
                 "messages_lost": meta["messages"]["lost"],
+                "sim_time_s": meta.get(
+                    "sim_time_s"
+                ),  # runs before 2026-11-12 have none
                 "wall_time_s": meta["wall_time_s"],
                 "run": str(path.parent),
             }
@@ -111,7 +114,7 @@ def _window(w) -> str:
 def markdown(df: pd.DataFrame) -> str:
     cols = ["network", "algorithm", "variant", "topology", "loss_rate", "start",
             "storage", "gap_pct", "shortfall_mwh", "surplus_mwh", "iterations", "stop_reason",
-            "messages_sent", "wall_time_s"]  # fmt: skip
+            "messages_sent", "sim_time_s", "wall_time_s"]  # fmt: skip
     cells = df[cols].map(lambda v: f"{v:.4g}" if isinstance(v, float) else str(v))
     lines = [cols, ["---"] * len(cols), *cells.values.tolist()]
     return "\n".join("| " + " | ".join(line) + " |" for line in lines)

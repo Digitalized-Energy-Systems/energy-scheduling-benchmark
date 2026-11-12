@@ -72,6 +72,7 @@ class MeritOrderCoordinator(Coordinator):
     def __init__(self, timeout_s: float) -> None:
         self.timeout_s = timeout_s
         self.stop_reason: str | None = None
+        self.time: float | None = None  # simulated time when the offers are in (Q-A3)
 
     async def start_optimization(self, carrier, message_data, meta):
         futures = [
@@ -81,6 +82,7 @@ class MeritOrderCoordinator(Coordinator):
         # Carrier.gather has no timeout and mango's cannot route multi-hop; a fixture is not worth either.
         await carrier.race(asyncio.wait(futures), carrier.sleep(self.timeout_s))
         self.stop_reason = "complete" if all(f.done() for f in futures) else "timeout"
+        self.time = carrier.now()
         buses = [f.result() if f.done() else None for f in futures]
         received = [b for b in buses if b is not None]
         demand = sum(b.load for b in received)
