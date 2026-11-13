@@ -6,6 +6,8 @@ Whenever new code is written here, first invoke the ponytail skill (`ponytail:po
 — smallest change that fully solves it.
 After merging a feature into `restructuring`, run the `docs-sync` skill
 (`.claude/skills/docs-sync/SKILL.md`) to check and update all docs, READMEs and the TODO.
+Before a feature is planned, use the `feature-plan` skill (`.claude/skills/feature-plan/SKILL.md`):
+plan skeleton in `docs/<feature>-plan.md`, then ask Jonas how.
 
 ## Scope (IMPORTANT — check every change against it)
 
