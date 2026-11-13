@@ -23,7 +23,7 @@ Change docs only; code changes found necessary are **reported, not made** (ask J
   internals; MEE/DRO docs never mention the benchmark specifics.
 - Open decisions you find are **asked, not decided** (`❓ ASK FIRST` in TODO.md).
 - Commit doc changes locally per repo (`Docs: …`); the workspace root (TODO.md, docs/,
-  CLAUDE.md) is not in git. **Never `git push`.** In a background session, edit repo files in a
+  CLAUDE.md) is its own git repo (`master`, since 2026-11-12) — commit there too. **Never `git push`.** In a background session, edit repo files in a
   worktree on `restructuring` and fast-forward merge it back.
 
 ## 1. Find what changed
