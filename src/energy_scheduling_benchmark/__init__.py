@@ -9,7 +9,7 @@ central optimum on copper-plate networks.
   model + price response.
 * :mod:`.parameters` — algorithm parameters per tuning route (``resources/tuned_parameters.toml``).
 * :mod:`.consensus`, :mod:`.dummy` — the algorithms (one module each, ``run.ALGORITHMS``).
-* :mod:`.world` — mango world: topology, counted lossy links, bus + leader agents.
+* :mod:`.world` — mango world: topology, counted lossy links, bus agents (the first one also the leader).
 * :mod:`.run` — one run end-to-end (``esb-run``); :mod:`.outputs` — ``schedule.csv``,
   ``meta.json``, ``trace.csv``.
 * :mod:`.tune` — ``esb-tune`` parameter sweep; :mod:`.compare` — ``esb-compare`` cost gaps.

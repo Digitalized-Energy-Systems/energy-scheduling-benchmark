@@ -27,7 +27,7 @@ from mango_energy_environments import LOAD, STORAGE, Component, Network
 from . import storage
 from .outputs import IterationTrace, Outcome
 from .problem import predispatched
-from .world import LEADER, longest_hops, settle_s, topology_graph
+from .world import leader, longest_hops, settle_s, topology_graph
 
 #: Floor on λ (€/MWh) = the marginal cost of the pre-dispatched renewables: in a surplus hour
 #: nobody can absorb, λ would fall without bound; at 0 renewables are the marginal unit, so 0 is
@@ -89,10 +89,9 @@ def max_sensitivity(network, agent_scale: str = "none", full=None) -> float:
 
 
 def laplacian_max(network: Network, topology: str) -> float:
-    """Largest Laplacian eigenvalue of the bus agents' topology (the leader excluded: it does not
-    iterate); the consensus term is stable only for β < 2 / it. 1 for a one-bus network."""
+    """Largest Laplacian eigenvalue of the bus agents' topology; the consensus term is stable only
+    for β < 2 / it. 1 for a one-bus network (its spectrum is 0)."""
     graph = topology_graph(network, topology)
-    graph.remove_node(LEADER)
     return float(nx.laplacian_spectrum(graph).max()) or 1.0
 
 
@@ -231,7 +230,7 @@ def _generator(cid, cost, p_min, p_max):
 
 def setup(params: dict, network: Network, full: Network, args):
     """Benchmark wiring (algorithm interface, ``run.ALGORITHMS``): returns
-    ``(behavior, agents, routes) -> outcome`` that adds the roles — bus agents + leader; the grid
+    ``(behavior, agents, routes) -> outcome`` that adds the roles — bus agents, the first one also the leader; the grid
     exchange takes no part (plan Q6) — and ``outcome() -> Outcome``.
 
     *full*: the network with storage — the per-agent factors come from it also in a
@@ -242,29 +241,33 @@ def setup(params: dict, network: Network, full: Network, args):
     def add_roles(behavior, agents, routes):
         alpha, beta = steps(params)
         factors = agent_factors(full, params["agent_scale"])
-        buses = [a for node, a in agents.items() if node != LEADER]
-        aids, leader = [a.aid for a in buses], agents[LEADER].aid
+        buses, host = list(agents.values()), leader(agents)
+        aids = [a.aid for a in buses]
         # lossy links (S5): a round ends for everyone at t0 + (k+1)·2·delay_s (Q-L1); t0 after the
         # slowest start message. Lossless runs keep waiting for every λ (unchanged baseline).
         lossy = args.loss_rate > 0
         coordinator = ConsensusCoordinator(
             [a.addr for a in buses],
             np.zeros(steps_n),
-            settle_s=settle_s(routes, aids, leader, delay_s),
-            start_latency=longest_hops(routes, aids, leader) * delay_s
+            settle_s=settle_s(routes, aids, host.aid, delay_s),
+            start_latency=longest_hops(routes, aids, host.aid) * delay_s
             if lossy
             else 0.0,
         )
         # full addresses: the agents may live in several (real) containers (audit Q-A8)
         addresses = {a.aid: a.addr for a in agents.values()}
-        agents[LEADER].add_role(
-            CoordinatorRole(coordinator, routes=routes[leader], addresses=addresses)
+        # include_self: the host is a participant too and needs its own end-of-run message
+        host.add_role(
+            CoordinatorRole(
+                coordinator,
+                include_self=True,
+                routes=routes[host.aid],
+                addresses=addresses,
+            )
         )
         algorithms = []
         # every agent's clock is the world's simulated clock (audit Q-A3)
-        trace = IterationTrace(
-            len(buses), lambda: agents[LEADER].context.current_timestamp
-        )
+        trace = IterationTrace(len(buses), lambda: host.context.current_timestamp)
         for agent in buses:
             actor = BusActor(
                 behavior, agent.aid, params["eps_p"], params["lam_abort"], trace

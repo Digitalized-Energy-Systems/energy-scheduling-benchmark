@@ -1,8 +1,9 @@
 """mango world for a benchmark run: copper-plate behaviour, communication topology, lossy links.
 
-Agents: one per bus, owning all components at it incl. its load (KH12 §III-C), plus a ``leader``:
-a leaf on the first bus (grid, ring) or at position 0 of the complete graph. The leader knows no
-demand; it only learns it from the bus agents' messages. The grid exchange (``--grid-exchange``) is
+Agents: one per bus, owning all components at it incl. its load (KH12 §III-C). The first bus
+(sorted) also carries the leader role (start, stop, collecting reports, :func:`leader`); there is no
+separate leader agent (Q-B7, Jonas 2026-11-13). The leader role knows no demand beyond its own
+bus; it only learns it from the bus agents' messages. The grid exchange (``--grid-exchange``) is
 no agent: it takes the remaining imbalance after the run (``outputs.write_run``; the slack agent
 had no role and was removed, audit 2026-11-12 Q-A6).
 """
@@ -19,7 +20,6 @@ from mango.simulation.environment import DefaultEnvironment
 from mango.simulation.world import create_world
 from mango_energy_environments import CopperPlateBehavior, Network
 
-LEADER = "leader"
 TOPOLOGIES = ("grid", "complete", "ring")
 
 
@@ -53,11 +53,11 @@ class CountingCommunication(SimpleCommunicationSimulation):
 
 
 def topology_graph(network: Network, kind: str) -> nx.Graph:
-    """Agent graph over the buses; the leader at position 0 (complete) or as a leaf on the first
-    bus (grid, ring), so the bus agents' own graph is the named topology."""
+    """Agent graph over the buses: the named topology, nothing else (the leader role sits on the
+    first bus, :func:`leader`)."""
     buses = sorted({c.bus for c in network.components.values()})
     if kind == "complete":
-        return nx.complete_graph([LEADER, *buses])
+        return nx.complete_graph(buses)
     if kind == "ring":
         graph = nx.cycle_graph(buses)
         graph.remove_edges_from(list(nx.selfloop_edges(graph)))  # a one-bus network
@@ -72,7 +72,6 @@ def topology_graph(network: Network, kind: str) -> nx.Graph:
             )
     else:
         raise ValueError(f"unknown topology {kind!r}, expected one of {TOPOLOGIES}")
-    graph.add_edge(LEADER, buses[0])
     return graph
 
 
@@ -105,13 +104,19 @@ def build_world(
     graph = topology_graph(network, topology)
     agents = {}
     for node in graph.nodes:
-        bind = {} if node == LEADER else {"bus": node}
-        agents[node] = world.register(RoleAgent(), suggested_aid=str(node), **bind)
+        agents[node] = world.register(RoleAgent(), suggested_aid=str(node), bus=node)
     topo = graph_topology(graph)
     # agents are in graph-node order: one per node
     auto_assign(topo, list(agents.values()))
     routes = next_hops(topology_to_aid_graph(topo))
     return world, behavior, agents, communication, routes
+
+
+def leader(agents: dict):
+    """The agent with the leader role: the first bus (sorted; agent ids are the bus names). It also
+    iterates as a bus agent; its messages to itself go through mango's communication simulation
+    like any other (delayed, counted; start/stop/reports are never lost) — Q-B7, 2026-11-13."""
+    return agents[min(agents)]
 
 
 def longest_hops(routes: dict, buses: list[str], leader: str) -> int:

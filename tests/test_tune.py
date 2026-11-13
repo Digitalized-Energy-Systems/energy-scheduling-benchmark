@@ -81,7 +81,7 @@ def test_sweep_grid_toy():
     from energy_scheduling_benchmark import datasets
 
     toy = datasets.load("toy")
-    # bus graph without the leader: complete K4 → 4, ring C4 → 4, grid = path P4 → 2 + √2
+    # bus graph: complete K4 → 4, ring C4 → 4, grid = path P4 → 2 + √2
     assert consensus.laplacian_max(toy, "complete") == pytest.approx(4)
     assert consensus.laplacian_max(toy, "grid") == pytest.approx(2 + 2**0.5)
     candidates, note = consensus.sweep_grid(toy, toy, "grid")

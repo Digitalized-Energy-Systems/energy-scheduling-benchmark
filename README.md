@@ -125,7 +125,9 @@ model, agents compute in zero simulated time; `null` for central), wall time,
 hour, central only, expected 0). Consensus runs also write `trace.csv`: one row per iteration k
 (the state at λ after k updates) with `sim_time_s`, `imbalance_mwh` (Σ over hours of
 |Σ agents' mismatch|), `cost` (€ of the current schedules, grid exchange not included), `lambda_mean`,
-`lambda_spread` (largest per-hour spread of λ across agents). With `--trace` also
+`lambda_spread` (largest per-hour spread of λ across agents); only iterations every agent reached
+— on grid/ring the stop reaches the agents at different times, so the final schedule can lie 1–3
+iterations past the last row. With `--trace` also
 `mango_trace.jsonl` and its HTML viewer `mango_trace.html`.
 
 **Renewables are pre-dispatched** (decided 2026-11-10, `../docs/renewables-predispatch-plan.md`):
@@ -143,7 +145,7 @@ algorithm returns at once with `stop_reason = "renewables_cover"`.
 |---|---|---|
 | `central` | the reference optimum (cvxpy, no agents) | none |
 | `consensus` | consensus + innovations, Kar & Hug 2012 / Hug, Kar & Wu 2015 (plan `../docs/consensus-plan.md`, deviations `../docs/deviations.md`) | `[consensus]` in `resources/tuned_parameters.toml`: step sizes, tolerances, `max_iter`, `agent_scale` |
-| `dummy` | merit order in the leader, a plumbing test | none |
+| `dummy` | merit order in the leader (first bus agent), a plumbing test | none |
 
 Parameters come in **tuning routes**, one set per network × topology (`--set key=value` overrides
 any value; the route and the values used are stored in `meta.json`):
@@ -181,9 +183,11 @@ have. The batch over the standard grid is `../run_all.sh` (workspace root): all 
 ## World
 
 One mango agent per bus; it owns every component at its bus (units, storage and its load) and
-reaches them through MEE's copper-plate behaviour (`register(..., bus=b)`). A `leader` sits at the
-first bus / position 0; the grid exchange is no agent (it takes the remaining imbalance after the
-run; the slack agent had no role and was removed 2026-11-12). The leader knows no demand: it
+reaches them through MEE's copper-plate behaviour (`register(..., bus=b)`). The first bus agent
+(sorted) also carries the leader role — start, stop, collecting the converged reports; there is no
+separate leader agent (2026-11-13), and its messages to itself go through mango's communication
+simulation like any other. The grid exchange is no agent (it takes the remaining imbalance after the
+run; the slack agent had no role and was removed 2026-11-12). The leader role knows no demand beyond its bus: it
 only learns it from the bus agents' messages. Topologies: `grid` (buses joined by lines),
 `ring` (over the buses), `complete`; non-neighbours are reached hop by hop, every hop counted.
 `--loss-rate p` loses each hop of the **algorithms' own messages** (consensus λ, dummy offers) with
@@ -224,7 +228,7 @@ src/energy_scheduling_benchmark/
 ├── dummy.py      # dummy merit-order algorithm (test fixture), setup
 ├── tune.py       # esb-tune: parameter sweep for one algorithm × network × topology
 ├── compare.py    # esb-compare: cost gap of every run vs. its central run
-├── world.py      # mango world: bus agents, topologies, counted lossy links, leader
+├── world.py      # mango world: bus agents, topologies, counted lossy links, leader = first bus
 ├── run.py        # esb-run: one run end-to-end; ALGORITHMS (the algorithm interface)
 └── outputs.py    # schedule.csv + meta.json + trace.csv; Outcome, IterationTrace
 resources/

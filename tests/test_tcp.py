@@ -32,7 +32,7 @@ from energy_scheduling_benchmark import consensus, datasets
 from energy_scheduling_benchmark.outputs import write_run
 from energy_scheduling_benchmark.parameters import parameters
 from energy_scheduling_benchmark.run import build_parser, run, window
-from energy_scheduling_benchmark.world import LEADER, topology_graph
+from energy_scheduling_benchmark.world import leader, topology_graph
 
 
 def _free_ports(n: int) -> list[int]:
@@ -68,10 +68,7 @@ async def test_toy_consensus_on_tcp_containers(tmp_path):
     agents = {}
     for i, node in enumerate(graph.nodes):  # spread round-robin over the containers
         agents[node] = containers[i % 3].register(RoleAgent(), suggested_aid=str(node))
-        if node != LEADER:
-            behavior.install(
-                agents[node], bus=node
-            )  # a simulated world does this itself
+        behavior.install(agents[node], bus=node)  # a simulated world does this itself
     topo = graph_topology(graph)
     auto_assign(topo, list(agents.values()))
     routes = next_hops(topology_to_aid_graph(topo))
@@ -80,12 +77,13 @@ async def test_toy_consensus_on_tcp_containers(tmp_path):
     )  # toy's manual set, as the simulated run
     args = argparse.Namespace(delay_s=0.01, loss_rate=0.0)
     outcome = consensus.setup(params, network, network, args)(behavior, agents, routes)
-    leader = next(r for r in agents[LEADER].roles if isinstance(r, CoordinatorRole))
+    host = leader(agents)
+    role = next(r for r in host.roles if isinstance(r, CoordinatorRole))
     units = [cid for cid, c in network.components.items() if c.kind != LOAD]
 
     async with activate(*containers):
-        agents[LEADER].handle_message(StartCoordinatedDistributedOptimization(None), {})
-        await asyncio.wait_for(leader.wait_done(), timeout=120)
+        host.handle_message(StartCoordinatedDistributedOptimization(None), {})
+        await asyncio.wait_for(role.wait_done(), timeout=120)
         for _ in range(200):  # the stop still travels to every bus agent
             if set(units) <= set(behavior.schedules):
                 break

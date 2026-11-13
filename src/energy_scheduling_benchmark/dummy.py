@@ -1,7 +1,8 @@
-"""Dummy "algorithm" for end-to-end runs: merit order in the leader, over the DRO carrier.
+"""Dummy "algorithm" for end-to-end runs: merit order in the leader (the first bus agent, which
+offers too), over the DRO carrier.
 
 A test fixture for the benchmark plumbing, not a benchmarked algorithm. The leader asks every
-bus agent for its offer (per unit: cost, p_min/p_max over the horizon; plus the bus load), waits
+bus agent (itself included) for its offer (per unit: cost, p_min/p_max over the horizon; plus the bus load), waits
 up to a timeout, then per hour puts every unit at p_min and fills the rest of the received demand
 cheapest-c1-first up to p_max (c2 only counts in the cost). Storage stays idle. Each bus's
 ``{component: schedule}`` goes back as its ``OptimizationFinishedMessage``; a lost offer leaves
@@ -30,7 +31,7 @@ from mango_energy_environments import LOAD, STORAGE
 
 from .outputs import Outcome
 from .problem import predispatched
-from .world import LEADER
+from .world import leader
 
 #: Simulated seconds the leader waits for offers (a ring of ~70 bus agents at 0.01 s per hop
 #: needs < 1 s for request + reply).
@@ -46,15 +47,18 @@ def setup(params: dict, network, full, args):
         addresses = {
             a.aid: a.addr for a in agents.values()
         }  # several containers (Q-A8)
-        for node, agent in agents.items():
-            if node == LEADER:
-                role = CoordinatorRole(
-                    coordinator, routes=routes[agent.aid], addresses=addresses
-                )
-            else:
-                unit = DummyBus(behavior, agent.aid)
-                role = DistributedOptimizationRole(unit, routes=routes[agent.aid])
-            agent.add_role(role)
+        host = leader(agents)
+        host.add_role(
+            CoordinatorRole(
+                coordinator,
+                include_self=True,
+                routes=routes[host.aid],
+                addresses=addresses,
+            )
+        )
+        for agent in agents.values():
+            unit = DummyBus(behavior, agent.aid)
+            agent.add_role(DistributedOptimizationRole(unit, routes=routes[agent.aid]))
         return lambda: Outcome(coordinator.stop_reason, 1, sim_time_s=coordinator.time)
 
     return add_roles
@@ -137,6 +141,8 @@ class DummyBus(DistributedAlgorithm):
             for cid, schedule in (message_data.result or {}).items():
                 self.behavior.act(self.aid, "set_schedule", schedule, cid)
             return
+        if not isinstance(message_data, OfferRequest):
+            return  # the other buses' offers to the leader role on this agent (Q-B7)
         observe = self.behavior.observe
         cids = observe(self.aid, "components")
         units, load = {}, np.zeros_like(observe(self.aid, "p_max", cids[0]))

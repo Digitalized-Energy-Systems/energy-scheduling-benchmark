@@ -39,7 +39,7 @@ from .central import solve_central
 from .outputs import RENEWABLES_COVER, run_dir, write_run
 from .parameters import TUNINGS, has_parameters, parameters
 from .problem import no_dispatch
-from .world import LEADER, TOPOLOGIES, build_world
+from .world import TOPOLOGIES, build_world, leader
 
 #: name → algorithm module (None: central dispatch, no world). Add a new algorithm here.
 ALGORITHMS = {"central": None, "consensus": consensus, "dummy": dummy}
@@ -83,7 +83,7 @@ async def _simulate(network, args, add_roles, trace=None):
     outcome = add_roles(behavior, agents, routes)
     async with world:
         # kick-off is local (not sent over the lossy network, not counted)
-        agents[LEADER].handle_message(StartCoordinatedDistributedOptimization(None), {})
+        leader(agents).handle_message(StartCoordinatedDistributedOptimization(None), {})
         while await world.step(DISCRETE_EVENT) is not None:
             pass
     result = outcome()
