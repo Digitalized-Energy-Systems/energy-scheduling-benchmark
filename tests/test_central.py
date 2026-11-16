@@ -3,7 +3,14 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
-from mango_energy_environments import LOAD, STORAGE, THERMAL, Component, Network
+from mango_energy_environments import (
+    LOAD,
+    RENEWABLE,
+    STORAGE,
+    THERMAL,
+    Component,
+    Network,
+)
 
 from energy_scheduling_benchmark import datasets, storage
 from energy_scheduling_benchmark.central import solve_central
@@ -30,6 +37,15 @@ def test_merit_order_lp():
     assert status == "optimal"
     np.testing.assert_allclose(schedules["cheap"], [4, 5], atol=1e-6)
     np.testing.assert_allclose(schedules["dear"], [0, 3], atol=1e-6)
+
+
+def test_predispatched_unit_listed_first():
+    # synthetic_50 lists a renewable first: injection starts as a numpy array (2026-11-16)
+    wind = Component(RENEWABLE, "b", flat(1), flat(1))
+    components = {"wind": wind} | net().components
+    schedules, status, _ = solve_central(Network(IDX, components, []))
+    assert status == "optimal"
+    np.testing.assert_allclose(schedules["cheap"], [3, 5], atol=1e-6)
 
 
 def test_storage_shifts_cheap_energy():

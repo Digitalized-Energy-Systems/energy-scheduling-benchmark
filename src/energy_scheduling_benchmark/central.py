@@ -45,15 +45,17 @@ def solve_central(
             p = cp.Variable(steps)
             cons += [p >= c.p_min, p <= c.p_max]
             cost += c.cost[0] * cp.sum(p) + c.cost[1] * cp.sum_squares(p)
-        injection += p
+        injection = (
+            injection + p
+        )  # not +=: in-place numpy op fails if a fixed unit came first (2026-11-16, synthetic_50 sweeps)
         schedules[cid] = p
     if grid_exchange:
         imp, exp = cp.Variable(steps, nonneg=True), cp.Variable(steps, nonneg=True)
-        injection += imp - exp
+        injection = injection + imp - exp
         cost += GRID_IMPORT_PRICE * cp.sum(imp)
     else:
         # islanded: renewables are never curtailed, so a surplus must go somewhere to stay feasible
-        injection -= cp.Variable(steps, nonneg=True)
+        injection = injection - cp.Variable(steps, nonneg=True)
     problem = cp.Problem(cp.Minimize(cost), [*cons, injection == demand])
     if any(c.cost[1] for c in network.components.values()):
         # Clarabel's equilibration mis-scales the 4000 €/MWh import next to ~10–100 €/MWh units:
