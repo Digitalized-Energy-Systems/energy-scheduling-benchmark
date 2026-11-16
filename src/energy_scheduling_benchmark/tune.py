@@ -72,6 +72,7 @@ def rank(meta: dict, s: float) -> tuple:
     """Sort key of one window: a run that met its stop rule (or needed no ED) beats every run that
     used the whole budget and ranks by iterations — at the noise floor the score cannot tell a fast
     ρ from a slow one (A3, 2026-11-16 D-140); the others rank by score."""
+    # 2026-11-16 D-141: fastest at the paper tolerance wins, no gap band (Jonas).
     return (1, s) if meta["stop_reason"] == "max_iter" else (0, meta["iterations"], s)
 
 
