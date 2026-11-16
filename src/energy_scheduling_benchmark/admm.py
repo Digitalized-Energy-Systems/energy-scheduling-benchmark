@@ -40,8 +40,9 @@ from .world import leader, longest_hops
 #: MW, the bus problem's own curvature; Q-E6 sweep route)
 SWEEP_CANDIDATES = 32
 SWEEP_DECADES = 3  # each side of the centre
-#: settings of every sweep run: stop rule off (as consensus I19)
-SWEEP_RUN = {"eps_abs": -1.0, "eps_rel": 0.0}
+#: settings of every sweep run: none — the paper stop rule stays on, esb-tune ranks converged ρ by
+#: iterations (A3, 2026-11-16 D-140; was off as consensus I19: every ρ hit the noise floor)
+SWEEP_RUN: dict = {}
 VARIANT = "adaptive"
 
 

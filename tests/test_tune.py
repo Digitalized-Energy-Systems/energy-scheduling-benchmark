@@ -161,6 +161,16 @@ def test_score_zero_cost_window_and_unavoidable_surplus():
     assert tune.score(run, covered, 100.0) == pytest.approx(0.02)
 
 
+def test_rank_converged_by_iterations_before_budget_runs():
+    # A3 (D-140): at the noise floor scores tie, so a converged run ranks by iterations
+    fast = tune.rank({"stop_reason": "converged", "iterations": 200}, 1e-9)
+    slow = tune.rank({"stop_reason": "converged", "iterations": 900}, 1e-12)
+    budget = tune.rank({"stop_reason": "max_iter", "iterations": 3000}, 0.0)
+    covered = tune.rank({"stop_reason": "renewables_cover", "iterations": 0}, 0.0)
+    assert covered < fast < slow < budget
+    assert max(fast, budget) == budget  # a candidate counts with its worst window
+
+
 def test_agent_factors_toy():
     from energy_scheduling_benchmark import datasets
 
