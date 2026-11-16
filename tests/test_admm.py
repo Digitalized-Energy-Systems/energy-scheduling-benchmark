@@ -133,6 +133,30 @@ def test_lossy_admm_finishes_and_repeats(tmp_path):
     assert a["total_cost"] == b["total_cost"] and a["messages"] == b["messages"]
 
 
+def test_lossy_admm_on_a_one_bus_network(tmp_path):
+    # review 2026-11-16: 0 hops gave a round length of 0, every reply "missing", and the flat
+    # start then passed the stop test at x = 0
+    common = ["--network", "base_s_1_elec_2019", "--out", str(tmp_path)]
+    main(["--algorithm", "central", *common])
+    main(
+        [
+            "--algorithm",
+            "admm",
+            "--tuning",
+            "paper",
+            *common,
+            *FIXED,
+            "--loss-rate",
+            "0.05",
+        ]
+    )
+    central, run = (
+        _meta(tmp_path, "base_s_1_elec_2019", a) for a in ("central", "admm")
+    )
+    assert run["stop_reason"] == "converged" and run["iterations"] > 1
+    assert run["total_cost"] == pytest.approx(central["total_cost"], rel=1e-3)
+
+
 def test_sweep_grid_is_32_fixed_rho_around_the_curvature():
     net = load_network(datasets.prepared_path("synthetic_10"))
     grid, note = admm.sweep_grid(net, net, "complete")

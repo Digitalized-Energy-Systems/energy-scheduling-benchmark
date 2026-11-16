@@ -197,8 +197,8 @@ probability p; control messages (start, stop, converged reports) always arrive (
 `../docs/message-loss-plan.md`). Lossy consensus runs end each round for every agent at
 t0 + (k+1)·2·`delay_s`: a neighbour's λ missing by then is a failed link of that round (Kar & Hug
 2012 §IV); meta `messages` then also reports `rounds_by_deadline` and `missing_edges`. Lossy ADMM
-runs end coordinator round k at t0 + k·4·max_hops·`delay_s` (twice the longest round trip; a
-reply due exactly at the deadline would tie with it): a bus whose reply is missing keeps its last
+runs end a coordinator round 4·max_hops·`delay_s` after its scatter (twice the longest round
+trip; a reply due exactly at the deadline would tie with it): a bus whose reply is missing keeps its last
 x (meta `missing_replies`). Lossless runs wait for every message as before.
 
 The benchmark runs in mango's simulated world (discrete event, simulated delays and loss). The

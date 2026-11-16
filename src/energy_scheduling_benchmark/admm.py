@@ -190,7 +190,8 @@ def setup(params: dict, network: Network, full: Network, args):
     def add_roles(behavior, agents, routes):
         buses, host = list(agents.values()), leader(agents)
         lossy = args.loss_rate > 0
-        hops = longest_hops(routes, [a.aid for a in buses], host.aid)
+        # ≥ 1: the leader's messages to itself take one delay too (a one-bus network has 0 hops)
+        hops = max(longest_hops(routes, [a.aid for a in buses], host.aid), 1)
         coordinator = create_exchange_admm_coordinator(
             surplus=True,
             rho=params["rho"],
@@ -199,7 +200,8 @@ def setup(params: dict, network: Network, full: Network, args):
             rel_tol=params["eps_rel"],
             mu=params["mu"] if params["adaptive"] else None,
             tau=params["tau"],
-            # 2026-11-16 Q-E11 (D-135): 4·max_hops·delay_s, the C8 ratio over the round trip
+            # 2026-11-16 Q-E11 (D-135): 4·max_hops·delay_s after the round's scatter (D-137),
+            # twice the longest round trip
             round_timeout=4 * hops * delay_s if lossy else None,
         )
         role = CoordinatorRole(
