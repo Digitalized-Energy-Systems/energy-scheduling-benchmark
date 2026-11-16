@@ -25,6 +25,19 @@ agent_scale = "none"
 # (€/MWh; esb-tune sets 4000 = the slack import price), stop_reason "diverged"; inf = off
 lam_abort = inf
 
+# Exchange ADMM parameters (Boyd et al. 2011 §7.3.2; docs/admm-exchange-plan.md, D-117–D-135).
+# Routes as consensus. paper = adaptive ρ eq. 3.13 (Boyd gives no fixed ρ; Q-E6, D-122);
+# sweep = [admm.<network>.<topology>.sweep], a fixed ρ written by esb-tune.
+[admm]
+rho = 1.0  # ρ (€/MWh per MW); the start value when adaptive
+adaptive = true  # residual balancing eq. 3.13: ρ·τ if ||r|| > μ||s||, ρ/τ if ||s|| > μ||r||
+mu = 10.0
+tau = 2.0
+# stop (eq. 3.12, stacked 2-norms; Q-E5, D-121): ε_abs in MW per bus and hour
+eps_abs = 1e-4
+eps_rel = 1e-3
+max_iter = 10000
+
 # toy (2024-01-01, 24 h): hand-tuned 2026-11-08; κ = 0.05, γ = 4 oscillates on ring/complete
 # (α·dP/dλ at bus0 ≈ 1.75), κ = 0.03 is stable on all three; gap vs central −0.014 / −0.015 /
 # −0.019 % (residual imbalance ≈ 0.2 MWh), 495 / 254 / 207 iterations.

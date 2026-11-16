@@ -286,6 +286,9 @@ def test_algorithm_interface(tmp_path):
     # audit 2026-11-12 Q-A4: one dict; every distributed algorithm module has setup(...)
     assert build_parser().parse_args([]).algorithm == "central"  # Q-A12a
     assert all(callable(m.setup) for m in ALGORITHMS.values() if m is not None)
-    assert set(tune.ALGORITHMS) == {"consensus"}  # the tunable ones (sweep_grid)
+    assert set(tune.ALGORITHMS) == {
+        "consensus",
+        "admm",
+    }  # the tunable ones (sweep_grid)
     with pytest.raises(SystemExit, match="no parameters"):
         main(["--algorithm", "dummy", "--set", "kappa=1", "--out", str(tmp_path)])

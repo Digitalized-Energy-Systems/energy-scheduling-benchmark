@@ -145,6 +145,7 @@ algorithm returns at once with `stop_reason = "renewables_cover"`.
 |---|---|---|
 | `central` | the reference optimum (cvxpy, no agents) | none |
 | `consensus` | consensus + innovations, Kar & Hug 2012 / Hug, Kar & Wu 2015 (plan `../docs/consensus-plan.md`, deviations `../docs/deviations.md`) | `[consensus]` in `resources/tuned_parameters.toml`: step sizes, tolerances, `max_iter`, `agent_scale` |
+| `admm` | exchange ADMM, Boyd et al. 2011 §7.3.2 with the surplus Σx ≥ 0 (plan `../docs/admm-exchange-plan.md`, deviations E1–E6) | `[admm]`: ρ, adaptive ρ (μ, τ), stop tolerances `eps_abs` / `eps_rel`, `max_iter` |
 | `dummy` | merit order in the leader (first bus agent), a plumbing test | none |
 
 Parameters come in **tuning routes**, one set per network × topology (`--set key=value` overrides
@@ -152,14 +153,15 @@ any value; the route and the values used are stored in `meta.json`):
 
 | route | TOML section | when it is used |
 |---|---|---|
-| `paper` | `[consensus]` — the papers' values, in MW / €/MWh as printed | `--tuning paper`, or the fallback (with a warning on stderr) when no tuned set exists |
-| `manual` | `[consensus.<network>.<topology>.manual]` — hand-tuned, with a `note` | default when present |
-| `sweep` | `[consensus.<network>.<topology>.sweep]` — written by `esb-tune` | default when there is no manual set (decided 2026-11-12) |
+| `paper` | `[<algorithm>]` — the papers' values, in MW / €/MWh as printed (admm: adaptive ρ eq. 3.13, Boyd gives no fixed ρ) | `--tuning paper`, or the fallback (with a warning on stderr) when no tuned set exists |
+| `manual` | `[<algorithm>.<network>.<topology>.manual]` — hand-tuned, with a `note` | default when present |
+| `sweep` | `[<algorithm>.<network>.<topology>.sweep]` — written by `esb-tune` | default when there is no manual set (decided 2026-11-12) |
 
 `esb-tune --network N --topology T --start DAY … [--jobs N] [--no-write]` sweeps the algorithm's
 `sweep_grid` (32 candidates per algorithm; consensus: constant 4 κ × 4 β, decaying 4 α₀ × 2 β₀ ×
-α exponent {0.6, 0.98}; α × 1/max scaled bus sensitivity, β × 1/λ_max(L) of the bus topology) on
-a fixed budget with the stop rule off; a sweep run ends as `diverged` once |λ| > 4000 €/MWh, and a
+α exponent {0.6, 0.98}; α × 1/max scaled bus sensitivity, β × 1/λ_max(L) of the bus topology;
+admm: 32 fixed ρ, log-spaced over six decades around the median 2c₂ of the thermal units) on
+a fixed budget with the stop rule off; a consensus sweep run ends as `diverged` once |λ| > 4000 €/MWh, and a
 candidate is pruned once one window scores worse than the best of its variant. The best candidate
 that runs through every window is written whatever its gap (the gap per window is in its `note`);
 nothing is written if every candidate fails. Use `--no-write` for trial sweeps and check
@@ -190,12 +192,14 @@ simulation like any other. The grid exchange is no agent (it takes the remaining
 run; the slack agent had no role and was removed 2026-11-12). The leader role knows no demand beyond its bus: it
 only learns it from the bus agents' messages. Topologies: `grid` (buses joined by lines),
 `ring` (over the buses), `complete`; non-neighbours are reached hop by hop, every hop counted.
-`--loss-rate p` loses each hop of the **algorithms' own messages** (consensus λ, dummy offers) with
+`--loss-rate p` loses each hop of the **algorithms' own messages** (consensus λ, ADMM scatter and replies, dummy offers) with
 probability p; control messages (start, stop, converged reports) always arrive (decided 2026-11-11,
 `../docs/message-loss-plan.md`). Lossy consensus runs end each round for every agent at
 t0 + (k+1)·2·`delay_s`: a neighbour's λ missing by then is a failed link of that round (Kar & Hug
-2012 §IV); meta `messages` then also reports `rounds_by_deadline` and `missing_edges`. Lossless
-runs wait for every λ as before.
+2012 §IV); meta `messages` then also reports `rounds_by_deadline` and `missing_edges`. Lossy ADMM
+runs end coordinator round k at t0 + k·4·max_hops·`delay_s` (twice the longest round trip; a
+reply due exactly at the deadline would tie with it): a bus whose reply is missing keeps its last
+x (meta `missing_replies`). Lossless runs wait for every message as before.
 
 The benchmark runs in mango's simulated world (discrete event, simulated delays and loss). The
 same agents also run unchanged on real mango TCP containers: `tests/test_tcp.py` spreads the toy
@@ -225,6 +229,7 @@ src/energy_scheduling_benchmark/
 ├── storage.py    # shared storage model + price response (central dispatch + algorithms)
 ├── parameters.py # algorithm parameters per route (tuned_parameters.toml)
 ├── consensus.py  # consensus + innovations: bus actor, sweep grid, setup
+├── admm.py       # exchange ADMM: bus participant (cached Clarabel QP), sweep grid, setup
 ├── dummy.py      # dummy merit-order algorithm (test fixture), setup
 ├── tune.py       # esb-tune: parameter sweep for one algorithm × network × topology
 ├── compare.py    # esb-compare: cost gap of every run vs. its central run

@@ -34,7 +34,7 @@ from mango_energy_environments import (
     load_network,
 )
 
-from . import consensus, datasets, dummy
+from . import admm, consensus, datasets, dummy
 from .central import solve_central
 from .outputs import RENEWABLES_COVER, run_dir, write_run
 from .parameters import TUNINGS, has_parameters, parameters
@@ -42,7 +42,7 @@ from .problem import no_dispatch
 from .world import TOPOLOGIES, build_world, leader
 
 #: name → algorithm module (None: central dispatch, no world). Add a new algorithm here.
-ALGORITHMS = {"central": None, "consensus": consensus, "dummy": dummy}
+ALGORITHMS = {"central": None, "consensus": consensus, "admm": admm, "dummy": dummy}
 
 
 def window(network: Network, start, hours: int) -> Network:
