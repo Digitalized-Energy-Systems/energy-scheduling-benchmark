@@ -175,6 +175,16 @@ def test_consensus_settings_get_own_folders(tmp_path):
         main([*common, "--set", "kappa"])
 
 
+def test_set_values_parse_python_booleans():
+    from energy_scheduling_benchmark.run import _value
+
+    # esb-tune writes candidates as f"{key}={value}": a Python bool must not become a string
+    assert (
+        _value("False") is False and _value("True") is True and _value("false") is False
+    )
+    assert _value("0.1") == 0.1 and _value("constant") == "constant"
+
+
 def test_trace_lands_in_run_folder(tmp_path):
     main(["--algorithm", "dummy", "--hours", "2", "--trace", "--out", str(tmp_path)])
     (folder,) = tmp_path.glob("toy/dummy/*")
