@@ -144,3 +144,18 @@ steps = "constant"
 kappa = 0.0006795
 gamma = 1.472
 note = "esb-tune (\u03b1 grid \u00d7 1/441.5 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/100, 3000 it.) best: constant agent_scale=capacity, kappa=0.0006795, gamma=1.472 \u2014 24 h gap 2025-12-27 00:00:00: +8.8247%; 2025-03-28 00:00:00: +8.1762%; 2025-07-12 00:00:00: +10.5676%; 2025-10-31 00:00:00: +10.1708%, score 1.38e-01"
+
+[admm.synthetic_10.complete.sweep]
+adaptive = false
+rho = 0.08114
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.1014, 3000 it.) best: False adaptive=False, rho=0.08114 \u2014 24 h gap 2019-01-09 00:00:00: -0.0000%; 2019-04-15 00:00:00: +0.0000%; 2019-06-24 00:00:00: -0.0000%; 2019-10-25 00:00:00: -0.0000%, score 9.78e-11"
+
+[admm.synthetic_10.grid.sweep]
+adaptive = false
+rho = 0.08114
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.1014, 3000 it.) best: False adaptive=False, rho=0.08114 \u2014 24 h gap 2019-01-09 00:00:00: -0.0000%; 2019-04-15 00:00:00: +0.0000%; 2019-06-24 00:00:00: -0.0000%; 2019-10-25 00:00:00: -0.0000%, score 9.78e-11"
+
+[admm.synthetic_10.ring.sweep]
+adaptive = false
+rho = 0.08114
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.1014, 3000 it.) best: False adaptive=False, rho=0.08114 \u2014 24 h gap 2019-01-09 00:00:00: -0.0000%; 2019-04-15 00:00:00: +0.0000%; 2019-06-24 00:00:00: -0.0000%; 2019-10-25 00:00:00: -0.0000%, score 9.78e-11"

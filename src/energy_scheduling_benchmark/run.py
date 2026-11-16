@@ -97,7 +97,12 @@ async def _simulate(network, args, add_roles, trace=None):
 
 
 def _value(text: str):
-    """A ``--set`` value: TOML syntax (numbers, true/false), else the plain string."""
+    """A ``--set`` value: TOML syntax (numbers, true/false), else the plain string. Python's
+    ``True`` / ``False`` count as booleans too: esb-tune passes its candidates as ``key=value``,
+    and the string "False" is truthy — the first ADMM sweep ran with ``adaptive`` on
+    (2026-11-16)."""
+    if text in ("True", "False"):
+        return text == "True"
     try:
         return tomllib.loads(f"v = {text}")["v"]
     except tomllib.TOMLDecodeError:
