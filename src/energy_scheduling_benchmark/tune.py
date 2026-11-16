@@ -3,8 +3,10 @@
 
 Runs central once per window, then every candidate of the algorithm's ``sweep_grid`` on each
 window, each with a fixed budget (``--max-iter``) plus the algorithm's ``SWEEP_RUN`` settings
-(consensus: stop rule off, so small stable steps are not cut short; divergence abort). Score = the
-worst window's |cost gap| + relative imbalance vs central; the best candidate per variant
+(consensus: stop rule off, so small stable steps are not cut short; divergence abort; admm: stop
+rule on, 2026-11-16 D-140). Score = |cost gap| + relative imbalance vs central; a window's rank
+(``rank``) puts runs that met their stop rule first, by iterations, then the rest by score; a
+candidate counts with its worst window, and the best candidate per variant
 (``VARIANT``, consensus: ``steps``) is kept, the overall best is written into
 ``resources/tuned_parameters.toml`` as ``[<algorithm>.<network>.<topology>.sweep]`` whatever its
 gap (decision 2026-11-09); the note records the gap per window and the best of each variant.
@@ -12,8 +14,8 @@ Nothing is written only if no candidate runs through every window.
 
 Exact pruning (T3): the score is the worst window, so once one window scores worse than the best
 complete candidate of the same variant, the candidate cannot win and its other windows are skipped.
-Ties go to the earlier candidate, so the result does not depend on ``--jobs`` (T7: no tie-break by
-iterations — with a fixed budget all run to ``--max-iter``). Runs go to ``--jobs`` processes (T2).
+Ties go to the earlier candidate, so the result does not depend on ``--jobs`` (T7; with a fixed
+budget all run to ``--max-iter``, so only a stop rule makes iterations rank, D-140). Runs go to ``--jobs`` processes (T2).
 
     esb-tune --network lower_saxony_2025 --topology ring --jobs 16 --start 2025-01-14 ...
 """
@@ -53,17 +55,24 @@ def gap(cost: float, central_cost: float) -> float:
 
 def score(meta: dict, central: dict, demand_mwh: float) -> float | None:
     """|cost gap| + imbalance / demand (both relative); None unless the run used its whole
-    budget ("max_iter"; "stalled"/"diverged" = failed) or needed no ED at all (a window the
+    budget ("max_iter"), met its stop rule ("converged"; "stalled"/"diverged" = failed) or needed no ED at all (a window the
     renewables cover: the same for every candidate). Surplus counts only where it differs from
     central's: islanded, an unabsorbable renewable surplus is part of the optimum (S1)."""
     if (
-        meta["stop_reason"] not in ("max_iter", RENEWABLES_COVER)
+        meta["stop_reason"] not in ("max_iter", "converged", RENEWABLES_COVER)
         or meta["total_cost"] is None
     ):
         return None
     surplus = meta["imbalance"]["surplus_mwh"] - central["imbalance"]["surplus_mwh"]
     imbalance = meta["imbalance"]["shortfall_mwh"] + abs(surplus)
     return abs(gap(meta["total_cost"], central["total_cost"])) + imbalance / demand_mwh
+
+
+def rank(meta: dict, s: float) -> tuple:
+    """Sort key of one window: a run that met its stop rule (or needed no ED) beats every run that
+    used the whole budget and ranks by iterations — at the noise floor the score cannot tell a fast
+    ρ from a slow one (A3, 2026-11-16 D-140); the others rank by score."""
+    return (1, s) if meta["stop_reason"] == "max_iter" else (0, meta["iterations"], s)
 
 
 def write_section(name: str, values: dict) -> None:
@@ -93,10 +102,11 @@ def write_section(name: str, values: dict) -> None:
 
 
 def _note(variant, best: tuple, hours: int) -> str:
-    s, values, gaps = best
+    key, values, gaps = best
     shown = ", ".join(f"{k}={v}" for k, v in values.items() if k != "steps")
     windows = "; ".join(f"{start}: {g:+.4%}" for start, g in gaps.items())
-    return f"{variant} {shown} — {hours} h gap {windows}, score {s:.2e}"
+    its = f", converged within {key[1]} it." if key[0] == 0 else ""
+    return f"{variant} {shown} — {hours} h gap {windows}, score {key[-1]:.2e}{its}"
 
 
 def sweep(args: argparse.Namespace) -> dict | None:
@@ -139,7 +149,7 @@ def sweep(args: argparse.Namespace) -> dict | None:
             pending[future] = (i, w)
 
         pending: dict = {}
-        scores: dict[int, list[float]] = {i: [] for i in range(len(candidates))}
+        scores: dict[int, list[tuple]] = {i: [] for i in range(len(candidates))}
         gaps: dict[int, dict[str, float]] = {i: {} for i in range(len(candidates))}
         best: dict = {}  # variant -> (score, candidate index)
         failed = pruned = 0
@@ -172,7 +182,7 @@ def sweep(args: argparse.Namespace) -> dict | None:
                 if s is None:
                     failed += 1
                     continue
-                scores[i].append(s)
+                scores[i].append(rank(meta, s))
                 worst, variant = max(scores[i]), candidates[i].get(alg.VARIANT)
                 if len(scores[i]) == len(windows):
                     if variant not in best or (worst, i) < best[variant]:
