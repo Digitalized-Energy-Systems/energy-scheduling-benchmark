@@ -151,7 +151,7 @@ def sweep(args: argparse.Namespace) -> dict | None:
         pending: dict = {}
         scores: dict[int, list[tuple]] = {i: [] for i in range(len(candidates))}
         gaps: dict[int, dict[str, float]] = {i: {} for i in range(len(candidates))}
-        best: dict = {}  # variant -> (score, candidate index)
+        best: dict = {}  # variant -> (rank key of the worst window, candidate index)
         failed = pruned = 0
         fresh = iter(range(len(candidates)))
 
