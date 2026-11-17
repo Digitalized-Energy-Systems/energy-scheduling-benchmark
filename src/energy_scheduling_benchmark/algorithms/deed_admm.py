@@ -172,7 +172,7 @@ class BusParticipant(DEEDParticipant):
         bound(select(isink), 0.0, infeed)  # Q-Z2 A
         self.M = np.vstack(rows) if rows else np.zeros((0, n))
         self.lo, self.hi = np.concatenate(lo), np.concatenate(hi)
-        # lines 8–10: min ½pᵀHp + gᵀp s.t. E p = d, H = Q + γ(SᵀS + ‖y‖² + MᵀM)
+        # lines 8–10: min ½pᵀHp + gᵀp s.t. E p = d, H = Q + γ(SᵀS + YᵀY + MᵀM)
         S = np.zeros((T, n))
         S[:, self.x_cols] = np.tile(eye, len(units))
         Y = np.zeros((T, n))

@@ -166,7 +166,7 @@ any value; the route and the values used are stored in `meta.json`):
 α exponent {0.6, 0.98}; α × 1/max scaled bus sensitivity, β × 1/λ_max(L) of the bus topology;
 admm: 32 fixed ρ, log-spaced over six decades around the median 2c₂ of the thermal units;
 deed_admm: 4 β = g/λ_max(L) × 8 γ on admm's ρ scale, D-177) on
-a fixed budget with the stop rule on, its tolerances 10× below the run's (consensus ε_λ 1e-5 €/MWh,
+a fixed budget (`--max-iter`, default the algorithm's: 3000, deed_admm 10 000, D-178) with the stop rule on, its tolerances 10× below the run's (consensus ε_λ 1e-5 €/MWh,
 ε_p 1e-4, D-143; admm and deed_admm ε_abs 1e-5, ε_rel 1e-4, D-142, D-176); consensus ranks every window by score, admm
 and deed_admm (D-140, D-176) rank a window that converges by iterations ahead of every run that used the whole budget); a consensus sweep run ends as `diverged` once |λ| > 4000 €/MWh, and a
 candidate is pruned once one window scores worse than the best of its variant. The best candidate
