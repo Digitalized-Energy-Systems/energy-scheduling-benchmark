@@ -18,6 +18,12 @@ complete candidate of the same variant, the candidate cannot win and its other w
 Ties go to the earlier candidate, so the result does not depend on ``--jobs`` (T7; with a fixed
 budget all run to ``--max-iter``, so only a stop rule makes iterations rank, D-140). Runs go to ``--jobs`` processes (T2).
 
+Records (S4b, D-147–D-152): every run is kept in the sweep folder
+``<--out>/<algorithm>/<network>/<topology>_[no]storage/`` (emptied first, a re-sweep replaces it)
+as ``central_<day>/`` and ``<candidate>_<day>/`` (esb-run output: meta, trace, schedule), plus
+``sweep.csv`` (one row per candidate × day; ``skipped`` = not run: after a failed day or pruned)
+and ``sweep.json`` (args, central cost per day, best per variant, chosen set) for plots.
+
     esb-tune --network lower_saxony_2025 --topology ring --jobs 16 --start 2025-01-14 ...
 """
 
@@ -27,10 +33,13 @@ import argparse
 import asyncio
 import fcntl
 import json
+import os
 import re
-import tempfile
+import shutil
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from pathlib import Path
 
+import pandas as pd
 from mango_energy_environments import LOAD, load_network
 
 from . import algorithms, datasets, parameters
@@ -44,10 +53,10 @@ ALGORITHMS = {
 }
 
 
-def _meta(argv: list[str]) -> dict:
-    """One esb-run (in a worker process) → its meta.json."""
+def _meta(argv: list[str]) -> tuple[dict, str]:
+    """One esb-run (in a worker process) → its meta.json and its run folder."""
     out = asyncio.run(run(build_parser().parse_args(argv)))
-    return json.loads((out / "meta.json").read_text())
+    return json.loads((out / "meta.json").read_text()), str(out)
 
 
 def gap(cost: float, central_cost: float) -> float:
@@ -129,21 +138,28 @@ def sweep(args: argparse.Namespace) -> dict | None:
     fixed = alg.SWEEP_RUN | {"max_iter": args.max_iter}
     sets = [x for k, v in fixed.items() for x in ("--set", f"{k}={v}")]
     starts = args.start or [None]
-    with tempfile.TemporaryDirectory() as tmp, ProcessPoolExecutor(args.jobs) as pool:
+    # 2026-11-17 D-147/D-149: every run is kept here for plots (was a temporary directory)
+    store = Path(args.out, args.algorithm, args.network, args.topology)
+    store = store.with_name(f"{store.name}_{'' if args.storage else 'no'}storage")
+    shutil.rmtree(store, ignore_errors=True)
+    days = ["default" if s is None else f"{pd.Timestamp(s):%Y%m%dT%H}" for s in starts]
+    with ProcessPoolExecutor(args.jobs) as pool:
         common = [base + ([] if s is None else ["--start", s]) for s in starts]
         centrals = [
-            pool.submit(_meta, ["--algorithm", "central", *c, "--out", f"{tmp}/c{w}"])
+            pool.submit(
+                _meta,
+                ["--algorithm", "central", *c, "--out", f"{store}/central_{days[w]}"],
+            )
             for w, c in enumerate(common)
         ]
-        windows = []  # (label, central meta, demand MWh)
+        windows = []  # (label, central meta, demand MWh, central folder)
         for w, start in enumerate(starts):
             net = window(raw, start, args.hours)
             demand = sum(
                 c.p_max.sum() for c in net.components.values() if c.kind == LOAD
             )
-            windows.append(
-                (str(net.time_index[0]), centrals[w].result(), float(demand))
-            )
+            central, out = centrals[w].result()
+            windows.append((str(net.time_index[0]), central, float(demand), out))
 
         def submit(i: int, w: int):
             values = [
@@ -151,7 +167,7 @@ def sweep(args: argparse.Namespace) -> dict | None:
             ]
             argv = ["--algorithm", args.algorithm, "--tuning", "paper", *common[w]]
             future = pool.submit(
-                _meta, argv + values + sets + ["--out", f"{tmp}/{i}_{w}"]
+                _meta, argv + values + sets + ["--out", f"{store}/{i}_{days[w]}"]
             )
             pending[future] = (i, w)
 
@@ -160,6 +176,7 @@ def sweep(args: argparse.Namespace) -> dict | None:
         gaps: dict[int, dict[str, float]] = {i: {} for i in range(len(candidates))}
         best: dict = {}  # variant -> (rank key of the worst window, candidate index)
         failed = pruned = 0
+        rows: dict[tuple, dict] = {}  # (candidate, window) -> sweep.csv row (D-148)
         fresh = iter(range(len(candidates)))
 
         def refill() -> None:
@@ -173,11 +190,22 @@ def sweep(args: argparse.Namespace) -> dict | None:
             done, _ = wait(pending, return_when=FIRST_COMPLETED)
             for future in done:
                 i, w = pending.pop(future)
-                meta = future.result()
-                label, central, demand = windows[w]
+                meta, out = future.result()
+                label, central, demand, _ = windows[w]
                 s = score(meta, central, demand)
                 if meta["total_cost"] is not None:
                     gaps[i][label] = gap(meta["total_cost"], central["total_cost"])
+                rows[i, w] = {
+                    "status": "failed" if s is None else "ok",
+                    "stop_reason": meta["stop_reason"],
+                    "iterations": meta["iterations"],
+                    "total_cost": meta["total_cost"],
+                    "gap": gaps[i].get(label),
+                    "score": s,
+                    "sim_time_s": meta["sim_time_s"],
+                    "wall_time_s": meta["wall_time_s"],
+                    "folder": os.path.relpath(out, store),
+                }
                 print(
                     candidates[i],
                     label,
@@ -200,21 +228,53 @@ def sweep(args: argparse.Namespace) -> dict | None:
                     submit(i, w + 1)
             refill()
     print(f"{failed} candidates failed a window, {pruned} pruned", flush=True)
+    pd.DataFrame(
+        [
+            {"candidate": i, **c, "day": windows[w][0]}
+            | rows.get((i, w), {"status": "skipped"})
+            for i, c in enumerate(candidates)
+            for w in range(len(windows))
+        ]
+    ).to_csv(store / "sweep.csv", index=False)
+    values = None
     if not best:
         print("no candidate ran through every window (each diverged/stalled on one)")
-        return None
-    ranked = sorted(best, key=lambda v: best[v])
-    notes = [
-        _note(v, (best[v][0], candidates[best[v][1]], gaps[best[v][1]]), args.hours)
-        for v in ranked
-    ]
-    values = candidates[best[ranked[0]][1]] | {
-        "note": f"esb-tune ({grid_note}, {args.max_iter} it.) best: "
-        + " | ".join(notes)
+    else:
+        ranked = sorted(best, key=lambda v: best[v])
+        notes = [
+            _note(v, (best[v][0], candidates[best[v][1]], gaps[best[v][1]]), args.hours)
+            for v in ranked
+        ]
+        values = candidates[best[ranked[0]][1]] | {
+            "note": f"esb-tune ({grid_note}, {args.max_iter} it.) best: "
+            + " | ".join(notes)
+        }
+        if args.write:
+            write_section(
+                f"{args.algorithm}.{args.network}.{args.topology}.sweep", values
+            )
+        print("best:", values)
+    record = {
+        "args": vars(args),
+        "grid_note": grid_note,
+        "fixed": fixed,
+        "central": {
+            label: {
+                "total_cost": central["total_cost"],
+                "demand_mwh": demand,
+                "folder": os.path.relpath(out, store),
+            }
+            for label, central, demand, out in windows
+        },
+        "best": [
+            {"variant": v, "candidate": i, "rank": key} for v, (key, i) in best.items()
+        ],
+        "failed": failed,
+        "pruned": pruned,
+        "chosen": values,
     }
-    if args.write:
-        write_section(f"{args.algorithm}.{args.network}.{args.topology}.sweep", values)
-    print("best:", values)
+    (store / "sweep.json").write_text(json.dumps(record, indent=2, default=str) + "\n")
+    print(f"records: {store}", flush=True)
     return values
 
 
@@ -240,6 +300,11 @@ def main(argv: list[str] | None = None) -> None:
         dest="storage",
         action="store_false",
         help="tune without the network's storage units",
+    )
+    parser.add_argument(
+        "--out",
+        default="outputs/sweeps",
+        help="records root: every run + sweep.csv/.json (D-149)",
     )
     parser.add_argument(
         "--no-write", dest="write", action="store_false", help="only print the best set"

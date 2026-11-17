@@ -1,6 +1,9 @@
+import json
 import shutil
+import tempfile
 import tomllib
 
+import pandas as pd
 import pytest
 
 from energy_scheduling_benchmark import parameters, tune
@@ -31,7 +34,7 @@ def test_write_section_replaces_only_its_table(tmp_path, monkeypatch):
 def _args(**kw):
     defaults = dict(
         algorithm="consensus", network="toy", topology="ring", start=None, hours=6,
-        max_iter=1000, jobs=2, write=False, storage=True,
+        max_iter=1000, jobs=2, write=False, storage=True, out=tempfile.mkdtemp(),
     )  # fmt: skip
     return tune.argparse.Namespace(**defaults | kw)
 
@@ -57,13 +60,29 @@ def test_sweep_picks_a_converged_candidate(monkeypatch, capsys):
     assert "diverged" in capsys.readouterr().out
 
 
-def test_sweep_prunes_without_changing_the_winner(monkeypatch, capsys):
+def test_sweep_prunes_without_changing_the_winner(monkeypatch, capsys, tmp_path):
     # the good candidate first: the two tiny-step ones score worse on window 1 and are cut
     _grid(monkeypatch, (1.2, 0.05, 0.02), (0.73,), decaying=False)
     starts = ["2024-01-01 00:00", "2024-01-01 06:00", "2024-01-01 12:00"]
-    best = tune.sweep(_args(start=starts, max_iter=300, jobs=1))
+    best = tune.sweep(_args(start=starts, max_iter=300, jobs=1, out=tmp_path))
     assert best["kappa"] == pytest.approx(1.2 / (0.75 * 35.15), rel=1e-3)
     assert "2 pruned" in capsys.readouterr().out
+    # S4b records (D-147/D-148/D-150): one row per candidate × day, pruned days skipped
+    store = tmp_path / "consensus" / "toy" / "ring_storage"
+    table = pd.read_csv(store / "sweep.csv")
+    assert len(table) == 3 * 3
+    assert list(table.groupby("candidate")["status"].apply(list)) == [
+        ["ok"] * 3,
+        ["ok", "skipped", "skipped"],
+        ["ok", "skipped", "skipped"],
+    ]
+    for folder in table["folder"].dropna():
+        assert (store / folder / "meta.json").exists()
+        assert len(pd.read_csv(store / folder / "trace.csv")) > 1  # convergence curve
+    record = json.loads((store / "sweep.json").read_text())
+    assert record["chosen"] == best and len(record["central"]) == 3
+    for c in record["central"].values():
+        assert (store / c["folder"] / "meta.json").exists()
 
 
 def test_parameter_routes(capsys):

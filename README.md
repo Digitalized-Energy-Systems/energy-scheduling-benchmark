@@ -169,6 +169,15 @@ that runs through every window is written whatever its gap (the gap per window i
 nothing is written if every candidate fails. Use `--no-write` for trial sweeps and check
 `git diff resources/tuned_parameters.toml` after a real one.
 
+Every sweep run is kept for plots (S4b, D-147–D-152, `../docs/sweep-records-plan.md`):
+`<--out, default outputs/sweeps>/<algorithm>/<network>/<topology>_[no]storage/` (emptied at the
+start: a re-sweep replaces it) holds `central_<day>/` and `<candidate>_<day>/` (normal run output:
+`meta.json` = end result, `trace.csv` = convergence curve), `sweep.csv` (one row per candidate ×
+day: parameters, `status` ok / failed / skipped = not run after a failed or pruned day,
+stop_reason, iterations, total_cost, gap, score, sim/wall time, `folder`) and `sweep.json`
+(args, central cost per day, best per variant, chosen set). Gap curve = trace `cost` / central
+`total_cost` − 1. ROSA's come back with `./hpc.sh pull` into `../hpc-results/sweeps/`.
+
 Per-agent steps (`agent_scale`, decided 2026-11-11, `../docs/per-agent-steps-plan.md`): `"none"`
 (default, the paper route) = one α, β for all agents as in the papers; `"capacity"` (sweep sets) =
 each bus runs with s_j·α and s_j·β, s_j = median / the bus's dispatchable capacity, so big buses
