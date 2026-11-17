@@ -4,7 +4,9 @@ Every figure is written twice, ``<name>.html`` (interactive; plotly.js from the 
 ``<name>.pdf`` (kaleido + a Chrome: ``plotly_get_chrome`` installs one), next to its data. Needs
 the optional extra ``[plot]``. Convergence curves run over iteration (D-162); gap per iteration =
 trace ``cost`` / central ``total_cost`` − 1 (D-152), drawn as |gap| on a log axis — plotly has no
-symlog — with the sign at the end marker (filled = above the optimum, open = below).
+symlog — with the sign at the end marker (filled = above the optimum, open = below). The trace
+cost is the units' cost only: in ``--grid-exchange`` runs the import added after the run is in
+``total_cost`` (the gap bars) but not in the curve, so the curve can end below its bar.
 
 Usage::
 
@@ -28,7 +30,7 @@ from plotly.subplots import make_subplots
 from .compare import compare, load_runs
 from .tune import ALGORITHMS, rank
 
-COLORS = {"consensus": "#1f77b4", "admm": "#d62728", "dummy": "#7f7f7f"}
+COLORS = {"consensus": "#1f77b4", "admm": "#d62728"}
 #: chosen set + this many best others in a sweep's PDF convergence figure (D-159)
 PDF_BEST = 5
 
@@ -69,11 +71,13 @@ def add_curves(fig, trace: pd.DataFrame, central_cost: float, col: int, **line) 
     end = dict(
         mode="markers", marker=dict(symbol=symbol, size=8, color=line["line"]["color"])
     )
+    # legend on the group's first curve: a run missing in the first column keeps its label
+    first = line["legendgroup"] not in {t.legendgroup for t in fig.data}
     for row, y in ((1, np.abs(g)), (2, trace["imbalance_mwh"].to_numpy(np.float32))):
         fig.add_trace(
             go.Scatter(
-                x=trace["iteration"], y=y, mode="lines", showlegend=row == 1 and col == 1,
-                customdata=g, hovertemplate="gap %{customdata:+.4g} %", **line,
+                x=trace["iteration"], y=y, mode="lines", showlegend=row == 1 and first,
+                customdata=g, hovertemplate="%{y:.4g}<br>gap %{customdata:+.4g} %", **line,
             ),
             row=row, col=col,
         )  # fmt: skip
@@ -213,22 +217,20 @@ def sweep_grid(store: Path, table: pd.DataFrame, record: dict, cands) -> None:
             rows=1, cols=len(panels), subplot_titles=[p[0] for p in panels],
             horizontal_spacing=0.08,
         )  # fmt: skip
+        gaps = (
+            table.dropna(subset=["gap"])
+            .groupby("candidate")
+            .apply(
+                lambda r: "<br>".join(f"{d}: {g:+.3%}" for d, g in zip(r.day, r.gap)),
+                include_groups=False,
+            )
+        )
+        mark = {"failed": "×", "pruned": "·", "ok": ""}
         for col, (_, cs, x, xtitle, y) in enumerate(panels, 1):
             z = cs.key.map(lambda k: np.log10(k[-1]) if k else np.nan)
-            mark = {"failed": "×", "pruned": "·", "ok": ""}
             text = [
                 "★" if i == best else mark[s] for i, s in zip(cs.candidate, cs.status)
             ]
-            gaps = (
-                table.dropna(subset=["gap"])
-                .groupby("candidate")
-                .apply(
-                    lambda r: "<br>".join(
-                        f"{d}: {g:+.3%}" for d, g in zip(r.day, r.gap)
-                    ),
-                    include_groups=False,
-                )
-            )
             fig.add_trace(
                 go.Heatmap(
                     x=[f"{v:.3g}" for v in cs[x]], y=[f"{v:.3g}" for v in cs[y]],
@@ -303,6 +305,9 @@ def plot_runs(root: Path) -> None:
     rows, _ = compare(runs)
     # shortcut: lossless runs only; the loss dimension gets its own figure at S5 step 3
     rows = rows[rows.loss_rate == 0].copy()
+    if rows.empty:  # e.g. an S5 batch folder: say so instead of writing empty figures
+        print(f"no lossless runs with a central run under {root}: no figures")
+        return
     rows["label"] = rows.algorithm + rows.variant.map(lambda v: f"[{v}]" if v else "")
     rows["case"] = (
         rows.network + " " + pd.to_datetime(rows.start).dt.strftime("%m-%d")
