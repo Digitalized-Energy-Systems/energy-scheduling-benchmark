@@ -4,7 +4,7 @@
 Runs central once per window, then every candidate of the algorithm's ``sweep_grid`` on each
 window, each with a fixed budget (``--max-iter``) plus the algorithm's ``SWEEP_RUN`` settings
 (consensus: stop rule off, so small stable steps are not cut short; divergence abort; admm: stop
-rule on, 2026-11-16 D-140). Score = |cost gap| + relative imbalance vs central; a window's rank
+rule on, 2026-11-16 D-140, with tolerances 10× below the run's, 2026-11-17 D-142). Score = |cost gap| + relative imbalance vs central; a window's rank
 (``rank``) puts runs that met their stop rule first, by iterations, then the rest by score; a
 candidate counts with its worst window, and the best candidate per variant
 (``VARIANT``, consensus: ``steps``) is kept, the overall best is written into
