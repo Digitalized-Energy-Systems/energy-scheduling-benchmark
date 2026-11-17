@@ -194,7 +194,7 @@ imbalance shortfall/surplus, iterations, stop reason, messages, wall time, windo
 plus a printed markdown table. Missing runs go to stderr: runs without
 their central run (skipped) and, per network, windows an algorithm setting lacks that other runs
 have. The batch over the standard grid is `../run_all.sh` (workspace root): all `esb-run`s, then
-`esb-compare`.
+`esb-compare` and `esb-plot runs` (D-164).
 
 `esb-plot` (plan B4, D-157–D-163; extra `[plot]`) draws every figure twice, interactive HTML and a
 PDF for print, next to its data; convergence curves run over iteration, |gap| on a log axis (the
