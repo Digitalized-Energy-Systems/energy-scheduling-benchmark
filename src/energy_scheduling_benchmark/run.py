@@ -32,7 +32,7 @@ from .algorithms import ALGORITHMS
 from .algorithms.central import solve_central
 from .outputs import RENEWABLES_COVER, run_dir, write_run
 from .parameters import TUNINGS, has_parameters, parameters
-from .problem import no_dispatch
+from .problem.rules import no_dispatch
 from .world import TOPOLOGIES, build_world, leader
 
 

@@ -12,8 +12,9 @@ from mango_energy_environments import (
     Network,
 )
 
-from energy_scheduling_benchmark import datasets, storage
+from energy_scheduling_benchmark import datasets
 from energy_scheduling_benchmark.algorithms.central import solve_central
+from energy_scheduling_benchmark.problem import storage
 from energy_scheduling_benchmark.run import main, window
 
 IDX = pd.date_range("2024-01-01", periods=2, freq="h")

@@ -30,7 +30,7 @@ from distributed_resource_optimization.carrier.mango_carrier import (
 from mango_energy_environments import LOAD, STORAGE
 
 from ..outputs import Outcome
-from ..problem import predispatched
+from ..problem.rules import predispatched
 from ..world import leader
 
 #: Simulated seconds the leader waits for offers (a ring of ~70 bus agents at 0.01 s per hop

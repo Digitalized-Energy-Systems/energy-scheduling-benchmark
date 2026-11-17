@@ -1,7 +1,8 @@
 """Rules of the benchmark problem shared by central dispatch and every algorithm.
 
 Own module (audit 2026-11-12 Q-A12b): they used to live in ``world.py`` (the mango world), so
-central dispatch and the datasets imported the world for a problem rule.
+central dispatch and the datasets imported the world for a problem rule. Was ``problem.py``
+(2026-11-17 D-146).
 """
 
 from __future__ import annotations
