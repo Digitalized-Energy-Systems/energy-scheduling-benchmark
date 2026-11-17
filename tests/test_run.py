@@ -209,6 +209,7 @@ def test_algorithm_interface(tmp_path):
     assert set(tune.ALGORITHMS) == {
         "consensus",
         "admm",
+        "deed_admm",
     }  # the tunable ones (sweep_grid)
     with pytest.raises(SystemExit, match="no parameters"):
         main(["--algorithm", "dummy", "--set", "kappa=1", "--out", str(tmp_path)])

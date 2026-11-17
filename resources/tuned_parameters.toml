@@ -38,6 +38,17 @@ eps_abs = 1e-4
 eps_rel = 1e-3
 max_iter = 10000
 
+# DEED-ADMM parameters (Zhu et al. 2025 Algorithm 1; docs/deed-admm-plan.md, D-126–D-133, D-175–D-177).
+# Routes as consensus. paper = §V: W = I − βL with β = 0.2, γ = 0.05 (Q-Z3 A; diverges where
+# β·λ_max(L) ≥ 2, a result); sweep = [deed_admm.<network>.<topology>.sweep] (β = g/λ_max(L), γ).
+[deed_admm]
+beta = 0.2
+gamma = 0.05  # ADMM penalty γ (€/MWh per MW)
+# stop (Q-Z4 A): ‖ξ_i‖ ≤ √T·ε_abs + ε_rel‖x_i‖ and γ‖Δp̂_i‖ ≤ √dim·ε_abs + ε_rel‖ν_i‖ per bus
+eps_abs = 1e-4
+eps_rel = 1e-3
+max_iter = 10000
+
 # toy (2024-01-01, 24 h): hand-tuned 2026-11-08; κ = 0.05, γ = 4 oscillates on ring/complete
 # (α·dP/dλ at bus0 ≈ 1.75), κ = 0.03 is stable on all three; gap vs central −0.014 / −0.015 /
 # −0.019 % (residual imbalance ≈ 0.2 MWh), 495 / 254 / 207 iterations.
