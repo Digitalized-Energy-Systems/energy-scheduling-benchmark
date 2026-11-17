@@ -15,8 +15,8 @@ Nothing is written only if no candidate runs through every window.
 
 Exact pruning (T3): the score is the worst window, so once one window scores worse than the best
 complete candidate of the same variant, the candidate cannot win and its other windows are skipped.
-Ties go to the earlier candidate, so the result does not depend on ``--jobs`` (T7; with a fixed
-budget all run to ``--max-iter``, so only a stop rule makes iterations rank, D-140). Runs go to ``--jobs`` processes (T2).
+Ties go to the earlier candidate, so the result does not depend on ``--jobs`` (T7; iterations
+rank only with ``RANK_BY_ITERATIONS``, D-140). Runs go to ``--jobs`` processes (T2).
 
 Records (S4b, D-147–D-152): every run is kept in the sweep folder
 ``<--out>/<algorithm>/<network>/<topology>_[no]storage/`` (emptied first, a re-sweep replaces it)
