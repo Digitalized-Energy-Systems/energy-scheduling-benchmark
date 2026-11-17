@@ -35,6 +35,7 @@ and distributed-resource-optimization never import each other.
 
 ```bash
 pip install -e .
+pip install -e ".[plot]" && plotly_get_chrome   # esb-plot only: plotly + kaleido, Chrome for the PDFs
 ```
 
 The `pyproject.toml` wires the two sibling packages (mango-energy-environments,
@@ -80,6 +81,8 @@ esb-run --algorithm consensus --tuning paper    # or manual / sweep; --set key=v
 esb-run --trace ...   # debugging: mango trace (mango_trace.jsonl + .html viewer) in the run folder; slow, large
 esb-tune --network toy --topology ring --jobs 4   # sweep → [consensus.toy.ring.sweep]; --algorithm consensus (default)
 esb-compare                      # all runs under outputs/ vs. their central run → outputs/compare.csv
+esb-plot runs                    # figures of the runs under outputs/ → outputs/plots/ (HTML + PDF)
+esb-plot sweeps hpc-results/sweeps   # figures of every sweep record → <sweep>/plots/ + overview
 esb-run --help   # --algorithm, --loss-rate (fraction per hop, algorithm messages only), --delay-s, --grid-exchange, --no-storage, --set, --out, --trace, ...
 ```
 
@@ -193,6 +196,18 @@ their central run (skipped) and, per network, windows an algorithm setting lacks
 have. The batch over the standard grid is `../run_all.sh` (workspace root): all `esb-run`s, then
 `esb-compare`.
 
+`esb-plot` (plan B4, D-157–D-163; extra `[plot]`) draws every figure twice, interactive HTML and a
+PDF for print, next to its data; convergence curves run over iteration, |gap| on a log axis (the
+end marker shows the sign: filled = above the optimum, open = below).
+- `esb-plot sweeps [ROOT]` (default `outputs/sweeps`): per sweep `plots/convergence` (|gap| and
+  imbalance per tuning day; HTML every candidate, failed dashed; PDF the chosen set + the 5 best)
+  and `plots/grid` (consensus: heatmap of the worst-day score per step variant, ★ chosen,
+  × failed, · pruned; admm: iterations and gap per day vs. ρ); per algorithm
+  `ROOT/plots/overview_<algorithm>` (chosen set's mean tuning-day gap, network × topology).
+- `esb-plot runs [ROOT]` (default `outputs`; lossless runs): `plots/gap`, `plots/effort`
+  (iterations + messages) per network × day and topology, and
+  `plots/convergence_<network>_<day>_[no]storage` (all algorithms per topology).
+
 ## World
 
 One mango agent per bus; it owns every component at its bus (units, storage and its load) and
@@ -250,6 +265,7 @@ src/energy_scheduling_benchmark/
 │   └── dummy.py      # dummy merit-order algorithm (test fixture), setup
 ├── tune.py       # esb-tune: parameter sweep for one algorithm × network × topology
 ├── compare.py    # esb-compare: cost gap of every run vs. its central run
+├── plots.py      # esb-plot: sweep + run figures (plotly, HTML + PDF)
 ├── world.py      # mango world: bus agents, topologies, counted lossy links, leader = first bus
 ├── run.py        # esb-run: one run end-to-end
 └── outputs.py    # schedule.csv + meta.json + trace.csv; Outcome, IterationTrace

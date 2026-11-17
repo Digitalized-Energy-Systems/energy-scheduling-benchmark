@@ -28,6 +28,8 @@ dependencies = [
 
 [project.optional-dependencies]
 build = ["geopandas>=1.0"]
+# esb-plot (D-158): figures as HTML + PDF; the PDF export needs a Chrome (plotly_get_chrome)
+plot = ["plotly>=6", "kaleido>=1"]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
@@ -39,6 +41,7 @@ esb-run = "energy_scheduling_benchmark.run:main"
 esb-prepare = "energy_scheduling_benchmark.datasets:main"
 esb-tune = "energy_scheduling_benchmark.tune:main"
 esb-compare = "energy_scheduling_benchmark.compare:main"
+esb-plot = "energy_scheduling_benchmark.plots:main"
 
 [tool.uv.sources]
 mango-energy-environments = { path = "../mango-energy-environments", editable = true }
