@@ -163,12 +163,19 @@ def test_score_zero_cost_window_and_unavoidable_surplus():
 
 def test_rank_converged_by_iterations_before_budget_runs():
     # A3 (D-140): at the noise floor scores tie, so a converged run ranks by iterations
-    fast = tune.rank({"stop_reason": "converged", "iterations": 200}, 1e-9)
-    slow = tune.rank({"stop_reason": "converged", "iterations": 900}, 1e-12)
-    budget = tune.rank({"stop_reason": "max_iter", "iterations": 3000}, 0.0)
-    covered = tune.rank({"stop_reason": "renewables_cover", "iterations": 0}, 0.0)
+    fast = tune.rank({"stop_reason": "converged", "iterations": 200}, 1e-9, True)
+    slow = tune.rank({"stop_reason": "converged", "iterations": 900}, 1e-12, True)
+    budget = tune.rank({"stop_reason": "max_iter", "iterations": 3000}, 0.0, True)
+    covered = tune.rank({"stop_reason": "renewables_cover", "iterations": 0}, 0.0, True)
     assert covered < fast < slow < budget
     assert max(fast, budget) == budget  # a candidate counts with its worst window
+
+
+def test_rank_by_score_ignores_early_convergence():
+    # D-143 (consensus): a fast but inaccurate stop loses to an accurate budget run
+    early = tune.rank({"stop_reason": "converged", "iterations": 20}, 0.9, False)
+    budget = tune.rank({"stop_reason": "max_iter", "iterations": 3000}, 0.01, False)
+    assert budget < early
 
 
 def test_agent_factors_toy():
