@@ -198,7 +198,9 @@ have. The batch over the standard grid is `../run_all.sh` (workspace root): all 
 
 `esb-plot` (plan B4, D-157–D-163; extra `[plot]`) draws every figure twice, interactive HTML and a
 PDF for print, next to its data; convergence curves run over iteration, |gap| on a log axis (the
-end marker shows the sign: filled = above the optimum, open = below).
+end marker shows the sign: filled = above the optimum, open = below). The curves use the trace
+cost (units only): in `--grid-exchange` runs the import added after the run is in the gap bars
+but not in the curve, so a curve can end below its bar.
 - `esb-plot sweeps [ROOT]` (default `outputs/sweeps`): per sweep `plots/convergence` (|gap| and
   imbalance per tuning day; HTML every candidate, failed dashed; PDF the chosen set + the 5 best)
   and `plots/grid` (consensus: heatmap of the worst-day score per step variant, ★ chosen,
