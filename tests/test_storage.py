@@ -2,7 +2,7 @@ import numpy as np
 from mango_energy_environments import LOAD, STORAGE
 
 from energy_scheduling_benchmark import datasets, storage
-from energy_scheduling_benchmark.central import solve_central
+from energy_scheduling_benchmark.algorithms.central import solve_central
 
 
 def test_response_at_central_prices_is_central_schedule():

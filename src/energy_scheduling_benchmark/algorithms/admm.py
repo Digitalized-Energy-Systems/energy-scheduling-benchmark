@@ -1,5 +1,5 @@
 """Exchange ADMM for economic dispatch: the bus participant, its parameters and the benchmark
-wiring (``setup``; algorithm interface: ``run.ALGORITHMS``).
+wiring (``setup``; algorithm interface: :mod:`.algorithms`).
 
 Plan: ``docs/admm-exchange-plan.md`` (S6a). The generic algorithm is DRO's exchange ADMM
 (Boyd et al. 2011 §7.3.2, ``create_exchange_admm_coordinator``) with the surplus slack
@@ -10,11 +10,9 @@ pre-dispatched units at p_max, as consensus), minimising its units' cost + ρ/2 
 
 from __future__ import annotations
 
-import clarabel
 import cvxpy as cp
 import numpy as np
 import scipy.sparse as sp
-from cvxpy.reductions.solvers.conic_solvers.clarabel_conif import dims_to_solver_cones
 from distributed_resource_optimization import (
     ADMMAnswer,
     ADMMMessage,
@@ -30,10 +28,11 @@ from distributed_resource_optimization.carrier.mango_carrier import (
 )
 from mango_energy_environments import LOAD, STORAGE, THERMAL, Component, Network
 
-from . import storage
-from .outputs import IterationTrace, Outcome
-from .problem import predispatched
-from .world import leader, longest_hops
+from .. import storage
+from ..outputs import IterationTrace, Outcome
+from ..problem import predispatched
+from ..qp import QP
+from ..world import leader, longest_hops
 
 #: esb-tune: 32 fixed ρ (= consensus' count, Q-A5; 2026-11-16 D-136 corrects D-119's 128),
 #: log-spaced over six decades around the median 2c₂ of the dispatchable thermal units (€/MWh per
@@ -72,7 +71,7 @@ class BusParticipant(DistributedAlgorithm):
 
     The model (units within p_min … p_max at c₁p + c₂p², storage per :mod:`.storage`, cost as
     central dispatch) is canonicalised once; per message only q changes, a new ρ (adaptive route)
-    rebuilds the solver — Clarabel is called directly, as in :func:`.storage.response`."""
+    rebuilds the solver (:class:`.qp.QP`, as :func:`.storage.response`)."""
 
     def __init__(self, behavior, aid: str, trace: IterationTrace | None = None) -> None:
         self.behavior, self.aid, self.trace = behavior, aid, trace
@@ -116,41 +115,28 @@ class BusParticipant(DistributedAlgorithm):
         x = cp.Variable(steps)
         net = sum((sign * v for parts in exprs.values() for v, sign in parts), 0)
         problem = cp.Problem(cp.Minimize(cost), [*cons, x == net - load])
-        data, _, _ = problem.get_problem_data(cp.CLARABEL)
-        col = data["param_prob"].var_id_to_col
+        self._qp = QP(problem, f"{aid}: ADMM bus QP")
+        col = self._qp.col
         self._cols = {
             cid: [(col[v.id], sign) for v, sign in parts]
             for cid, parts in exprs.items()
         }
         self._x = col[x.id]
-        n = data["c"].size
-        P = data.get("P")  # absent when the bus's cost is linear
-        self._P = sp.csc_matrix((n, n)) if P is None else sp.triu(P).tocsc()
-        diag = np.zeros(n)
+        self._P = self._qp.P  # the bus cost alone; each ρ adds ρ/2 ||x||²
+        diag = np.zeros(self._qp.q0.size)
         diag[self._x : self._x + steps] = 1.0
         self._prox = sp.diags(diag).tocsc()
-        self._q0, self._A, self._b = data["c"], data["A"], data["b"]
-        self._cones = dims_to_solver_cones(data["dims"])
-        self._settings = clarabel.DefaultSettings()
-        self._settings.verbose = False
-        self._solver, self._rho, self._steps = None, None, steps
+        self._rho, self._steps = None, steps
         self.p: dict | None = None
 
     def _solve(self, v: np.ndarray, rho: float) -> np.ndarray:
-        q = self._q0.copy()
+        q = self._qp.q0.copy()
         q[self._x : self._x + self._steps] += rho * v  # −ρ wᵀx with w = −v
-        if self._solver is None or rho != self._rho:
+        P = None
+        if rho != self._rho:  # first message, or a new ρ (adaptive route)
             self._rho = rho
             P = (self._P + rho * self._prox).tocsc()
-            self._solver = clarabel.DefaultSolver(
-                P, q, self._A, self._b, self._cones, self._settings
-            )
-        else:
-            self._solver.update(q=q)
-        solution = self._solver.solve()
-        if solution.status != clarabel.SolverStatus.Solved:
-            raise RuntimeError(f"{self.aid}: ADMM bus QP {solution.status}")
-        z = np.asarray(solution.x)
+        z = self._qp.solve(q, P)
         s = self._steps
         self.p = {
             cid: sum(sign * z[i : i + s] for i, sign in cols)
@@ -186,7 +172,7 @@ class _Kickoff(Coordinator):
 
 
 def setup(params: dict, network: Network, full: Network, args):
-    """Benchmark wiring (algorithm interface, ``run.ALGORITHMS``): the coordinator on the first
+    """Benchmark wiring (algorithm interface, :mod:`.algorithms`): the coordinator on the first
     bus agent (leader), a :class:`BusParticipant` on every bus agent; the grid exchange takes no
     part (Q-E2 A, D-118); returns ``(behavior, agents, routes) -> outcome``."""
     steps_n, delay_s = len(network.time_index), args.delay_s

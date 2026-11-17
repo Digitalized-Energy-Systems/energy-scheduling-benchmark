@@ -29,9 +29,9 @@ from distributed_resource_optimization.carrier.mango_carrier import (
 )
 from mango_energy_environments import LOAD, STORAGE
 
-from .outputs import Outcome
-from .problem import predispatched
-from .world import leader
+from ..outputs import Outcome
+from ..problem import predispatched
+from ..world import leader
 
 #: Simulated seconds the leader waits for offers (a ring of ~70 bus agents at 0.01 s per hop
 #: needs < 1 s for request + reply).
@@ -39,7 +39,7 @@ TIMEOUT_S = 60.0
 
 
 def setup(params: dict, network, full, args):
-    """Benchmark wiring (algorithm interface, ``run.ALGORITHMS``): adds the dummy roles and
+    """Benchmark wiring (algorithm interface, :mod:`.algorithms`): adds the dummy roles and
     returns ``outcome() -> Outcome``."""
 
     def add_roles(behavior, agents, routes):
