@@ -35,6 +35,7 @@ def _args(**kw):
     defaults = dict(
         algorithm="consensus", network="toy", topology="ring", start=None, hours=6,
         max_iter=1000, jobs=2, write=False, storage=True, out=tempfile.mkdtemp(),
+        replace=False,
     )  # fmt: skip
     return tune.argparse.Namespace(**defaults | kw)
 
@@ -58,6 +59,16 @@ def test_sweep_picks_a_converged_candidate(monkeypatch, capsys):
     assert best["gamma"] * best["kappa"] == pytest.approx(0.73 / 4, rel=1e-3)
     assert "best: constant" in best["note"]
     assert "diverged" in capsys.readouterr().out
+
+
+def test_sweep_keeps_existing_records_unless_replace(tmp_path):
+    # D-154: earlier records are never deleted unasked
+    store = tmp_path / "consensus" / "toy" / "ring_storage"
+    store.mkdir(parents=True)
+    (store / "sweep.csv").write_text("old")
+    with pytest.raises(SystemExit, match="--replace"):
+        tune.sweep(_args(out=tmp_path))
+    assert (store / "sweep.csv").read_text() == "old"
 
 
 def test_sweep_prunes_without_changing_the_winner(monkeypatch, capsys, tmp_path):

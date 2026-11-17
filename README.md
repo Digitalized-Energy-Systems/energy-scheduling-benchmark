@@ -157,7 +157,7 @@ any value; the route and the values used are stored in `meta.json`):
 | `manual` | `[<algorithm>.<network>.<topology>.manual]` — hand-tuned, with a `note` | default when present |
 | `sweep` | `[<algorithm>.<network>.<topology>.sweep]` — written by `esb-tune` | default when there is no manual set (decided 2026-11-12) |
 
-`esb-tune --network N --topology T --start DAY … [--jobs N] [--no-write]` sweeps the algorithm's
+`esb-tune --network N --topology T --start DAY … [--jobs N] [--no-write] [--replace]` sweeps the algorithm's
 `sweep_grid` (32 candidates per algorithm; consensus: constant 4 κ × 4 β, decaying 4 α₀ × 2 β₀ ×
 α exponent {0.6, 0.98}; α × 1/max scaled bus sensitivity, β × 1/λ_max(L) of the bus topology;
 admm: 32 fixed ρ, log-spaced over six decades around the median 2c₂ of the thermal units) on
@@ -170,8 +170,8 @@ nothing is written if every candidate fails. Use `--no-write` for trial sweeps a
 `git diff resources/tuned_parameters.toml` after a real one.
 
 Every sweep run is kept for plots (S4b, D-147–D-152, `../docs/sweep-records-plan.md`):
-`<--out, default outputs/sweeps>/<algorithm>/<network>/<topology>_[no]storage/` (emptied at the
-start: a re-sweep replaces it) holds `central_<day>/` and `<candidate>_<day>/` (normal run output:
+`<--out, default outputs/sweeps>/<algorithm>/<network>/<topology>_[no]storage/` (a re-sweep
+replaces it only with `--replace`, else esb-tune stops — D-154) holds `central_<day>/` and `<candidate>_<day>/` (normal run output:
 `meta.json` = end result, `trace.csv` = convergence curve), `sweep.csv` (one row per candidate ×
 day: parameters, `status` ok / failed / skipped = not run after a failed or pruned day,
 stop_reason, iterations, total_cost, gap, score, sim/wall time, `folder`) and `sweep.json`

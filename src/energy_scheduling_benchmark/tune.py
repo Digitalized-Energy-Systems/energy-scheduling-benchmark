@@ -19,7 +19,8 @@ Ties go to the earlier candidate, so the result does not depend on ``--jobs`` (T
 rank only with ``RANK_BY_ITERATIONS``, D-140). Runs go to ``--jobs`` processes (T2).
 
 Records (S4b, D-147–D-152): every run is kept in the sweep folder
-``<--out>/<algorithm>/<network>/<topology>_[no]storage/`` (emptied first, a re-sweep replaces it)
+``<--out>/<algorithm>/<network>/<topology>_[no]storage/`` (a re-sweep replaces it only with
+``--replace``, else esb-tune stops, D-154)
 as ``central_<day>/`` and ``<candidate>_<day>/`` (esb-run output: meta, trace, schedule), plus
 ``sweep.csv`` (one row per candidate × day; ``skipped`` = not run: after a failed day or pruned)
 and ``sweep.json`` (args, central cost per day, best per variant, chosen set) for plots.
@@ -141,6 +142,11 @@ def sweep(args: argparse.Namespace) -> dict | None:
     # 2026-11-17 D-147/D-149: every run is kept here for plots (was a temporary directory)
     store = Path(args.out, args.algorithm, args.network, args.topology)
     store = store.with_name(f"{store.name}_{'' if args.storage else 'no'}storage")
+    # 2026-11-17 D-154: never delete earlier records unasked (a local check wiped them silently)
+    if store.exists() and not args.replace:
+        raise SystemExit(
+            f"records exist: {store}\n  pass --replace to overwrite them, or --out elsewhere"
+        )
     shutil.rmtree(store, ignore_errors=True)
     days = ["default" if s is None else f"{pd.Timestamp(s):%Y%m%dT%H}" for s in starts]
     with ProcessPoolExecutor(args.jobs) as pool:
@@ -305,6 +311,11 @@ def main(argv: list[str] | None = None) -> None:
         "--out",
         default="outputs/sweeps",
         help="records root: every run + sweep.csv/.json (D-149)",
+    )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="overwrite this sweep's existing records (else esb-tune stops, D-154)",
     )
     parser.add_argument(
         "--no-write", dest="write", action="store_false", help="only print the best set"
