@@ -1,4 +1,4 @@
-"""Central economic dispatch: the reference optimum (plan: ``docs/central-dispatch-plan.md``).
+"""Central economic dispatch: the reference optimum (decision D-035).
 
 One cvxpy model over the whole window: units within p_min … p_max at c₁p + c₂p², storage per
 :mod:`.storage`, optional grid exchange (import at :data:`GRID_IMPORT_PRICE`, export free), and per hour
