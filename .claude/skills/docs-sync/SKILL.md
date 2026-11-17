@@ -61,7 +61,7 @@ and read each section a fact touches. Per file:
 | `docs/deviations.md` | every paper deviation the feature added/removed/changed (P*, C*), with reason and decision reference; superseded entries marked |
 | `docs/restart-plan.md` | §4 Progress: append the finished step (the "Next" bullet only points at TODO) |
 | `docs/hpc-runbook.md`, root `hpc_sweeps.sh`, `run_all.sh`, `hpc-requirements.txt` | commands, flags, defaults, dates and file names still valid; header comments match |
-| `docs/mango-2.4-features.md` | only when mango usage changed |
+| `docs/mango-evaluation.md` | only when mango usage changed (native features, gaps, not used, M1–M5) |
 | other `docs/*.md` (research, reviews, agendas) | leave as dated records; fix only a pointer that is now wrong |
 | each repo `README.md` | Scope section (repo split), install, usage/CLI examples (run one if cheap), outputs and meta fields, network list + properties, algorithm list, package layout tree |
 | each repo `CLAUDE.md` | scope + "must not contain" still true |

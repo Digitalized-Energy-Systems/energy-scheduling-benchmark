@@ -17,7 +17,7 @@ once*. Nothing is implemented here; implementation follows later (ponytail, work
   decisions already taken (cite them by `D-nnn`, never re-ask).
 - `docs/deviations.md` for deviations that already touch the feature.
 - The papers in `docs/references/` the feature implements — note equations and sections.
-- If anything mango-related: the full online docs sweep (mango 2.4.0) + `docs/mango-2.4-features.md`.
+- If anything mango-related: the full online docs sweep (mango 2.4.0) + `docs/mango-evaluation.md`.
 - The archive `~/development/esb-archive-2026-10-30/` only as a reference for what existed.
 
 ## 2. Write the skeleton `docs/<feature>-plan.md`
