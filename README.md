@@ -149,6 +149,7 @@ algorithm returns at once with `stop_reason = "renewables_cover"`.
 | `central` | the reference optimum (cvxpy, no agents) | none |
 | `consensus` | consensus + innovations, Kar & Hug 2012 / Hug, Kar & Wu 2015 (plan `../docs/consensus-plan.md`, deviations `../docs/deviations.md`) | `[consensus]` in `resources/tuned_parameters.toml`: step sizes, tolerances, `max_iter`, `agent_scale` |
 | `admm` | exchange ADMM, Boyd et al. 2011 §7.3.2 with the surplus Σx ≥ 0 (plan `../docs/admm-exchange-plan.md`, deviations E1–E6) | `[admm]`: ρ, adaptive ρ (μ, τ), stop tolerances `eps_abs` / `eps_rel`, `max_iter` |
+| `deed_admm` | DEED-ADMM, Zhu et al. 2025 Algorithm 1, reduced to electricity: peers on the topology exchange (λ, ξ), each bus solves its units / storage / surplus sink (plan `../docs/deed-admm-plan.md`, deviations Z1–Z9) | `[deed_admm]`: β (W = I − βL), γ, stop tolerances `eps_abs` / `eps_rel`, `max_iter` |
 | `dummy` | merit order in the leader (first bus agent), a plumbing test | none |
 
 Parameters come in **tuning routes**, one set per network × topology (`--set key=value` overrides
@@ -163,10 +164,11 @@ any value; the route and the values used are stored in `meta.json`):
 `esb-tune --network N --topology T --start DAY … [--jobs N] [--no-write] [--replace]` sweeps the algorithm's
 `sweep_grid` (32 candidates per algorithm; consensus: constant 4 κ × 4 β, decaying 4 α₀ × 2 β₀ ×
 α exponent {0.6, 0.98}; α × 1/max scaled bus sensitivity, β × 1/λ_max(L) of the bus topology;
-admm: 32 fixed ρ, log-spaced over six decades around the median 2c₂ of the thermal units) on
+admm: 32 fixed ρ, log-spaced over six decades around the median 2c₂ of the thermal units;
+deed_admm: 4 β = g/λ_max(L) × 8 γ on admm's ρ scale, D-177) on
 a fixed budget with the stop rule on, its tolerances 10× below the run's (consensus ε_λ 1e-5 €/MWh,
-ε_p 1e-4, D-143; admm ε_abs 1e-5, ε_rel 1e-4, D-142); consensus ranks every window by score, admm
-(D-140) ranks a window that converges by iterations ahead of every run that used the whole budget); a consensus sweep run ends as `diverged` once |λ| > 4000 €/MWh, and a
+ε_p 1e-4, D-143; admm and deed_admm ε_abs 1e-5, ε_rel 1e-4, D-142, D-176); consensus ranks every window by score, admm
+and deed_admm (D-140, D-176) rank a window that converges by iterations ahead of every run that used the whole budget); a consensus sweep run ends as `diverged` once |λ| > 4000 €/MWh, and a
 candidate is pruned once one window scores worse than the best of its variant. The best candidate
 that runs through every window is written whatever its gap (the gap per window is in its `note`);
 nothing is written if every candidate fails. Use `--no-write` for trial sweeps and check
@@ -222,11 +224,11 @@ simulation like any other. The grid exchange is no agent (it takes the remaining
 run; the slack agent had no role and was removed 2026-11-12). The leader role knows no demand beyond its bus: it
 only learns it from the bus agents' messages. Topologies: `grid` (buses joined by lines),
 `ring` (over the buses), `complete`; non-neighbours are reached hop by hop, every hop counted.
-`--loss-rate p` loses each hop of the **algorithms' own messages** (consensus λ, ADMM scatter and replies, dummy offers) with
+`--loss-rate p` loses each hop of the **algorithms' own messages** (consensus λ, DEED-ADMM (λ, ξ), ADMM scatter and replies, dummy offers) with
 probability p; control messages (start, stop, converged reports) always arrive (decided 2026-11-11,
-`../docs/message-loss-plan.md`). Lossy consensus runs end each round for every agent at
+`../docs/message-loss-plan.md`). Lossy consensus and DEED-ADMM runs end each round for every agent at
 t0 + (k+1)·2·`delay_s`: a neighbour's λ missing by then is a failed link of that round (Kar & Hug
-2012 §IV); meta `messages` then also reports `rounds_by_deadline` and `missing_edges`. Lossy ADMM
+2012 §IV; DEED-ADMM: the edge's weight stays with the receiver, D-133); meta `messages` then also reports `rounds_by_deadline` and `missing_edges`. Lossy ADMM
 runs end a coordinator round 4·max_hops·`delay_s` after its scatter (twice the longest round
 trip; a reply due exactly at the deadline would tie with it): a bus whose reply is missing keeps its last
 x (meta `missing_replies`). Lossless runs wait for every message as before.
@@ -266,6 +268,7 @@ src/energy_scheduling_benchmark/
 │   ├── central.py    # central dispatch: the reference optimum (cvxpy)
 │   ├── consensus.py  # consensus + innovations: bus actor, sweep grid, setup
 │   ├── admm.py       # exchange ADMM: bus participant, sweep grid, setup
+│   ├── deed_admm.py  # DEED-ADMM: bus participant (Algorithm 1 lines 5–11, 14), sweep grid, setup
 │   └── dummy.py      # dummy merit-order algorithm (test fixture), setup
 ├── tune.py       # esb-tune: parameter sweep for one algorithm × network × topology
 ├── compare.py    # esb-compare: cost gap of every run vs. its central run
