@@ -4,15 +4,7 @@ Usage (after ``esb-prepare --network lower_saxony_2025``)::
 
     esb-run --network lower_saxony_2025 --algorithm consensus --topology ring --start 2025-01-14
 
-Algorithm interface (audit 2026-11-12 Q-A4, decided by Jonas: module convention): every
-distributed algorithm is one ESB module in :data:`ALGORITHMS` with
-``setup(params, network, full, args) -> (behavior, agents, routes) -> outcome`` that adds its mango
-roles to the world's agents and returns ``outcome() -> outputs.Outcome``; its parameters are the
-``[<algorithm>]`` section of ``resources/tuned_parameters.toml`` (``--tuning``, ``--set``); if it
-can be tuned it also has ``sweep_grid``, ``SWEEP_RUN``, ``VARIANT`` and ``RANK_BY_ITERATIONS``
-(``esb-tune``). Control
-messages (start, stop, reports) are marked with DRO's ``ControlMessage`` and never lost.
-Central dispatch is the one case without a world.
+Algorithm interface and registry: :mod:`.algorithms` (``ALGORITHMS``).
 """
 
 from __future__ import annotations
@@ -35,15 +27,13 @@ from mango_energy_environments import (
     load_network,
 )
 
-from . import admm, consensus, datasets, dummy
-from .central import solve_central
+from . import datasets
+from .algorithms import ALGORITHMS
+from .algorithms.central import solve_central
 from .outputs import RENEWABLES_COVER, run_dir, write_run
 from .parameters import TUNINGS, has_parameters, parameters
 from .problem import no_dispatch
 from .world import TOPOLOGIES, build_world, leader
-
-#: name → algorithm module (None: central dispatch, no world). Add a new algorithm here.
-ALGORITHMS = {"central": None, "consensus": consensus, "admm": admm, "dummy": dummy}
 
 
 def window(network: Network, start, hours: int) -> Network:

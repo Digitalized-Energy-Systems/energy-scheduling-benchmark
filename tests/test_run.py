@@ -8,7 +8,6 @@ import pytest
 from mango_energy_environments import (
     LOAD,
     RENEWABLE,
-    STORAGE,
     THERMAL,
     Component,
     Network,
@@ -16,25 +15,7 @@ from mango_energy_environments import (
 )
 
 from energy_scheduling_benchmark import datasets
-from energy_scheduling_benchmark.dummy import Offer, merit_order
 from energy_scheduling_benchmark.run import main, run, window
-
-
-def test_merit_order():
-    flat = np.ones(2)
-    offers = [
-        Offer(THERMAL, 50.0, 1 * flat, 10 * flat),
-        Offer(THERMAL, 20.0, 0 * flat, 4 * flat),
-        None,
-        Offer(STORAGE, 0.0, -5 * flat, 5 * flat),
-    ]
-    s = merit_order(offers, np.array([3.0, 8.0]))
-    np.testing.assert_array_equal(
-        s[0], [1.0, 4.0]
-    )  # p_min, then what the cheap one leaves
-    np.testing.assert_array_equal(s[1], [2.0, 4.0])
-    assert s[2] is None
-    np.testing.assert_array_equal(s[3], [0.0, 0.0])  # storage idle
 
 
 def test_window():
@@ -125,56 +106,6 @@ def test_prepare_once_run_from_file(tmp_path):
         main(["--network", "nope"])
 
 
-@pytest.mark.parametrize("topology", ["grid", "ring", "complete"])
-def test_consensus_reaches_central_cost(tmp_path, topology):
-    common = ["--hours", "24", "--topology", topology, "--out", str(tmp_path)]
-    main(["--algorithm", "central", *common])
-    main(
-        ["--algorithm", "consensus", *common]
-    )  # toy's manual set (tuned_parameters.toml)
-    central, consensus = (
-        json.loads(next(tmp_path.glob(f"toy/{a}/*/meta.json")).read_text())
-        for a in ("central", "consensus")
-    )
-    assert consensus["stop_reason"] == "converged"
-    assert consensus["inputs"]["consensus"]["tuning"] == "manual"
-    assert consensus["total_cost"] == pytest.approx(central["total_cost"], rel=1e-3)
-    # Q-A3: time to solution (≥ one 10 ms hop per iteration) and the per-iteration trace, whose
-    # last row is near the final state (cost without grid exchange = total_cost here, islanded;
-    # sparse topologies: buses end 1–3 iterations apart, so not exact — Jonas 2026-11-13)
-    assert central["sim_time_s"] is None
-    assert consensus["sim_time_s"] >= 0.01 * consensus["iterations"]
-    trace = pd.read_csv(next(tmp_path.glob("toy/consensus/*/trace.csv")))
-    assert list(trace.iteration) == list(range(len(trace)))
-    assert trace.iteration.iloc[-1] >= consensus["iterations"] - 1
-    assert trace.cost.iloc[-1] == pytest.approx(consensus["total_cost"], rel=1e-4)
-    assert trace.imbalance_mwh.iloc[-1] < trace.imbalance_mwh.iloc[0]
-
-
-def test_consensus_per_agent_steps_reach_central_cost(tmp_path):
-    # S3: α and β scaled per bus keep the optimum (scaling only α would bias it, plan §2)
-    common = ["--hours", "24", "--topology", "ring", "--out", str(tmp_path)]
-    main(["--algorithm", "central", *common])
-    main(["--algorithm", "consensus", *common, "--set", "agent_scale=capacity"])
-    central, scaled = (
-        json.loads(next(tmp_path.glob(f"toy/{a}/*/meta.json")).read_text())
-        for a in ("central", "consensus")
-    )
-    assert scaled["inputs"]["consensus"]["agent_scale"] == "capacity"
-    assert scaled["stop_reason"] == "converged"
-    assert scaled["total_cost"] == pytest.approx(central["total_cost"], rel=1e-3)
-
-
-def test_consensus_settings_get_own_folders(tmp_path):
-    common = ["--algorithm", "consensus", "--hours", "2", "--out", str(tmp_path)]
-    main([*common, "--tuning", "paper", "--set", "max_iter=2"])
-    main([*common, "--tuning", "paper", "--set", "max_iter=3"])
-    names = sorted(p.name for p in tmp_path.glob("toy/consensus/*"))
-    assert len(names) == 2 and all("_paper_set" in n for n in names)
-    with pytest.raises(SystemExit, match="KEY=VALUE"):
-        main([*common, "--set", "kappa"])
-
-
 def test_set_values_parse_python_booleans():
     from energy_scheduling_benchmark.run import _value
 
@@ -246,28 +177,6 @@ def test_renewables_cover_every_hour_needs_no_dispatch(tmp_path):
         assert meta["imbalance"]["surplus_mwh"] == pytest.approx(3.0)
 
 
-def test_lossy_consensus_finishes_with_deadline_rounds(tmp_path):
-    # S5: 20 % of the λ messages lost — without round deadlines one lost λ stalled the whole run;
-    # control messages always arrive; the same seed gives the same run
-    common = ["--algorithm", "consensus", "--hours", "2", "--topology", "ring"]
-    common += ["--loss-rate", "0.2", "--set", "max_iter=600"]
-    metas = []
-    for out in ("a", "b"):
-        main([*common, "--out", str(tmp_path / out)])
-        metas.append(
-            json.loads(
-                next(tmp_path.glob(f"{out}/toy/consensus/*/meta.json")).read_text()
-            )
-        )
-    a, b = metas
-    assert a["stop_reason"] in ("converged", "max_iter")  # not "stalled"
-    assert a["messages"]["lost"] > 0
-    assert (
-        a["messages"]["rounds_by_deadline"] > 0 and a["messages"]["missing_edges"] > 0
-    )
-    assert a["total_cost"] == b["total_cost"] and a["messages"] == b["messages"]
-
-
 def test_control_messages_are_never_lost():
     from distributed_resource_optimization.algorithm.firstorder.consensus.innovations import (
         ConsensusMessage,
@@ -291,7 +200,8 @@ def test_control_messages_are_never_lost():
 
 def test_algorithm_interface(tmp_path):
     from energy_scheduling_benchmark import tune
-    from energy_scheduling_benchmark.run import ALGORITHMS, build_parser
+    from energy_scheduling_benchmark.algorithms import ALGORITHMS
+    from energy_scheduling_benchmark.run import build_parser
 
     # audit 2026-11-12 Q-A4: one dict; every distributed algorithm module has setup(...)
     assert build_parser().parse_args([]).algorithm == "central"  # Q-A12a

@@ -211,7 +211,8 @@ time is wall-clock and there is no loss model.
 
 ## Adding an algorithm
 
-One ESB module per algorithm, registered in `run.ALGORITHMS` (decided 2026-11-12, audit Q-A4):
+One module per algorithm in `algorithms/`, registered in `algorithms.ALGORITHMS` (decided
+2026-11-12, audit Q-A4; subpackage since 2026-11-17, D-145):
 `setup(params, network, full, args)` returns `(behavior, agents, routes) -> outcome` — it adds the
 algorithm's mango roles (DRO `DistributedOptimizationRole` / `CoordinatorRole`) to the world's
 agents and returns `outcome() -> outputs.Outcome` (stop reason, iterations, message counts,
@@ -219,7 +220,8 @@ agents and returns `outcome() -> outputs.Outcome` (stop reason, iterations, mess
 `resources/tuned_parameters.toml` (`--tuning`, `--set` work for every algorithm); with
 `sweep_grid`, `SWEEP_RUN` and `VARIANT` it can be tuned by `esb-tune --algorithm <name>`. Its
 start / stop / report messages subclass DRO's `ControlMessage`, so they stay reliable on lossy
-links. `consensus.py` is the worked example, `dummy.py` the smallest one.
+links. `algorithms/consensus.py` is the worked example, `algorithms/dummy.py` the smallest one;
+its tests go to `tests/algorithms/test_<name>.py`.
 
 ## Package layout
 
@@ -227,16 +229,19 @@ links. `consensus.py` is the worked example, `dummy.py` the smallest one.
 src/energy_scheduling_benchmark/
 ├── problem.py    # problem rules shared by all: pre-dispatched units, grid import price, no-dispatch window
 ├── datasets.py   # benchmark networks + preparation recipe; esb-prepare
-├── central.py    # central dispatch: the reference optimum (cvxpy)
 ├── storage.py    # shared storage model + price response (central dispatch + algorithms)
+├── qp.py         # cvxpy QP canonicalised once, re-solved by Clarabel (storage response, ADMM bus)
 ├── parameters.py # algorithm parameters per route (tuned_parameters.toml)
-├── consensus.py  # consensus + innovations: bus actor, sweep grid, setup
-├── admm.py       # exchange ADMM: bus participant (cached Clarabel QP), sweep grid, setup
-├── dummy.py      # dummy merit-order algorithm (test fixture), setup
+├── algorithms/
+│   ├── __init__.py   # ALGORITHMS registry + the algorithm interface
+│   ├── central.py    # central dispatch: the reference optimum (cvxpy)
+│   ├── consensus.py  # consensus + innovations: bus actor, sweep grid, setup
+│   ├── admm.py       # exchange ADMM: bus participant, sweep grid, setup
+│   └── dummy.py      # dummy merit-order algorithm (test fixture), setup
 ├── tune.py       # esb-tune: parameter sweep for one algorithm × network × topology
 ├── compare.py    # esb-compare: cost gap of every run vs. its central run
 ├── world.py      # mango world: bus agents, topologies, counted lossy links, leader = first bus
-├── run.py        # esb-run: one run end-to-end; ALGORITHMS (the algorithm interface)
+├── run.py        # esb-run: one run end-to-end
 └── outputs.py    # schedule.csv + meta.json + trace.csv; Outcome, IterationTrace
 resources/
 ├── tuned_parameters.toml  # per-algorithm parameters

@@ -28,7 +28,8 @@ from mango import (
 )
 from mango_energy_environments import LOAD, CopperPlateBehavior
 
-from energy_scheduling_benchmark import consensus, datasets
+from energy_scheduling_benchmark import datasets
+from energy_scheduling_benchmark.algorithms import consensus
 from energy_scheduling_benchmark.outputs import write_run
 from energy_scheduling_benchmark.parameters import parameters
 from energy_scheduling_benchmark.run import build_parser, run, window

@@ -1,5 +1,5 @@
 """Consensus + innovations for economic dispatch: the bus actor, its step parameters and the
-benchmark wiring (``setup``; algorithm interface: ``run.ALGORITHMS``, audit 2026-11-12 Q-A4).
+benchmark wiring (``setup``; algorithm interface: :mod:`.algorithms`, audit 2026-11-12 Q-A4).
 
 Plan: ``docs/consensus-plan.md`` (§7 I1–I10). The generic algorithm is DRO's
 ``ConsensusInnovationsAlgorithm``; here each bus agent answers a price vector λ (€/MWh per hour)
@@ -24,10 +24,10 @@ from distributed_resource_optimization.carrier.mango_carrier import (
 )
 from mango_energy_environments import LOAD, STORAGE, Component, Network
 
-from . import storage
-from .outputs import IterationTrace, Outcome
-from .problem import predispatched
-from .world import leader, longest_hops, settle_s, topology_graph
+from .. import storage
+from ..outputs import IterationTrace, Outcome
+from ..problem import predispatched
+from ..world import leader, longest_hops, settle_s, topology_graph
 
 #: Floor on λ (€/MWh) = the marginal cost of the pre-dispatched renewables: in a surplus hour
 #: nobody can absorb, λ would fall without bound; at 0 renewables are the marginal unit, so 0 is
@@ -232,7 +232,7 @@ def _generator(cid, cost, p_min, p_max):
 
 
 def setup(params: dict, network: Network, full: Network, args):
-    """Benchmark wiring (algorithm interface, ``run.ALGORITHMS``): returns
+    """Benchmark wiring (algorithm interface, :mod:`.algorithms`): returns
     ``(behavior, agents, routes) -> outcome`` that adds the roles — bus agents, the first one also the leader; the grid
     exchange takes no part (plan Q6) — and ``outcome() -> Outcome``.
 

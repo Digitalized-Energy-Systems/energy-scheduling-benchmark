@@ -17,7 +17,8 @@ from mango_energy_environments import (
     save_network,
 )
 
-from energy_scheduling_benchmark import admm, datasets
+from energy_scheduling_benchmark import datasets
+from energy_scheduling_benchmark.algorithms import admm
 from energy_scheduling_benchmark.run import main
 from energy_scheduling_benchmark.world import topology_graph
 

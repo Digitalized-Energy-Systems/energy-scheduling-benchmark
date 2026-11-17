@@ -16,8 +16,8 @@ import cvxpy as cp
 import numpy as np
 from mango_energy_environments import LOAD, STORAGE, Network
 
-from . import storage
-from .problem import GRID_IMPORT_PRICE, predispatched
+from .. import storage
+from ..problem import GRID_IMPORT_PRICE, predispatched
 
 
 def solve_central(

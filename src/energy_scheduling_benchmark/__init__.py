@@ -5,10 +5,11 @@ central optimum on copper-plate networks.
   grid import price, the no-dispatch window).
 * :mod:`.datasets` — benchmark networks: raw PyPSA / pandapower input + preparation recipe →
   prepared ``.nc`` (``esb-prepare``).
-* :mod:`.central` — central dispatch (the reference optimum); :mod:`.storage` — shared storage
-  model + price response.
+* :mod:`.storage` — shared storage model + price response; :mod:`.qp` — Clarabel QP that is
+  canonicalised once and re-solved per price (storage response, ADMM bus).
 * :mod:`.parameters` — algorithm parameters per tuning route (``resources/tuned_parameters.toml``).
-* :mod:`.consensus`, :mod:`.admm`, :mod:`.dummy` — the algorithms (one module each, ``run.ALGORITHMS``).
+* :mod:`.algorithms` — ``algorithms.central`` (the reference optimum), ``consensus``, ``admm``,
+  ``dummy``: one module each, registry ``algorithms.ALGORITHMS``.
 * :mod:`.world` — mango world: topology, counted lossy links, bus agents (the first one also the leader).
 * :mod:`.run` — one run end-to-end (``esb-run``); :mod:`.outputs` — ``schedule.csv``,
   ``meta.json``, ``trace.csv``.

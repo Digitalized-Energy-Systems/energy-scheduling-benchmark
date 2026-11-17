@@ -33,14 +33,15 @@ from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 
 from mango_energy_environments import LOAD, load_network
 
-from . import datasets, parameters
+from . import algorithms, datasets, parameters
 from .outputs import RENEWABLES_COVER
-from .run import ALGORITHMS as RUN_ALGORITHMS
 from .run import build_parser, run, window, without_storage
 
 #: the tunable algorithms: modules with ``sweep_grid(network, full, topology)``, ``SWEEP_RUN``,
-#: ``VARIANT``, ``RANK_BY_ITERATIONS`` (algorithm interface, ``run.ALGORITHMS``)
-ALGORITHMS = {n: m for n, m in RUN_ALGORITHMS.items() if hasattr(m, "sweep_grid")}
+#: ``VARIANT``, ``RANK_BY_ITERATIONS`` (algorithm interface, :mod:`.algorithms`)
+ALGORITHMS = {
+    n: m for n, m in algorithms.ALGORITHMS.items() if hasattr(m, "sweep_grid")
+}
 
 
 def _meta(argv: list[str]) -> dict:
