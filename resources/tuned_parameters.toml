@@ -145,6 +145,27 @@ kappa = 0.0006795
 gamma = 1.472
 note = "esb-tune (\u03b1 grid \u00d7 1/441.5 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/100, 3000 it.) best: constant agent_scale=capacity, kappa=0.0006795, gamma=1.472 \u2014 24 h gap 2025-12-27 00:00:00: +8.8247%; 2025-03-28 00:00:00: +8.1762%; 2025-07-12 00:00:00: +10.5676%; 2025-10-31 00:00:00: +10.1708%, score 1.38e-01"
 
+[consensus.synthetic_50.ring.sweep]
+agent_scale = "capacity"
+steps = "constant"
+kappa = 0.005591
+gamma = 13.41
+note = "esb-tune (\u03b1 grid \u00d7 1/17.88 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/4, 3000 it.) best: constant agent_scale=capacity, kappa=0.005591, gamma=13.41 \u2014 24 h gap 2019-01-15 00:00:00: -0.1452%; 2019-05-03 00:00:00: +3.3431%; 2019-07-02 00:00:00: +3.8291%; 2019-10-02 00:00:00: +2.3103%, score 1.85e-01 | decaying agent_scale=capacity, alpha0=0.08387, beta0=0.075, alpha_exp=0.6 \u2014 24 h gap 2019-01-15 00:00:00: -63.1101%; 2019-05-03 00:00:00: -67.0224%; 2019-07-02 00:00:00: -70.0314%; 2019-10-02 00:00:00: -64.1994%, score 1.29e+00"
+
+[consensus.synthetic_50.grid.sweep]
+agent_scale = "capacity"
+steps = "constant"
+kappa = 0.005591
+gamma = 6.767
+note = "esb-tune (\u03b1 grid \u00d7 1/17.88 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/7.929, 3000 it.) best: constant agent_scale=capacity, kappa=0.005591, gamma=6.767 \u2014 24 h gap 2019-01-15 00:00:00: +9.7567%; 2019-05-03 00:00:00: +11.9493%; 2019-07-02 00:00:00: +12.2522%; 2019-10-02 00:00:00: +11.4700%, score 1.25e-01 | decaying agent_scale=capacity, alpha0=0.08387, beta0=0.03784, alpha_exp=0.6 \u2014 24 h gap 2019-01-15 00:00:00: -60.6472%; 2019-05-03 00:00:00: -62.8857%; 2019-07-02 00:00:00: -63.1640%; 2019-10-02 00:00:00: -63.1566%, score 1.11e+00"
+
+[consensus.synthetic_50.complete.sweep]
+agent_scale = "capacity"
+steps = "constant"
+kappa = 0.01677
+gamma = 0.3578
+note = "esb-tune (\u03b1 grid \u00d7 1/17.88 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/50, 3000 it.) best: constant agent_scale=capacity, kappa=0.01677, gamma=0.3578 \u2014 24 h gap 2019-01-15 00:00:00: +2.0863%; 2019-05-03 00:00:00: +1.9770%; 2019-07-02 00:00:00: +1.8147%; 2019-10-02 00:00:00: +2.3760%, score 2.39e-02 | decaying agent_scale=capacity, alpha0=0.08387, beta0=0.006, alpha_exp=0.6 \u2014 24 h gap 2019-01-15 00:00:00: -56.7605%; 2019-05-03 00:00:00: -58.0445%; 2019-07-02 00:00:00: -57.8248%; 2019-10-02 00:00:00: -58.6161%, score 1.02e+00"
+
 [admm.synthetic_10.complete.sweep]
 adaptive = false
 rho = 0.08114
