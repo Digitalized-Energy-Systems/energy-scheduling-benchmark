@@ -161,8 +161,9 @@ any value; the route and the values used are stored in `meta.json`):
 `sweep_grid` (32 candidates per algorithm; consensus: constant 4 κ × 4 β, decaying 4 α₀ × 2 β₀ ×
 α exponent {0.6, 0.98}; α × 1/max scaled bus sensitivity, β × 1/λ_max(L) of the bus topology;
 admm: 32 fixed ρ, log-spaced over six decades around the median 2c₂ of the thermal units) on
-a fixed budget (consensus: stop rule off; admm: stop rule on, D-140, with ε_abs, ε_rel 10× below the run's
-(1e-5, 1e-4, D-142) — a window that converges ranks by iterations ahead of every run that used the whole budget); a consensus sweep run ends as `diverged` once |λ| > 4000 €/MWh, and a
+a fixed budget with the stop rule on, its tolerances 10× below the run's (consensus ε_λ 1e-5 €/MWh,
+ε_p 1e-4, D-143; admm ε_abs 1e-5, ε_rel 1e-4, D-142); consensus ranks every window by score, admm
+(D-140) ranks a window that converges by iterations ahead of every run that used the whole budget); a consensus sweep run ends as `diverged` once |λ| > 4000 €/MWh, and a
 candidate is pruned once one window scores worse than the best of its variant. The best candidate
 that runs through every window is written whatever its gap (the gap per window is in its `note`);
 nothing is written if every candidate fails. Use `--no-write` for trial sweeps and check

@@ -44,6 +44,8 @@ SWEEP_DECADES = 3  # each side of the centre
 #: iterations (A3, 2026-11-16 D-140; was off as consensus I19: every ρ hit the noise floor), with
 #: ε_abs, ε_rel 10× below the run's so the winner is past the run's stop too (2026-11-17 D-142)
 SWEEP_RUN = {"eps_abs": 1e-5, "eps_rel": 1e-4}
+#: esb-tune ranks converged windows by iterations (D-140): the eq. 3.12 stop tests the residuals
+RANK_BY_ITERATIONS = True
 VARIANT = "adaptive"
 
 

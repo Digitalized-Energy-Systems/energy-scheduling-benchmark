@@ -3,9 +3,10 @@
 
 Runs central once per window, then every candidate of the algorithm's ``sweep_grid`` on each
 window, each with a fixed budget (``--max-iter``) plus the algorithm's ``SWEEP_RUN`` settings
-(consensus: stop rule off, so small stable steps are not cut short; divergence abort; admm: stop
-rule on, 2026-11-16 D-140, with tolerances 10× below the run's, 2026-11-17 D-142). Score = |cost gap| + relative imbalance vs central; a window's rank
-(``rank``) puts runs that met their stop rule first, by iterations, then the rest by score; a
+(both: stop rule on with tolerances 10× below the run's, 2026-11-17 D-142/D-143; consensus also a
+divergence abort). Score = |cost gap| + relative imbalance vs central; a window's rank
+(``rank``) is the score (consensus: its step-change stop can fire far off the optimum) or, with
+``RANK_BY_ITERATIONS`` (admm, D-140), runs that met their stop rule first, by iterations; a
 candidate counts with its worst window, and the best candidate per variant
 (``VARIANT``, consensus: ``steps``) is kept, the overall best is written into
 ``resources/tuned_parameters.toml`` as ``[<algorithm>.<network>.<topology>.sweep]`` whatever its
@@ -38,7 +39,7 @@ from .run import ALGORITHMS as RUN_ALGORITHMS
 from .run import build_parser, run, window, without_storage
 
 #: the tunable algorithms: modules with ``sweep_grid(network, full, topology)``, ``SWEEP_RUN``,
-#: ``VARIANT`` (algorithm interface, ``run.ALGORITHMS``)
+#: ``VARIANT``, ``RANK_BY_ITERATIONS`` (algorithm interface, ``run.ALGORITHMS``)
 ALGORITHMS = {n: m for n, m in RUN_ALGORITHMS.items() if hasattr(m, "sweep_grid")}
 
 
@@ -68,12 +69,16 @@ def score(meta: dict, central: dict, demand_mwh: float) -> float | None:
     return abs(gap(meta["total_cost"], central["total_cost"])) + imbalance / demand_mwh
 
 
-def rank(meta: dict, s: float) -> tuple:
-    """Sort key of one window: a run that met its stop rule (or needed no ED) beats every run that
-    used the whole budget and ranks by iterations — at the noise floor the score cannot tell a fast
-    ρ from a slow one (A3, 2026-11-16 D-140); the others rank by score."""
+def rank(meta: dict, s: float, by_iterations: bool) -> tuple:
+    """Sort key of one window. ``by_iterations`` (the algorithm's ``RANK_BY_ITERATIONS``): a run
+    that met its stop rule (or needed no ED) beats every run that used the whole budget and ranks
+    by iterations — at the noise floor the score cannot tell a fast ρ from a slow one (A3,
+    2026-11-16 D-140); the others rank by score. Otherwise every window ranks by score."""
     # 2026-11-16 D-141: fastest at the paper tolerance wins, no gap band (Jonas).
-    return (1, s) if meta["stop_reason"] == "max_iter" else (0, meta["iterations"], s)
+    # 2026-11-17 D-143: consensus ranks by score, its step-change stop can fire far off the optimum.
+    if not by_iterations or meta["stop_reason"] == "max_iter":
+        return (1, s)
+    return (0, meta["iterations"], s)
 
 
 def write_section(name: str, values: dict) -> None:
@@ -183,7 +188,7 @@ def sweep(args: argparse.Namespace) -> dict | None:
                 if s is None:
                     failed += 1
                     continue
-                scores[i].append(rank(meta, s))
+                scores[i].append(rank(meta, s, alg.RANK_BY_ITERATIONS))
                 worst, variant = max(scores[i]), candidates[i].get(alg.VARIANT)
                 if len(scores[i]) == len(windows):
                     if variant not in best or (worst, i) < best[variant]:
