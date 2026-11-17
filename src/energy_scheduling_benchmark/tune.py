@@ -2,7 +2,8 @@
 2026-11-12 Q-A1).
 
 Runs central once per window, then every candidate of the algorithm's ``sweep_grid`` on each
-window, each with a fixed budget (``--max-iter``) plus the algorithm's ``SWEEP_RUN`` settings
+window, each with a fixed budget (``--max-iter``; default the algorithm's ``SWEEP_RUN`` ``max_iter``,
+else 3000, D-178) plus the algorithm's ``SWEEP_RUN`` settings
 (both: stop rule on with tolerances 10× below the run's, 2026-11-17 D-142/D-143; consensus also a
 divergence abort). Score = |cost gap| + relative imbalance vs central; a window's rank
 (``rank``) is the score (consensus: its step-change stop can fire far off the optimum) or, with
@@ -136,6 +137,8 @@ def sweep(args: argparse.Namespace) -> dict | None:
         raw = without_storage(raw)
     candidates, grid_note = alg.sweep_grid(raw, full, args.topology)
     print(f"{len(candidates)} candidates; {grid_note}", flush=True)
+    # 2026-11-17 D-178: the budget defaults to the algorithm's own (deed_admm 10 000), else 3000
+    args.max_iter = args.max_iter or alg.SWEEP_RUN.get("max_iter", 3000)
     fixed = alg.SWEEP_RUN | {"max_iter": args.max_iter}
     sets = [x for k, v in fixed.items() for x in ("--set", f"{k}={v}")]
     starts = args.start or [None]
@@ -298,7 +301,10 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--hours", type=int, default=24)
     parser.add_argument(
-        "--max-iter", type=int, default=3000, help="fixed budget per candidate"
+        "--max-iter",
+        type=int,
+        default=None,
+        help="fixed budget per candidate (default: the algorithm's SWEEP_RUN max_iter, else 3000)",
     )
     parser.add_argument("--jobs", type=int, default=1, help="parallel runs (processes)")
     parser.add_argument(

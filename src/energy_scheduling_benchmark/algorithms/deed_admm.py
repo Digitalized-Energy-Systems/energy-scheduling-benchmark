@@ -37,7 +37,8 @@ SWEEP_GAMMAS = 8
 SWEEP_DECADES = 3
 #: 2026-11-17 D-176 (A3, as admm D-140/D-142): the stop rule stays on in the sweeps, 10× tighter
 #: than the runs; a window that met it ranks by iterations
-SWEEP_RUN = {"eps_abs": 1e-5, "eps_rel": 1e-4}
+#: 2026-11-17 D-178: budget 10 000 it. (= the runs'; synthetic_50 is still ≈ +9 % at 3000)
+SWEEP_RUN = {"eps_abs": 1e-5, "eps_rel": 1e-4, "max_iter": 10_000}
 RANK_BY_ITERATIONS = True
 #: esb-tune notes the best γ per β
 VARIANT = "beta"

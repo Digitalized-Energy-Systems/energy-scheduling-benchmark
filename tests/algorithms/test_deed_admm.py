@@ -107,3 +107,4 @@ def test_sweep_grid_is_4_beta_by_8_gamma():
     assert beta[-1] == pytest.approx(1.5 / 4)  # ring: λ_max(L) = 4
     assert gamma[-1] / gamma[0] == pytest.approx(1e6, rel=1e-3)
     assert "median 2c₂" in note
+    assert deed_admm.SWEEP_RUN["max_iter"] == 10_000  # D-178
