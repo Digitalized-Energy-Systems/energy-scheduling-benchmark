@@ -24,9 +24,9 @@ from distributed_resource_optimization.carrier.mango_carrier import (
 )
 from mango_energy_environments import LOAD, STORAGE, Component, Network
 
-from .. import storage
 from ..outputs import IterationTrace, Outcome
-from ..problem import predispatched
+from ..problem import storage
+from ..problem.rules import predispatched
 from ..world import leader, longest_hops, settle_s, topology_graph
 
 #: Floor on λ (€/MWh) = the marginal cost of the pre-dispatched renewables: in a surplus hour

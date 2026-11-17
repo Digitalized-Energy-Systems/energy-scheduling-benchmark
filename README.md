@@ -227,10 +227,11 @@ its tests go to `tests/algorithms/test_<name>.py`.
 
 ```
 src/energy_scheduling_benchmark/
-├── problem.py    # problem rules shared by all: pre-dispatched units, grid import price, no-dispatch window
+├── problem/
+│   ├── rules.py      # rules shared by all: pre-dispatched units, grid import price, no-dispatch window
+│   ├── storage.py    # shared storage model + price response (central dispatch + algorithms)
+│   └── qp.py         # cvxpy QP canonicalised once, re-solved by Clarabel (storage response, ADMM bus)
 ├── datasets.py   # benchmark networks + preparation recipe; esb-prepare
-├── storage.py    # shared storage model + price response (central dispatch + algorithms)
-├── qp.py         # cvxpy QP canonicalised once, re-solved by Clarabel (storage response, ADMM bus)
 ├── parameters.py # algorithm parameters per route (tuned_parameters.toml)
 ├── algorithms/
 │   ├── __init__.py   # ALGORITHMS registry + the algorithm interface

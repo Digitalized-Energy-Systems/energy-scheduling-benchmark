@@ -28,10 +28,10 @@ from distributed_resource_optimization.carrier.mango_carrier import (
 )
 from mango_energy_environments import LOAD, STORAGE, THERMAL, Component, Network
 
-from .. import storage
 from ..outputs import IterationTrace, Outcome
-from ..problem import predispatched
-from ..qp import QP
+from ..problem import storage
+from ..problem.qp import QP
+from ..problem.rules import predispatched
 from ..world import leader, longest_hops
 
 #: esb-tune: 32 fixed ρ (= consensus' count, Q-A5; 2026-11-16 D-136 corrects D-119's 128),

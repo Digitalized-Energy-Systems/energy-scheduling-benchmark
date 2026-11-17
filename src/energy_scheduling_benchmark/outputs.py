@@ -14,8 +14,8 @@ import numpy as np
 import pandas as pd
 from mango_energy_environments import LOAD, STORAGE, CopperPlateBehavior
 
-from . import storage
-from .problem import GRID_IMPORT_PRICE, predispatched
+from .problem import storage
+from .problem.rules import GRID_IMPORT_PRICE, predispatched
 
 #: schedule.csv column + meta block of the grid exchange (was "slack", audit 2026-11-12 Q-A6)
 GRID_EXCHANGE = "grid_exchange"
