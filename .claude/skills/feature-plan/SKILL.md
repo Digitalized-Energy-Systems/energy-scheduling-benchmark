@@ -13,7 +13,7 @@ once*. Nothing is implemented here; implementation follows later (ponytail, work
 
 ## 1. Gather (read, don't write yet)
 
-- `TODO.md` → Start and the feature's section; the decision log (`grep -n "<topic>" TODO.md`) for
+- `TODO.md` → Start and the feature's section; the decision log (`grep -n "<topic>" docs/decisions.md`) for
   decisions already taken (cite them by `D-nnn`, never re-ask).
 - `docs/deviations.md` for deviations that already touch the feature.
 - The papers in `docs/references/` the feature implements — note equations and sections.
@@ -57,7 +57,7 @@ with the reason. Then stop — never pick an option yourself, never start implem
 ## 4. After the answers
 
 1. Fill the `answer` column and §4 Design; `Status:` → **planned** (date).
-2. Decision log: one **one-line** row per answer (date, next `D-nnn`, what + why,
+2. Decision log `docs/decisions.md`: one **one-line** row per answer (date, next `D-nnn`, what + why,
    `where` = `docs/<feature>-plan.md §4` or the deviation id). The how stays in the plan.
 3. `docs/deviations.md`: a row per new deviation, with the D-id. `docs/README.md`: status.
 4. `TODO.md` → Start → Then: the feature's next step, nothing else.
