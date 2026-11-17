@@ -168,15 +168,75 @@ note = "esb-tune (\u03b1 grid \u00d7 1/17.88 MW per \u20ac/MWh, \u03b2 grid \u00
 
 [admm.synthetic_10.complete.sweep]
 adaptive = false
-rho = 0.08114
-note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.1014, 3000 it.) best: False adaptive=False, rho=0.08114 \u2014 24 h gap 2019-01-09 00:00:00: -0.0000%; 2019-04-15 00:00:00: +0.0000%; 2019-06-24 00:00:00: -0.0000%; 2019-10-25 00:00:00: -0.0000%, score 9.78e-11"
+rho = 0.05196
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.1014, 3000 it.) best: False adaptive=False, rho=0.05196 \u2014 24 h gap 2019-01-09 00:00:00: +0.1919%; 2019-04-15 00:00:00: +0.1702%; 2019-06-24 00:00:00: +0.1743%; 2019-10-25 00:00:00: +0.1577%, score 2.99e-03, converged within 54 it."
 
 [admm.synthetic_10.grid.sweep]
 adaptive = false
-rho = 0.08114
-note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.1014, 3000 it.) best: False adaptive=False, rho=0.08114 \u2014 24 h gap 2019-01-09 00:00:00: -0.0000%; 2019-04-15 00:00:00: +0.0000%; 2019-06-24 00:00:00: -0.0000%; 2019-10-25 00:00:00: -0.0000%, score 9.78e-11"
+rho = 0.05196
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.1014, 3000 it.) best: False adaptive=False, rho=0.05196 \u2014 24 h gap 2019-01-09 00:00:00: +0.1919%; 2019-04-15 00:00:00: +0.1702%; 2019-06-24 00:00:00: +0.1743%; 2019-10-25 00:00:00: +0.1577%, score 2.99e-03, converged within 54 it."
 
 [admm.synthetic_10.ring.sweep]
 adaptive = false
-rho = 0.08114
-note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.1014, 3000 it.) best: False adaptive=False, rho=0.08114 \u2014 24 h gap 2019-01-09 00:00:00: -0.0000%; 2019-04-15 00:00:00: +0.0000%; 2019-06-24 00:00:00: -0.0000%; 2019-10-25 00:00:00: -0.0000%, score 9.78e-11"
+rho = 0.05196
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.1014, 3000 it.) best: False adaptive=False, rho=0.05196 \u2014 24 h gap 2019-01-09 00:00:00: +0.1919%; 2019-04-15 00:00:00: +0.1702%; 2019-06-24 00:00:00: +0.1743%; 2019-10-25 00:00:00: +0.1577%, score 2.99e-03, converged within 54 it."
+
+[admm.synthetic_50.complete.sweep]
+adaptive = false
+rho = 0.07956
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 1.441, 3000 it.) best: False adaptive=False, rho=0.07956 \u2014 24 h gap 2019-01-15 00:00:00: +0.2191%; 2019-05-03 00:00:00: +0.1784%; 2019-07-02 00:00:00: +0.1290%; 2019-10-02 00:00:00: -0.1530%, score 2.93e-03, converged within 62 it."
+
+[admm.simbench_lower_saxony.complete.sweep]
+adaptive = false
+rho = 0.1733
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.1387, 3000 it.) best: False adaptive=False, rho=0.1733 \u2014 24 h gap 2016-12-30 00:00:00: -0.4726%; 2016-05-16 00:00:00: +0.0380%; 2016-08-24 00:00:00: +0.0568%; 2016-10-23 00:00:00: -0.1883%, score 2.86e-03, converged within 101 it."
+
+[admm.synthetic_50.grid.sweep]
+adaptive = false
+rho = 0.07956
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 1.441, 3000 it.) best: False adaptive=False, rho=0.07956 \u2014 24 h gap 2019-01-15 00:00:00: +0.2191%; 2019-05-03 00:00:00: +0.1784%; 2019-07-02 00:00:00: +0.1290%; 2019-10-02 00:00:00: -0.1530%, score 2.93e-03, converged within 62 it."
+
+[admm.simbench_lower_saxony.grid.sweep]
+adaptive = false
+rho = 0.1733
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.1387, 3000 it.) best: False adaptive=False, rho=0.1733 \u2014 24 h gap 2016-12-30 00:00:00: -0.4726%; 2016-05-16 00:00:00: +0.0380%; 2016-08-24 00:00:00: +0.0568%; 2016-10-23 00:00:00: -0.1883%, score 2.86e-03, converged within 101 it."
+
+[admm.synthetic_50.ring.sweep]
+adaptive = false
+rho = 0.07956
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 1.441, 3000 it.) best: False adaptive=False, rho=0.07956 \u2014 24 h gap 2019-01-15 00:00:00: +0.2191%; 2019-05-03 00:00:00: +0.1784%; 2019-07-02 00:00:00: +0.1290%; 2019-10-02 00:00:00: -0.1530%, score 2.93e-03, converged within 62 it."
+
+[admm.lower_saxony_2025.complete.sweep]
+adaptive = false
+rho = 0.4496
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 2.139, 3000 it.) best: False adaptive=False, rho=0.4496 \u2014 24 h gap 2025-12-30 00:00:00: +0.1030%; 2025-04-20 00:00:00: +0.0604%; 2025-08-12 00:00:00: -0.1218%; 2025-11-02 00:00:00: +0.1117%, score 1.47e-03, converged within 45 it."
+
+[admm.lower_saxony_2025.grid.sweep]
+adaptive = false
+rho = 0.4496
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 2.139, 3000 it.) best: False adaptive=False, rho=0.4496 \u2014 24 h gap 2025-12-30 00:00:00: +0.1030%; 2025-04-20 00:00:00: +0.0604%; 2025-08-12 00:00:00: -0.1218%; 2025-11-02 00:00:00: +0.1117%, score 1.47e-03, converged within 45 it."
+
+[admm.simbench_lower_saxony.ring.sweep]
+adaptive = false
+rho = 0.1733
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.1387, 3000 it.) best: False adaptive=False, rho=0.1733 \u2014 24 h gap 2016-12-30 00:00:00: -0.4726%; 2016-05-16 00:00:00: +0.0380%; 2016-08-24 00:00:00: +0.0568%; 2016-10-23 00:00:00: -0.1883%, score 2.86e-03, converged within 101 it."
+
+[admm.pypsa_eur_germany_100.complete.sweep]
+adaptive = false
+rho = 0.02012
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.3644, 3000 it.) best: False adaptive=False, rho=0.02012 \u2014 24 h gap 2025-12-27 00:00:00: +0.0889%; 2025-03-28 00:00:00: +0.0680%; 2025-07-12 00:00:00: +0.0499%; 2025-10-31 00:00:00: +0.2254%, score 9.47e-04, converged within 43 it."
+
+[admm.lower_saxony_2025.ring.sweep]
+adaptive = false
+rho = 0.4496
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 2.139, 3000 it.) best: False adaptive=False, rho=0.4496 \u2014 24 h gap 2025-12-30 00:00:00: +0.1030%; 2025-04-20 00:00:00: +0.0604%; 2025-08-12 00:00:00: -0.1218%; 2025-11-02 00:00:00: +0.1117%, score 1.47e-03, converged within 45 it."
+
+[admm.pypsa_eur_germany_100.grid.sweep]
+adaptive = false
+rho = 0.02012
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.3644, 3000 it.) best: False adaptive=False, rho=0.02012 \u2014 24 h gap 2025-12-27 00:00:00: +0.0889%; 2025-03-28 00:00:00: +0.0680%; 2025-07-12 00:00:00: +0.0499%; 2025-10-31 00:00:00: +0.2254%, score 9.47e-04, converged within 43 it."
+
+[admm.pypsa_eur_germany_100.ring.sweep]
+adaptive = false
+rho = 0.02012
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.3644, 3000 it.) best: False adaptive=False, rho=0.02012 \u2014 24 h gap 2025-12-27 00:00:00: +0.0889%; 2025-03-28 00:00:00: +0.0680%; 2025-07-12 00:00:00: +0.0499%; 2025-10-31 00:00:00: +0.2254%, score 9.47e-04, converged within 43 it."
