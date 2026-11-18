@@ -96,6 +96,8 @@ same rule as the runs) is closest to the season's median day is the
 standard day, the second-closest is the tuning day. The dates live here, in `../run_all.sh`
 (standard days, its defaults) and in `../hpc_sweeps.sh` (tuning days), not in code; regenerate with
 `datasets.typical_days(load_network(datasets.prepared_path(name)))` after re-preparing a network.
+Since 2026-11-18 only synthetic_50, lower_saxony_2025 and pypsa_eur_germany_100 are tuned (and
+run, D-169) — D-193; the other rows stay for reference.
 
 | network | | winter | spring | summer | autumn |
 |---|---|---|---|---|---|
