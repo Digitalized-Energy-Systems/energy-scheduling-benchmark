@@ -5,19 +5,19 @@ Runs central once per window, then every candidate of the algorithm's ``sweep_gr
 window, each with a fixed budget (``--max-iter``; default the algorithm's ``SWEEP_RUN`` ``max_iter``,
 else 3000, D-178) plus the algorithm's ``SWEEP_RUN`` settings
 (both: stop rule on with tolerances 10× below the run's, 2026-11-17 D-142/D-143; consensus also a
-divergence abort). Score = |cost gap| + relative imbalance vs central; a window's rank
-(``rank``) is the score (consensus: its step-change stop can fire far off the optimum) or, with
-``RANK_BY_ITERATIONS`` (admm, D-140), runs that met their stop rule first, by iterations; a
-candidate counts with its worst window, and the best candidate per variant
-(``VARIANT``, consensus: ``steps``) is kept, the overall best is written into
+divergence abort). Score = |cost gap| + relative imbalance vs central; a candidate counts with
+its worst window's score and its worst window's iterations. The winner (``select``, D-182): the
+best score, unless candidates within ``CLOSE`` (1e-4) of it exist — then the fewest iterations
+among those. The winner per variant (``VARIANT``, consensus: ``steps``) goes into the note, the
+overall winner is written into
 ``resources/tuned_parameters.toml`` as ``[<algorithm>.<network>.<topology>.sweep]`` whatever its
 gap (decision 2026-11-09); the note records the gap per window and the best of each variant.
 Nothing is written only if no candidate runs through every window.
 
-Exact pruning (T3): the score is the worst window, so once one window scores worse than the best
-complete candidate of the same variant, the candidate cannot win and its other windows are skipped.
-Ties go to the earlier candidate, so the result does not depend on ``--jobs`` (T7; iterations
-rank only with ``RANK_BY_ITERATIONS``, D-140). Runs go to ``--jobs`` processes (T2).
+Exact pruning (T3): the score is the worst window, so once one window scores more than ``CLOSE``
+worse than the best complete candidate of the same variant, the candidate cannot win and its
+other windows are skipped. Ties go to the earlier candidate, so the result does not depend on
+``--jobs`` (T7). Runs go to ``--jobs`` processes (T2).
 
 Records (S4b, D-147–D-152): every run is kept in the sweep folder
 ``<--out>/<algorithm>/<network>/<topology>_[no]storage/`` (a re-sweep replaces it only with
@@ -49,7 +49,7 @@ from .outputs import RENEWABLES_COVER
 from .run import build_parser, run, window, without_storage
 
 #: the tunable algorithms: modules with ``sweep_grid(network, full, topology)``, ``SWEEP_RUN``,
-#: ``VARIANT``, ``RANK_BY_ITERATIONS`` (algorithm interface, :mod:`.algorithms`)
+#: ``VARIANT`` (algorithm interface, :mod:`.algorithms`)
 ALGORITHMS = {
     n: m for n, m in algorithms.ALGORITHMS.items() if hasattr(m, "sweep_grid")
 }
@@ -81,16 +81,18 @@ def score(meta: dict, central: dict, demand_mwh: float) -> float | None:
     return abs(gap(meta["total_cost"], central["total_cost"])) + imbalance / demand_mwh
 
 
-def rank(meta: dict, s: float, by_iterations: bool) -> tuple:
-    """Sort key of one window. ``by_iterations`` (the algorithm's ``RANK_BY_ITERATIONS``): a run
-    that met its stop rule (or needed no ED) beats every run that used the whole budget and ranks
-    by iterations — at the noise floor the score cannot tell a fast ρ from a slow one (A3,
-    2026-11-16 D-140); the others rank by score. Otherwise every window ranks by score."""
-    # 2026-11-16 D-141: fastest converged wins, no gap band (Jonas); at the sweep tolerance, D-142.
-    # 2026-11-17 D-143: consensus ranks by score, its step-change stop can fire far off the optimum.
-    if not by_iterations or meta["stop_reason"] == "max_iter":
-        return (1, s)
-    return (0, meta["iterations"], s)
+#: 2026-11-18 D-182: scores within CLOSE (0.01 % absolute) of the best count as a draw
+CLOSE = 1e-4
+
+
+def select(done: dict[int, tuple[float, int]]) -> int:
+    """The winner of ``{candidate: (worst score, worst-window iterations)}``: among the
+    candidates within ``CLOSE`` of the best score the fewest iterations win, then the lower
+    score, then the earlier candidate (T7)."""
+    # 2026-11-18 D-182/D-183 (all algorithms): replaces the iterations rank of D-140/D-176 —
+    # it picked a −0.2 % early stop — and consensus's pure score rank (D-143)
+    best = min(s for s, _ in done.values())
+    return min((it, s, i) for i, (s, it) in done.items() if s <= best + CLOSE)[2]
 
 
 def write_section(name: str, values: dict) -> None:
@@ -119,12 +121,12 @@ def write_section(name: str, values: dict) -> None:
         f.truncate()
 
 
-def _note(variant, best: tuple, hours: int) -> str:
-    key, values, gaps = best
+def _note(variant, best: tuple, hours: int, budget: int) -> str:
+    (s, its), values, gaps = best
     shown = ", ".join(f"{k}={v}" for k, v in values.items() if k != "steps")
     windows = "; ".join(f"{start}: {g:+.4%}" for start, g in gaps.items())
-    its = f", converged within {key[1]} it." if key[0] == 0 else ""
-    return f"{variant} {shown} — {hours} h gap {windows}, score {key[-1]:.2e}{its}"
+    conv = f", converged within {its} it." if its < budget else ""
+    return f"{variant} {shown} — {hours} h gap {windows}, score {s:.2e}{conv}"
 
 
 def sweep(args: argparse.Namespace) -> dict | None:
@@ -183,7 +185,7 @@ def sweep(args: argparse.Namespace) -> dict | None:
         pending: dict = {}
         scores: dict[int, list[tuple]] = {i: [] for i in range(len(candidates))}
         gaps: dict[int, dict[str, float]] = {i: {} for i in range(len(candidates))}
-        best: dict = {}  # variant -> (rank key of the worst window, candidate index)
+        complete: dict = {}  # variant -> {candidate: (worst score, worst-window iterations)}
         failed = pruned = 0
         rows: dict[tuple, dict] = {}  # (candidate, window) -> sweep.csv row (D-148)
         fresh = iter(range(len(candidates)))
@@ -226,13 +228,18 @@ def sweep(args: argparse.Namespace) -> dict | None:
                 if s is None:
                     failed += 1
                     continue
-                scores[i].append(rank(meta, s, alg.RANK_BY_ITERATIONS))
-                worst, variant = max(scores[i]), candidates[i].get(alg.VARIANT)
+                scores[i].append((s, meta["iterations"]))
+                worst = max(x for x, _ in scores[i])
+                variant = candidates[i].get(alg.VARIANT)
                 if len(scores[i]) == len(windows):
-                    if variant not in best or (worst, i) < best[variant]:
-                        best[variant] = (worst, i)
-                elif variant in best and worst > best[variant][0]:
-                    pruned += 1  # cannot beat the best of its variant any more
+                    complete.setdefault(variant, {})[i] = (
+                        worst, max(n for _, n in scores[i])
+                    )  # fmt: skip
+                elif (
+                    variant in complete
+                    and worst > min(x for x, _ in complete[variant].values()) + CLOSE
+                ):
+                    pruned += 1  # out of reach of the best of its variant (D-182)
                 else:
                     submit(i, w + 1)
             refill()
@@ -245,16 +252,19 @@ def sweep(args: argparse.Namespace) -> dict | None:
             for w in range(len(windows))
         ]
     ).to_csv(store / "sweep.csv", index=False)
-    values = None
+    values = chosen = None
+    every = {i: k for d in complete.values() for i, k in d.items()}
+    best = {v: select(d) for v, d in complete.items()}  # variant -> its winner
     if not best:
         print("no candidate ran through every window (each diverged/stalled on one)")
     else:
-        ranked = sorted(best, key=lambda v: best[v])
+        chosen = select(every)
+        ranked = sorted(best, key=lambda v: (best[v] != chosen, every[best[v]]))
         notes = [
-            _note(v, (best[v][0], candidates[best[v][1]], gaps[best[v][1]]), args.hours)
-            for v in ranked
+            _note(v, (every[i], candidates[i], gaps[i]), args.hours, args.max_iter)
+            for v, i in ((v, best[v]) for v in ranked)
         ]
-        values = candidates[best[ranked[0]][1]] | {
+        values = candidates[chosen] | {
             "note": f"esb-tune ({grid_note}, {args.max_iter} it.) best: "
             + " | ".join(notes)
         }
@@ -276,8 +286,15 @@ def sweep(args: argparse.Namespace) -> dict | None:
             for label, central, demand, out in windows
         },
         "best": [
-            {"variant": v, "candidate": i, "rank": key} for v, (key, i) in best.items()
+            {
+                "variant": v,
+                "candidate": i,
+                "score": every[i][0],
+                "iterations": every[i][1],
+            }
+            for v, i in best.items()
         ],
+        "chosen_candidate": chosen,
         "failed": failed,
         "pruned": pruned,
         "chosen": values,

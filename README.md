@@ -165,12 +165,13 @@ any value; the route and the values used are stored in `meta.json`):
 `sweep_grid` (32 candidates per algorithm; consensus: constant 4 κ × 4 β, decaying 4 α₀ × 2 β₀ ×
 α exponent {0.6, 0.98}; α × 1/max scaled bus sensitivity, β × 1/λ_max(L) of the bus topology;
 admm: 32 fixed ρ, log-spaced over six decades around the median 2c₂ of the thermal units;
-deed_admm: 4 β = g/λ_max(L) × 8 γ on admm's ρ scale, D-177) on
+deed_admm: 4 β = g/λ_max(L), g ∈ {0.6, 1.0, 1.5, 1.9}, × 8 γ on admm's ρ scale, D-177, D-181) on
 a fixed budget (`--max-iter`, default the algorithm's: 3000, deed_admm 10 000, D-178) with the stop rule on, its tolerances 10× below the run's (consensus ε_λ 1e-5 €/MWh,
-ε_p 1e-4, D-143; admm and deed_admm ε_abs 1e-5, ε_rel 1e-4, D-142, D-176); consensus ranks every window by score, admm
-and deed_admm (D-140, D-176) rank a window that converges by iterations ahead of every run that used the whole budget); a consensus sweep run ends as `diverged` once |λ| > 4000 €/MWh, and a
-candidate is pruned once one window scores worse than the best of its variant. The best candidate
-that runs through every window is written whatever its gap (the gap per window is in its `note`);
+ε_p 1e-4, D-143; admm and deed_admm ε_abs 1e-5, ε_rel 1e-4, D-142, D-176); a consensus sweep run ends as `diverged` once |λ| > 4000 €/MWh. A
+candidate counts with its worst window's score and iterations; the winner (all algorithms, D-182/D-183)
+is the best score, unless candidates within 1e-4 (0.01 % absolute) of it exist — then the fewest
+iterations among those. A candidate is pruned once one window scores more than 1e-4 worse than the
+best of its variant. The winner (it runs through every window) is written whatever its gap (the gap per window is in its `note`);
 nothing is written if every candidate fails. Use `--no-write` for trial sweeps and check
 `git diff resources/tuned_parameters.toml` after a real one.
 
@@ -208,7 +209,8 @@ but not in the curve, so a curve can end below its bar.
 - `esb-plot sweeps [ROOT]` (default `outputs/sweeps`): per sweep `plots/convergence` (|gap| and
   imbalance per tuning day; HTML every candidate, failed dashed; PDF the chosen set + the 5 best)
   and `plots/grid` (consensus: heatmap of the worst-day score per step variant, ★ chosen,
-  × failed, · pruned; admm: iterations and gap per day vs. ρ); per algorithm
+  × failed, · pruned; admm: iterations and gap per day vs. ρ; deed_admm: the same vs. γ, one
+  column per β, D-185); per algorithm
   `ROOT/plots/overview_<algorithm>` (chosen set's mean tuning-day gap, network × topology).
 - `esb-plot runs [ROOT]` (default `outputs`; lossless runs): `plots/gap`, `plots/effort`
   (iterations + messages) per network × day and topology, and

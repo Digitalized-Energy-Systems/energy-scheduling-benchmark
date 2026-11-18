@@ -106,9 +106,6 @@ SWEEP_ALPHA_EXP = (0.6, 0.98)
 #: settings of every sweep run (not stored in the tuned set): stop rule on with ε_λ, ε_p 10× below
 #: the run's (2026-11-17 D-143; was off, I19), divergence abort at the grid import price (T4)
 SWEEP_RUN = {"eps_lambda": 1e-5, "eps_p": 1e-4, "lam_abort": 4000.0}
-#: esb-tune ranks every window by score: the HKW15 eq. 33 step-change stop can fire far off the
-#: optimum on small steps (D-057), so converging fast is no merit (2026-11-17 D-143)
-RANK_BY_ITERATIONS = False
 #: esb-tune compares candidates per variant and notes the best of each
 VARIANT = "steps"
 

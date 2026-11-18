@@ -5,7 +5,7 @@ distributed algorithm is one module here with
 ``setup(params, network, full, args) -> (behavior, agents, routes) -> outcome`` that adds its mango
 roles to the world's agents and returns ``outcome() -> outputs.Outcome``; its parameters are the
 ``[<algorithm>]`` section of ``resources/tuned_parameters.toml`` (``--tuning``, ``--set``); if it
-can be tuned it also has ``sweep_grid``, ``SWEEP_RUN``, ``VARIANT`` and ``RANK_BY_ITERATIONS``
+can be tuned it also has ``sweep_grid``, ``SWEEP_RUN`` and ``VARIANT``
 (``esb-tune``). Control messages (start, stop, reports) are marked with DRO's ``ControlMessage``
 and never lost. Central dispatch (:mod:`.central`, the reference optimum) is the one case without
 a world.
