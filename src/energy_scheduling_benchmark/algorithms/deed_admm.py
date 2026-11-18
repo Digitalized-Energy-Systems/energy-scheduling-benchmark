@@ -32,14 +32,14 @@ from .consensus import laplacian_max
 #: esb-tune grid (2026-11-17 D-177; 32 candidates as D-136): β = g/λ_max(L) of the bus topology
 #: (Q-Z3 A; every g < 2 keeps Assumption 1) × 8 γ log-spaced ×10^±3 around the median 2c₂ of
 #: the dispatchable units (as admm's ρ)
-SWEEP_G = (0.3, 0.6, 1.0, 1.5)
+#: 2026-11-18 D-181: g up to 1.9 — all nine winners of 2026-11-18 sat at the old edge 1.5
+SWEEP_G = (0.6, 1.0, 1.5, 1.9)
 SWEEP_GAMMAS = 8
 SWEEP_DECADES = 3
 #: 2026-11-17 D-176 (A3, as admm D-140/D-142): the stop rule stays on in the sweeps, 10× tighter
-#: than the runs; a window that met it ranks by iterations
+#: than the runs (the winner: esb-tune ``select``, 2026-11-18 D-182)
 #: 2026-11-17 D-178: budget 10 000 it. (= the runs'; synthetic_50 is still ≈ +9 % at 3000)
 SWEEP_RUN = {"eps_abs": 1e-5, "eps_rel": 1e-4, "max_iter": 10_000}
-RANK_BY_ITERATIONS = True
 #: esb-tune notes the best γ per β
 VARIANT = "beta"
 

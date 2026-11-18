@@ -4,7 +4,7 @@ import pytest
 pytest.importorskip("kaleido")
 
 from energy_scheduling_benchmark import plots, tune  # noqa: E402
-from energy_scheduling_benchmark.algorithms import admm  # noqa: E402
+from energy_scheduling_benchmark.algorithms import admm, deed_admm  # noqa: E402
 from energy_scheduling_benchmark.run import main as esb_run  # noqa: E402
 
 from .test_tune import _args, _grid  # noqa: E402
@@ -18,11 +18,15 @@ def _written(folder, *names):
 
 def test_sweep_plots(monkeypatch, tmp_path):
     # consensus: a stable, a pruned (tiny step) and a diverging (β > 2/λ_max) candidate + one
-    # decaying; admm: 4 ρ — both variants of the grid figure, failed/pruned rows included
+    # decaying; admm: 4 ρ; deed_admm: 2 β × 2 γ — all variants of the grid figure, failed/pruned
+    # rows included
     _grid(monkeypatch, (1.2, 0.02), (0.73, 4.8))
     monkeypatch.setattr(admm, "SWEEP_CANDIDATES", 4)
+    monkeypatch.setattr(deed_admm, "SWEEP_G", (1.0, 1.9))
+    monkeypatch.setattr(deed_admm, "SWEEP_GAMMAS", 2)
     starts = ["2024-01-01 00:00", "2024-01-01 06:00"]
-    for alg in ("consensus", "admm"):
+    algs = ("consensus", "admm", "deed_admm")
+    for alg in algs:
         tune.sweep(_args(algorithm=alg, start=starts, max_iter=300, out=tmp_path))
     # D-159: the convergence PDF keeps the chosen set (+ PDF_BEST others; 0 here), the HTML all
     monkeypatch.setattr(plots, "PDF_BEST", 0)
@@ -35,7 +39,7 @@ def test_sweep_plots(monkeypatch, tmp_path):
 
     monkeypatch.setattr(plots, "save", spy)
     plots.main(["sweeps", str(tmp_path)])
-    for alg in ("consensus", "admm"):
+    for alg in algs:
         _written(
             tmp_path / alg / "toy" / "ring_storage" / "plots", "convergence", "grid"
         )
@@ -44,7 +48,7 @@ def test_sweep_plots(monkeypatch, tmp_path):
         )
         html, pdf = seen[alg, "convergence"]
         assert pdf == {plots.chosen(record)} and len(html) > 1
-    _written(tmp_path / "plots", "overview_consensus", "overview_admm")
+    _written(tmp_path / "plots", *(f"overview_{a}" for a in algs))
 
 
 def test_candidates_status_and_chosen(monkeypatch, tmp_path):

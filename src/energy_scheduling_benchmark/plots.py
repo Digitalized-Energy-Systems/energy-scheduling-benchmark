@@ -28,7 +28,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from .compare import compare, load_runs
-from .tune import ALGORITHMS, rank
 
 COLORS = {"consensus": "#1f77b4", "admm": "#d62728"}
 #: chosen set + this many best others in a sweep's PDF convergence figure (D-159)
@@ -107,11 +106,10 @@ def convergence_layout(fig) -> None:
 
 def candidates(table: pd.DataFrame, record: dict) -> pd.DataFrame:
     """One row per candidate: its parameters, ``label``, ``status`` (ok / failed / pruned),
-    ``key`` (its worst window's rank, as esb-tune, None unless ok on every day)."""
+    ``key`` (its worst window's score, as esb-tune, None unless ok on every day)."""
     # a variant's own parameters (κ, γ) come after the result fields when an earlier variant
     # lacks them (pandas column order = first row's keys)
     params = [c for c in table.columns if c not in RESULT]
-    by_iterations = ALGORITHMS[record["args"]["algorithm"]].RANK_BY_ITERATIONS
     rows = []
     for i, runs in table.groupby("candidate"):
         first = runs.iloc[0]
@@ -122,9 +120,7 @@ def candidates(table: pd.DataFrame, record: dict) -> pd.DataFrame:
         )  # fmt: skip
         key = None
         if status == "ok":
-            key = max(
-                tuple(rank(r, r["score"], by_iterations)) for _, r in runs.iterrows()
-            )
+            key = runs.score.max()
         label = ", ".join(
             f"{v}"
             if p == "steps"
@@ -141,8 +137,10 @@ def candidates(table: pd.DataFrame, record: dict) -> pd.DataFrame:
 
 
 def chosen(record: dict) -> int | None:
-    """Index of the set esb-tune picked (the best variant's best candidate)."""
-    best = record["best"]
+    """Index of the set esb-tune picked."""
+    if "chosen_candidate" in record:  # 2026-11-18 D-182
+        return record["chosen_candidate"]
+    best = record["best"]  # records before D-182: the lowest rank key
     return min(best, key=lambda b: b["rank"])["candidate"] if best else None
 
 
@@ -184,24 +182,36 @@ def sweep_convergence(store: Path, table: pd.DataFrame, record: dict, cands) -> 
 
 def sweep_grid(store: Path, table: pd.DataFrame, record: dict, cands) -> None:
     """D-160: consensus = heatmap of the worst-window score per step variant; admm = per day
-    iterations and gap vs. ρ (pruned days have no point)."""
+    iterations and gap vs. ρ; deed_admm = the same vs. γ, one column per β (D-180, D-185).
+    Pruned days have no point."""
     best = chosen(record)
-    if "rho" in cands:
-        ok = table[table.status == "ok"].sort_values("rho")
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.06)
-        for day, runs in ok.groupby(ok.day.str[:10]):
-            for row, y in ((1, runs.iterations), (2, runs.gap * 100)):
-                fig.add_trace(
-                    go.Scatter(x=runs.rho, y=y, name=day, legendgroup=day,
-                               mode="lines+markers", showlegend=row == 1),
-                    row=row, col=1,
-                )  # fmt: skip
-        if best is not None:
-            fig.add_vline(x=cands.loc[best, "rho"], line_dash="dot")  # the chosen ρ
+    if "rho" in cands or "beta" in cands:
+        x = "rho" if "rho" in cands else "gamma"
+        betas = sorted(cands.beta.unique()) if "beta" in cands else [None]
+        ok = table[table.status == "ok"].sort_values(x)
+        days = sorted(ok.day.str[:10].unique())
+        fig = make_subplots(
+            rows=2, cols=len(betas), shared_xaxes=True, vertical_spacing=0.06,
+            column_titles=None if betas == [None] else [f"β = {b:.4g}" for b in betas],
+        )  # fmt: skip
+        for col, b in enumerate(betas, 1):
+            sub = ok if b is None else ok[ok.beta == b]
+            for day, runs in sub.groupby(sub.day.str[:10]):
+                for row, y in ((1, runs.iterations), (2, runs.gap * 100)):
+                    fig.add_trace(
+                        go.Scatter(x=runs[x], y=y, name=day, legendgroup=day,
+                                   mode="lines+markers", showlegend=row == 1 and col == 1,
+                                   line_color=px.colors.qualitative.Plotly[days.index(day)]),
+                        row=row, col=col,
+                    )  # fmt: skip
+        if best is not None:  # the chosen ρ / γ, in the chosen β's column
+            c = 1 if betas == [None] else betas.index(cands.loc[best, "beta"]) + 1
+            fig.add_vline(x=cands.loc[best, x], line_dash="dot", col=c)
         fig.update_xaxes(type="log")
-        fig.update_xaxes(title_text="ρ", row=2)
-        fig.update_yaxes(title_text="iterations", type="log", row=1)
-        fig.update_yaxes(title_text="gap [%]", row=2)
+        fig.update_xaxes(title_text="ρ" if x == "rho" else "γ", row=2)
+        fig.update_yaxes(title_text="iterations", type="log", row=1, col=1)
+        fig.update_yaxes(type="log", row=1)
+        fig.update_yaxes(title_text="gap [%]", row=2, col=1)
     else:
         panels = []  # (title, candidates, x column, x title, y column)
         for steps, cs in cands.groupby("steps"):
@@ -227,7 +237,7 @@ def sweep_grid(store: Path, table: pd.DataFrame, record: dict, cands) -> None:
         )
         mark = {"failed": "×", "pruned": "·", "ok": ""}
         for col, (_, cs, x, xtitle, y) in enumerate(panels, 1):
-            z = cs.key.map(lambda k: np.log10(k[-1]) if k else np.nan)
+            z = np.log10(cs.key.astype(float))
             text = [
                 "★" if i == best else mark[s] for i, s in zip(cs.candidate, cs.status)
             ]
@@ -250,7 +260,11 @@ def sweep_grid(store: Path, table: pd.DataFrame, record: dict, cands) -> None:
     fig.update_layout(
         title=f"{a['algorithm']} sweep result — {a['network']}, {a['topology']}, "
         f"{'' if a['storage'] else 'no '}storage "
-        + ("(dotted: chosen ρ)" if "rho" in cands else "(★ chosen, × failed, · pruned)")
+        + (
+            f"(dotted: chosen {'ρ' if 'rho' in cands else 'γ'})"
+            if "rho" in cands or "beta" in cands
+            else "(★ chosen, × failed, · pruned)"
+        )
     )
     save(fig, store / "plots" / "grid", width=1100, height=550)
 
