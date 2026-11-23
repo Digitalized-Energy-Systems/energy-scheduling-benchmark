@@ -37,6 +37,20 @@ def test_deed_admm_reaches_central_cost_on_toy(tmp_path, topology):
     assert trace.lambda_spread.iloc[-1] < 1e-3  # one common price
 
 
+def test_deed_admm_trace_imbalance_is_the_schedules(tmp_path):
+    # 2026-11-23 (S4d D-196, esb-tune reads it): the trace counted the sink as supply — after
+    # 40 it. on toy 193 MWh short where the schedules are 290 MWh short
+    common = ["--hours", "6", "--topology", "ring", "--out", str(tmp_path)]
+    common += ["--tuning", "paper", "--set", "max_iter=40"]
+    main(["--algorithm", "deed_admm", *common])
+    run = _meta(tmp_path, "toy", "deed_admm")
+    trace = pd.read_csv(next(tmp_path.glob("toy/deed_admm/*/trace.csv")))
+    # not converged: a real imbalance to compare
+    assert run["imbalance"]["shortfall_mwh"] > 1
+    for side in ("shortfall_mwh", "surplus_mwh"):
+        assert trace[side].iloc[-1] == pytest.approx(run["imbalance"][side], abs=1e-6)
+
+
 def test_deed_admm_reaches_central_cost_on_synthetic_10(tmp_path):
     common = [
         "--network",
@@ -108,4 +122,5 @@ def test_sweep_grid_is_4_beta_by_8_gamma():
     assert beta[-1] == pytest.approx(1.9 / 4)  # D-181: g up to 1.9 < 2
     assert gamma[-1] / gamma[0] == pytest.approx(1e6, rel=1e-3)
     assert "median 2c₂" in note
-    assert deed_admm.SWEEP_RUN["max_iter"] == 10_000  # D-178
+    # D-198: esb-tune BUDGET for every algorithm
+    assert "max_iter" not in deed_admm.SWEEP_RUN

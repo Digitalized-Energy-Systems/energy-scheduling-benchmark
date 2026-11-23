@@ -103,9 +103,10 @@ SWEEP_BETA_DECAYING = (0.3, 1.0)
 #: decaying α exponents: the paper's 0.98 decays too fast for a 3000-iteration budget
 #: (synthetic_10: −100 %, T5); both > 0.5, so Σα² < ∞ (KH12 Theorem 5).
 SWEEP_ALPHA_EXP = (0.6, 0.98)
-#: settings of every sweep run (not stored in the tuned set): stop rule on with ε_λ, ε_p 10× below
-#: the run's (2026-11-17 D-143; was off, I19), divergence abort at the grid import price (T4)
-SWEEP_RUN = {"eps_lambda": 1e-5, "eps_p": 1e-4, "lam_abort": 4000.0}
+#: settings of every sweep run (not stored in the tuned set): stop rule off (2026-11-23 D-196:
+#: ε 0 never meets the strict "<"; esb-tune measures the target itself; revises D-143),
+#: divergence abort at the grid import price (T4)
+SWEEP_RUN = {"eps_lambda": 0.0, "eps_p": 0.0, "lam_abort": 4000.0}
 #: esb-tune compares candidates per variant and notes the best of each
 VARIANT = "steps"
 

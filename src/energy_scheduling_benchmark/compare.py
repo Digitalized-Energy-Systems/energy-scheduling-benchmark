@@ -37,6 +37,8 @@ def load_runs(root: Path) -> pd.DataFrame:
                 "algorithm": algorithm,
                 # folder suffix after [no]storage: tuning route (+ --set hash), "" without
                 "variant": name.partition("storage")[2].lstrip("_"),
+                # 2026-11-23 D-199: did the tuned set reach esb-tune's target (None: no sweep set)
+                "tuned_solved": (i.get(algorithm) or {}).get("solved"),
                 "topology": i["topology"],
                 "loss_rate": i["loss_rate"],
                 "seed": i["seed"],

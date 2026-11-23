@@ -79,14 +79,18 @@ class IterationTrace:
         row[6] = max(row[6], self.now())
 
     def frame(self) -> pd.DataFrame:
-        """iteration, sim_time_s, imbalance_mwh (Σ_h |Σ_j mismatch|), cost (€, units without the
-        grid exchange), <vector>_mean, <vector>_spread (max_h of max_j − min_j)."""
+        """iteration, sim_time_s, imbalance_mwh (Σ_h |Σ_j mismatch|) = shortfall_mwh + surplus_mwh
+        (the mismatch split by sign, as ``meta.json``'s imbalance; 2026-11-23 D-196: esb-tune's
+        target test), cost (€, units without the grid exchange), <vector>_mean, <vector>_spread
+        (max_h of max_j − min_j)."""
         return pd.DataFrame(
             [
                 {
                     "iteration": k,
                     "sim_time_s": t,
                     "imbalance_mwh": float(np.abs(mis).sum()),
+                    "shortfall_mwh": float(np.maximum(-mis, 0.0).sum()),
+                    "surplus_mwh": float(np.maximum(mis, 0.0).sum()),
                     "cost": cost,
                     f"{self.vector}_mean": float(v_sum.mean() / self.n),
                     f"{self.vector}_spread": float((hi - lo).max()),

@@ -39,10 +39,10 @@ from ..world import leader, longest_hops
 #: MW, the bus problem's own curvature; Q-E6 sweep route)
 SWEEP_CANDIDATES = 32
 SWEEP_DECADES = 3  # each side of the centre
-#: settings of every sweep run: the paper stop rule stays on (A3, 2026-11-16 D-140; was off as
-#: consensus I19: every ρ hit the noise floor), with ε_abs, ε_rel 10× below the run's so the
-#: winner is past the run's stop too (2026-11-17 D-142); the winner: esb-tune ``select`` (D-182)
-SWEEP_RUN = {"eps_abs": 1e-5, "eps_rel": 1e-4}
+#: settings of every sweep run: stop rule off (2026-11-23 D-196, Beiranvand §4.4: the same
+#: stopping conditions for all; ε_abs −inf, ε_rel 0 → tolerance −inf; revises D-140/D-142);
+#: esb-tune measures the target from the trace and picks the winner (``select``, D-194)
+SWEEP_RUN = {"eps_abs": float("-inf"), "eps_rel": 0.0}
 VARIANT = "adaptive"
 
 
