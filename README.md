@@ -127,9 +127,10 @@ sent/delivered/lost, iterations, stop reason, `sim_time_s` = simulated time of t
 solution of a distributed run; communication only — mango's simulation has no computation-time
 model, agents compute in zero simulated time; `null` for central), wall time,
 `renewable_available_mwh`, `storage_simultaneous_mwh` = MWh charged and discharged in the same
-hour, central only, expected 0). Consensus runs also write `trace.csv`: one row per iteration k
+hour, central only, expected 0). Distributed runs also write `trace.csv`: one row per iteration k
 (the state at λ after k updates) with `sim_time_s`, `imbalance_mwh` (Σ over hours of
-|Σ agents' mismatch|), `cost` (€ of the current schedules, grid exchange not included), `lambda_mean`,
+|Σ agents' mismatch|) = `shortfall_mwh` + `surplus_mwh` (the mismatch split by sign, as in
+`meta.json`; esb-tune's target test, D-196), `cost` (€ of the current schedules, grid exchange not included), `lambda_mean`,
 `lambda_spread` (largest per-hour spread of λ across agents); only iterations every agent reached
 — on grid/ring the stop reaches the agents at different times, so the final schedule can lie 1–3
 iterations past the last row. With `--trace` also
@@ -168,13 +169,16 @@ any value; the route and the values used are stored in `meta.json`):
 α exponent {0.6, 0.98}; α × 1/max scaled bus sensitivity, β × 1/λ_max(L) of the bus topology;
 admm: 32 fixed ρ, log-spaced over six decades around the median 2c₂ of the thermal units;
 deed_admm: 4 β = g/λ_max(L), g ∈ {0.6, 1.0, 1.5, 1.9}, × 8 γ on admm's ρ scale, D-177, D-181) on
-a fixed budget (`--max-iter`, default the algorithm's: 3000, deed_admm 10 000, D-178) with the stop rule on, its tolerances 10× below the run's (consensus ε_λ 1e-5 €/MWh,
-ε_p 1e-4, D-143; admm and deed_admm ε_abs 1e-5, ε_rel 1e-4, D-142, D-176); a consensus sweep run ends as `diverged` once |λ| > 4000 €/MWh. A
-candidate counts with its worst window's score and iterations; the winner (all algorithms, D-182/D-183)
-is the best score, unless candidates within 1e-4 (0.01 % absolute) of it exist — then the fewest
-iterations among those. A candidate is pruned once one window scores more than 1e-4 worse than the
-best of its variant. The winner (it runs through every window) is written whatever its gap (the gap per window is in its `note`);
-nothing is written if every candidate fails. Use `--no-write` for trial sweeps and check
+the same budget for every algorithm (`--max-iter`, default 10 000 = the runs', D-198) with the
+algorithm's own stop rule off (D-196); a consensus sweep run ends as `diverged` once |λ| > 4000 €/MWh.
+The winner follows the literature (plan S4d, `../docs/tuning-selection-plan.md`, D-194–D-199;
+Beiranvand et al. 2017, Deb 2000): a window is *solved* once |gap| ≤ 1e-3 and imbalance/demand ≤ 1e-3
+hold to the end of the run (from `trace.csv`), a candidate counts with its worst window; tier 1 the
+solved candidate with the fewest iterations, tier 2 (none solved) the smallest |gap| among those with
+imbalance ≤ 1e-3, tier 3 the smallest imbalance. Once a variant has a solved candidate, another one is
+pruned after a window that is unsolved or slower. The winner (it runs through every window) is written
+whatever its gap, with `solved = true|false` and a `note` ("solved" or "unsuccessful … tier N", the
+gap per window); nothing is written if every candidate fails. Use `--no-write` for trial sweeps and check
 `git diff resources/tuned_parameters.toml` after a real one.
 
 Every sweep run is kept for plots (S4b, D-147–D-152, `../docs/sweep-records-plan.md`):
@@ -182,8 +186,9 @@ Every sweep run is kept for plots (S4b, D-147–D-152, `../docs/sweep-records-pl
 replaces it only with `--replace`, else esb-tune stops — D-154) holds `central_<day>/` and `<candidate>_<day>/` (normal run output:
 `meta.json` = end result, `trace.csv` = convergence curve), `sweep.csv` (one row per candidate ×
 day: parameters, `status` ok / failed / skipped = not run after a failed or pruned day,
-stop_reason, iterations, total_cost, gap, score, sim/wall time, `folder`) and `sweep.json`
-(args, central cost per day, best per variant, chosen set). Gap curve = trace `cost` / central
+stop_reason, iterations, `solved_at` (first iteration of the target, empty = not solved), total_cost,
+gap, `imbalance` (/ demand), score (= |gap| + imbalance, for the figures), sim/wall time, `folder`) and
+`sweep.json` (args, central cost per day, `eps`, best per variant, chosen set, `tier`, `solved`). Gap curve = trace `cost` / central
 `total_cost` − 1. ROSA's come back with `./hpc.sh pull` into `../hpc-results/sweeps/`.
 
 Per-agent steps (`agent_scale`, decided 2026-11-11, `../docs/per-agent-steps-plan.md`): `"none"`
@@ -195,7 +200,8 @@ come from the network with storage, also in `--no-storage` runs, so one tuned se
 `esb-compare [--root outputs] [--out FILE]` reads every `<root>/<network>/<algorithm>/<run>/meta.json`
 (read-only), pairs each run with the central run of the same network, window, storage and grid-exchange
 setting (only run folders of the current code: older ones are rerun, no fallbacks), and writes one row per run to `<root>/compare.csv` (signed cost gap in %, central cost,
-imbalance shortfall/surplus, iterations, stop reason, messages, wall time, window start/hours)
+imbalance shortfall/surplus, iterations, stop reason, messages, wall time, window start/hours,
+`tuned_solved` = whether the tuned set reached esb-tune's target, empty without a sweep set, D-199)
 plus a printed markdown table. Missing runs go to stderr: runs without
 their central run (skipped) and, per network, windows an algorithm setting lacks that other runs
 have. The batch over the standard grid is `../run_all.sh` (workspace root): all `esb-run`s (central and
