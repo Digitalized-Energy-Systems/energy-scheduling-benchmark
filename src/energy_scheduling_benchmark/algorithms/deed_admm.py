@@ -213,7 +213,7 @@ class BusParticipant(DEEDParticipant):
         new = self.coupling()
         if self.trace is not None:
             # price = −λ̃ (λ multiplies supply − demand; ∂c/∂x = −λ); mismatch = the schedules'
-            # supply − demand: the coupling + the sink, no schedule (2026-11-23: as meta.json)
+            # supply − demand: the coupling + the sink, no schedule (2026-11-23 D-202: as meta.json)
             self.trace.add(self.k, new + self.p[self.sink], self.cost(), -lam_t)
         self.k += 1
         return new - old
