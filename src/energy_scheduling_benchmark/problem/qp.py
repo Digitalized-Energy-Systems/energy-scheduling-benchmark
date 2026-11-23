@@ -20,7 +20,8 @@ class QP:
     def __init__(self, problem: cp.Problem, name: str) -> None:
         # canonicalised with the parameters at their current value
         data, _, _ = problem.get_problem_data(cp.CLARABEL)
-        self.col = data["param_prob"].var_id_to_col  # variable id → first index in x
+        self.param_prob = data["param_prob"]  # b for new parameter values (b_for)
+        self.col = self.param_prob.var_id_to_col  # variable id → first index in x
         self.q0 = data["c"]
         n = self.q0.size
         P = data.get("P")  # absent when the cost is linear
@@ -30,18 +31,34 @@ class QP:
         self._settings = clarabel.DefaultSettings()
         self._settings.verbose = False
         self._name, self._solver = name, None
+        self.z: np.ndarray | None = None  # duals of the last solve
 
-    def solve(self, q: np.ndarray, P: sp.csc_matrix | None = None) -> np.ndarray:
-        """x for linear term *q*; a new upper-triangular *P* replaces the old one."""
+    def b_for(self, values: dict) -> np.ndarray:
+        """The constraint right-hand side b for parameter *values* ({parameter id: value})."""
+        return self.param_prob.apply_parameters(values)[3]
+
+    def solve(
+        self,
+        q: np.ndarray,
+        P: sp.csc_matrix | None = None,
+        b: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """x for linear term *q*; a new upper-triangular *P* replaces the old one; a new *b*
+        (:meth:`b_for`) the right-hand side (S8a: diffusion's exact bus dispatch)."""
         if P is not None:
             self.P, self._solver = P, None
+        if b is not None:
+            self._b = b
         if self._solver is None or not self._solver.is_data_update_allowed():
             self._solver = clarabel.DefaultSolver(
                 self.P, q, self._A, self._b, self._cones, self._settings
             )
-        else:
+        elif b is None:
             self._solver.update(q=q)
+        else:
+            self._solver.update(q=q, b=b)
         solution = self._solver.solve()
         if solution.status != clarabel.SolverStatus.Solved:
             raise RuntimeError(f"{self._name}: {solution.status}")
+        self.z = np.asarray(solution.z)
         return np.asarray(solution.x)
