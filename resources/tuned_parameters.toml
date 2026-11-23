@@ -49,6 +49,17 @@ eps_abs = 1e-4
 eps_rel = 1e-3
 max_iter = 10000
 
+# Diffusion parameters (de Azevedo et al. 2017 §III; docs/diffusion-plan.md, D-215–D-226). The paper
+# picks μ by trial and error and gives no η, α: these defaults are placeholders, use the sweep sets
+# [diffusion.<network>.<topology>.sweep] (esb-tune, D-224).
+[diffusion]
+mu = 0.01  # μ of the optimization diffusion (eq. 16), one for all buses (D-218)
+mu_is = 0.0  # μ of the information sharing (eq. 13); 0 = plain averaging
+penalty = 100.0  # ηα of the penalty (eqs. 22/23), €/MW²h, as a slack in the bus QP (D-219)
+eps_is = 1e-4  # MW: the information sharing pass ends at max |Δx| ≤ eps_is (D-221)
+max_iter = 10000  # both passes; no other stop (the paper tracks forever, D-221)
+lam_abort = inf  # sweep-only divergence abort on |∇F| (as consensus)
+
 # toy (2024-01-01, 24 h): hand-tuned 2026-11-08; κ = 0.05, γ = 4 oscillates on ring/complete
 # (α·dP/dλ at bus0 ≈ 1.75), κ = 0.03 is stable on all three; gap vs central −0.014 / −0.015 /
 # −0.019 % (residual imbalance ≈ 0.2 MWh), 495 / 254 / 207 iterations.

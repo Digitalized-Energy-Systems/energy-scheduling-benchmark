@@ -52,31 +52,24 @@ class IterationTrace:
 
     def __init__(self, n: int, now, vector: str = "lambda") -> None:
         self.n, self.now, self.vector = n, now, vector
-        # k -> [count, Σ mismatch, Σ vector, min vector, max vector, Σ cost, latest time]
+        # k -> [count, Σ mismatch, Σ vector, min vector, max vector, Σ cost, latest time, #vectors]
         self.rows: dict[int, list] = {}
 
     def add(
-        self, k: int, mismatch: np.ndarray, cost: float, vector: np.ndarray
+        self, k: int, mismatch: np.ndarray, cost: float, vector: np.ndarray | None
     ) -> None:
-        row = self.rows.get(k)
-        if row is None:
-            self.rows[k] = [
-                1,
-                mismatch.copy(),
-                vector.copy(),
-                vector.copy(),
-                vector.copy(),
-                cost,
-                self.now(),
-            ]
-            return
+        """*vector* None: the actor has none (diffusion's uninformed buses, S8a); the vector
+        columns then cover the actors that have one."""
+        row = self.rows.setdefault(k, [0, 0.0, 0.0, np.inf, -np.inf, 0.0, -np.inf, 0])
         row[0] += 1
-        row[1] += mismatch
-        row[2] += vector
-        np.minimum(row[3], vector, out=row[3])
-        np.maximum(row[4], vector, out=row[4])
+        row[1] = row[1] + mismatch
         row[5] += cost
         row[6] = max(row[6], self.now())
+        if vector is not None:
+            row[2] = row[2] + vector
+            row[3] = np.minimum(row[3], vector)
+            row[4] = np.maximum(row[4], vector)
+            row[7] += 1
 
     def frame(self) -> pd.DataFrame:
         """iteration, sim_time_s, imbalance_mwh (Σ_h |Σ_j mismatch|) = shortfall_mwh + surplus_mwh
@@ -92,10 +85,12 @@ class IterationTrace:
                     "shortfall_mwh": float(np.maximum(-mis, 0.0).sum()),
                     "surplus_mwh": float(np.maximum(mis, 0.0).sum()),
                     "cost": cost,
-                    f"{self.vector}_mean": float(v_sum.mean() / self.n),
-                    f"{self.vector}_spread": float((hi - lo).max()),
+                    f"{self.vector}_mean": float(np.mean(v_sum) / vectors),
+                    f"{self.vector}_spread": float(np.max(hi - lo)),
                 }
-                for k, (count, mis, v_sum, lo, hi, cost, t) in sorted(self.rows.items())
+                for k, (count, mis, v_sum, lo, hi, cost, t, vectors) in sorted(
+                    self.rows.items()
+                )
                 if count == self.n
             ]
         )

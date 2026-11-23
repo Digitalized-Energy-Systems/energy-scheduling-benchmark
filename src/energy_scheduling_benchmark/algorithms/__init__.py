@@ -12,7 +12,7 @@ a world.
 """
 
 # 2026-11-17 D-145: algorithms in their own subpackage, the registry moved here from run.py
-from . import admm, consensus, deed_admm, dummy
+from . import admm, consensus, deed_admm, diffusion, dummy
 
 #: name → algorithm module (None: central dispatch, no world). Add a new algorithm here.
 ALGORITHMS = {
@@ -20,5 +20,6 @@ ALGORITHMS = {
     "consensus": consensus,
     "admm": admm,
     "deed_admm": deed_admm,
+    "diffusion": diffusion,
     "dummy": dummy,
-}  # deed_admm: S6b
+}  # deed_admm: S6b; diffusion: S8a
