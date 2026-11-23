@@ -36,10 +36,9 @@ from .consensus import laplacian_max
 SWEEP_G = (0.6, 1.0, 1.5, 1.9)
 SWEEP_GAMMAS = 8
 SWEEP_DECADES = 3
-#: 2026-11-17 D-176 (A3, as admm D-140/D-142): the stop rule stays on in the sweeps, 10× tighter
-#: than the runs (the winner: esb-tune ``select``, 2026-11-18 D-182)
-#: 2026-11-17 D-178: budget 10 000 it. (= the runs'; synthetic_50 is still ≈ +9 % at 3000)
-SWEEP_RUN = {"eps_abs": 1e-5, "eps_rel": 1e-4, "max_iter": 10_000}
+#: 2026-11-23 D-196: stop rule off in the sweeps (as admm; revises D-176), esb-tune measures the
+#: target from the trace; the budget is esb-tune's 10 000 for every algorithm (D-198, was D-178)
+SWEEP_RUN = {"eps_abs": float("-inf"), "eps_rel": 0.0}
 #: esb-tune notes the best γ per β
 VARIANT = "beta"
 
@@ -168,6 +167,7 @@ class BusParticipant(DEEDParticipant):
             bound(soc, low, e_max - e0)
             self.stores[cid] = (comp, block(ic), block(id_))
         isink = iy + 1 + 2 * len(stores)
+        self.sink = block(isink)
         E[:, block(isink)] = -eye
         bound(select(isink), 0.0, infeed)  # Q-Z2 A
         self.M = np.vstack(rows) if rows else np.zeros((0, n))
@@ -212,8 +212,9 @@ class BusParticipant(DEEDParticipant):
         old, self.p, self.p_hat = self.coupling(), p, p_hat
         new = self.coupling()
         if self.trace is not None:
-            # price = −λ̃ (λ multiplies supply − demand; ∂c/∂x = −λ)
-            self.trace.add(self.k, new, self.cost(), -lam_t)
+            # price = −λ̃ (λ multiplies supply − demand; ∂c/∂x = −λ); mismatch = the schedules'
+            # supply − demand: the coupling + the sink, no schedule (2026-11-23: as meta.json)
+            self.trace.add(self.k, new + self.p[self.sink], self.cost(), -lam_t)
         self.k += 1
         return new - old
 

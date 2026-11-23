@@ -40,7 +40,8 @@ def color(algorithm: str) -> str:
 
 #: sweep.csv columns that are not candidate parameters (esb-tune, D-148)
 RESULT = {"candidate", "day", "status", "stop_reason", "iterations", "total_cost", "gap",
-          "score", "sim_time_s", "wall_time_s", "folder"}  # fmt: skip
+          "score", "sim_time_s", "wall_time_s", "folder",
+          "solved_at", "imbalance"}  # fmt: skip  # 2026-11-23 D-196
 
 
 def save(fig: go.Figure, path: Path, width=1000, height=600, pdf_only=None) -> None:

@@ -1,23 +1,23 @@
 """esb-tune: sweep an algorithm's parameters for one network × topology (plan §7 I15–I19; audit
 2026-11-12 Q-A1).
 
-Runs central once per window, then every candidate of the algorithm's ``sweep_grid`` on each
-window, each with a fixed budget (``--max-iter``; default the algorithm's ``SWEEP_RUN`` ``max_iter``,
-else 3000, D-178) plus the algorithm's ``SWEEP_RUN`` settings
-(both: stop rule on with tolerances 10× below the run's, 2026-11-17 D-142/D-143; consensus also a
-divergence abort). Score = |cost gap| + relative imbalance vs central; a candidate counts with
-its worst window's score and its worst window's iterations. The winner (``select``, D-182): the
-best score, unless candidates within ``CLOSE`` (1e-4) of it exist — then the fewest iterations
-among those. The winner per variant (``VARIANT``, consensus: ``steps``) goes into the note, the
-overall winner is written into
-``resources/tuned_parameters.toml`` as ``[<algorithm>.<network>.<topology>.sweep]`` whatever its
-gap (decision 2026-11-09); the note records the gap per window and the best of each variant.
-Nothing is written only if no candidate runs through every window.
+Selection by the literature (plan S4d, ``docs/tuning-selection-plan.md``, D-194–D-199;
+Beiranvand et al. 2017 §4.3–4.4, Deb 2000): runs central once per window, then every candidate
+of the algorithm's ``sweep_grid`` on each window with the same budget for every algorithm
+(``--max-iter``, default ``BUDGET`` = 10 000, D-198) and the algorithm's ``SWEEP_RUN`` settings
+(its own stop rule off, D-196; consensus also a divergence abort). A window is *solved* once
+|gap| ≤ ``EPS`` and imbalance/demand ≤ ``EPS`` hold to the end of the run (``solved_at``, from
+``trace.csv``; D-195/D-196); a candidate counts with its worst window. The winner (``select``):
+tier 1 the solved candidate with the fewest iterations; tier 2 (none solved) the smallest
+|gap| among candidates with imbalance ≤ ``EPS``; tier 3 the smallest imbalance (D-197). The
+winner per variant (``VARIANT``, consensus: ``steps``) goes into the note, the overall winner is
+written into ``resources/tuned_parameters.toml`` as ``[<algorithm>.<network>.<topology>.sweep]``
+with ``solved`` = tier 1 (D-199) whatever its gap (decision 2026-11-09). Nothing is written only
+if no candidate runs through every window.
 
-Exact pruning (T3): the score is the worst window, so once one window scores more than ``CLOSE``
-worse than the best complete candidate of the same variant, the candidate cannot win and its
-other windows are skipped. Ties go to the earlier candidate, so the result does not depend on
-``--jobs`` (T7). Runs go to ``--jobs`` processes (T2).
+Exact pruning (T3): once a variant has a solved candidate, another one stops after a window that
+is unsolved or needs more iterations than that one — it cannot win. Ties go to the earlier
+candidate, so the result does not depend on ``--jobs`` (T7). Runs go to ``--jobs`` processes (T2).
 
 Records (S4b, D-147–D-152): every run is kept in the sweep folder
 ``<--out>/<algorithm>/<network>/<topology>_[no]storage/`` (a re-sweep replaces it only with
@@ -81,18 +81,42 @@ def score(meta: dict, central: dict, demand_mwh: float) -> float | None:
     return abs(gap(meta["total_cost"], central["total_cost"])) + imbalance / demand_mwh
 
 
-#: 2026-11-18 D-182: scores within CLOSE (0.01 % absolute) of the best count as a draw
-CLOSE = 1e-4
+#: 2026-11-23 D-195: a window is solved when |gap| and imbalance/demand both stay ≤ EPS
+EPS = 1e-3
+#: 2026-11-23 D-198: the same sweep budget for every algorithm (= the runs' max_iter)
+BUDGET = 10_000
 
 
-def select(done: dict[int, tuple[float, int]]) -> int:
-    """The winner of ``{candidate: (worst score, worst-window iterations)}``: among the
-    candidates within ``CLOSE`` of the best score the fewest iterations win, then the lower
-    score, then the earlier candidate (T7)."""
-    # 2026-11-18 D-182/D-183 (all algorithms): replaces the iterations rank of D-140/D-176 —
-    # it picked a −0.2 % early stop — and consensus's pure score rank (D-143)
-    best = min(s for s, _ in done.values())
-    return min((it, s, i) for i, (s, it) in done.items() if s <= best + CLOSE)[2]
+def solved_at(trace: pd.DataFrame, central: dict, demand_mwh: float) -> int | None:
+    """The first iteration from which |gap| ≤ ``EPS`` and imbalance/demand ≤ ``EPS`` hold to
+    the end of *trace* (imbalance as ``score``), None if the last row misses the target (D-196)."""
+    cost = central["total_cost"]
+    gaps = (trace.cost / cost - 1).abs() if cost else trace.cost.abs()
+    off = (
+        trace.shortfall_mwh
+        + (trace.surplus_mwh - central["imbalance"]["surplus_mwh"]).abs()
+    )
+    ok = ((gaps <= EPS) & (off / demand_mwh <= EPS)).to_numpy()
+    if not len(ok) or not ok[-1]:
+        return None
+    misses = (~ok).nonzero()[0]
+    return int(trace.iteration.iloc[misses[-1] + 1 if len(misses) else 0])
+
+
+def select(done: dict[int, tuple[int | None, float, float]]) -> tuple[int, int]:
+    """(winner, tier) of ``{candidate: (worst-window iterations to the target or None, worst
+    |gap|, worst imbalance/demand)}``: tier 1 the fewest iterations among the solved, tier 2
+    the smallest |gap| among those with imbalance ≤ ``EPS``, tier 3 the smallest imbalance;
+    then the earlier candidate (T7)."""
+    # 2026-11-23 D-194/D-197 (Beiranvand §4.3: unsolved = unsuccessful; Deb 2000: feasible first);
+    # replaces the score + CLOSE rule of D-182/D-183
+    solved = [(it, g, i) for i, (it, g, _) in done.items() if it is not None]
+    if solved:
+        return min(solved)[2], 1
+    feasible = [(g, v, i) for i, (_, g, v) in done.items() if v <= EPS]
+    if feasible:
+        return min(feasible)[2], 2
+    return min((v, g, i) for i, (_, g, v) in done.items())[2], 3
 
 
 def write_section(name: str, values: dict) -> None:
@@ -121,12 +145,14 @@ def write_section(name: str, values: dict) -> None:
         f.truncate()
 
 
-def _note(variant, best: tuple, hours: int, budget: int) -> str:
-    (s, its), values, gaps = best
+def _note(variant, best: tuple, hours: int) -> str:
+    (its, _, off), values, gaps = best
     shown = ", ".join(f"{k}={v}" for k, v in values.items() if k != "steps")
     windows = "; ".join(f"{start}: {g:+.4%}" for start, g in gaps.items())
-    conv = f", converged within {its} it." if its < budget else ""
-    return f"{variant} {shown} — {hours} h gap {windows}, score {s:.2e}{conv}"
+    status = f"solved within {its} it." if its is not None else "not solved"
+    return (
+        f"{variant} {shown} — {hours} h gap {windows}, imbalance ≤ {off:.1e}, {status}"
+    )
 
 
 def sweep(args: argparse.Namespace) -> dict | None:
@@ -139,8 +165,8 @@ def sweep(args: argparse.Namespace) -> dict | None:
         raw = without_storage(raw)
     candidates, grid_note = alg.sweep_grid(raw, full, args.topology)
     print(f"{len(candidates)} candidates; {grid_note}", flush=True)
-    # 2026-11-17 D-178: the budget defaults to the algorithm's own (deed_admm 10 000), else 3000
-    args.max_iter = args.max_iter or alg.SWEEP_RUN.get("max_iter", 3000)
+    # 2026-11-23 D-198: one budget for every algorithm (was per algorithm, D-178)
+    args.max_iter = args.max_iter or BUDGET
     fixed = alg.SWEEP_RUN | {"max_iter": args.max_iter}
     sets = [x for k, v in fixed.items() for x in ("--set", f"{k}={v}")]
     starts = args.start or [None]
@@ -183,9 +209,9 @@ def sweep(args: argparse.Namespace) -> dict | None:
             pending[future] = (i, w)
 
         pending: dict = {}
-        scores: dict[int, list[tuple]] = {i: [] for i in range(len(candidates))}
+        results: dict[int, list[tuple]] = {i: [] for i in range(len(candidates))}
         gaps: dict[int, dict[str, float]] = {i: {} for i in range(len(candidates))}
-        complete: dict = {}  # variant -> {candidate: (worst score, worst-window iterations)}
+        complete: dict = {}  # variant -> {candidate: (iterations|None, |gap|, imbalance), worst}
         failed = pruned = 0
         rows: dict[tuple, dict] = {}  # (candidate, window) -> sweep.csv row (D-148)
         fresh = iter(range(len(candidates)))
@@ -204,14 +230,25 @@ def sweep(args: argparse.Namespace) -> dict | None:
                 meta, out = future.result()
                 label, central, demand, _ = windows[w]
                 s = score(meta, central, demand)
+                its = off = None
+                if s is not None:
+                    g = abs(gap(meta["total_cost"], central["total_cost"]))
+                    off = s - g  # imbalance / demand
+                    trace = Path(out, "trace.csv")
+                    if trace.exists():
+                        its = solved_at(pd.read_csv(trace), central, demand)
+                    elif g <= EPS and off <= EPS:
+                        its = 0  # no iterations: the renewables cover the window
                 if meta["total_cost"] is not None:
                     gaps[i][label] = gap(meta["total_cost"], central["total_cost"])
                 rows[i, w] = {
                     "status": "failed" if s is None else "ok",
                     "stop_reason": meta["stop_reason"],
                     "iterations": meta["iterations"],
+                    "solved_at": its,
                     "total_cost": meta["total_cost"],
                     "gap": gaps[i].get(label),
+                    "imbalance": off,
                     "score": s,
                     "sim_time_s": meta["sim_time_s"],
                     "wall_time_s": meta["wall_time_s"],
@@ -222,24 +259,28 @@ def sweep(args: argparse.Namespace) -> dict | None:
                     label,
                     meta["stop_reason"],
                     meta["iterations"],
+                    its,
                     s,
                     flush=True,
                 )
                 if s is None:
                     failed += 1
                     continue
-                scores[i].append((s, meta["iterations"]))
-                worst = max(x for x, _ in scores[i])
+                results[i].append((its, g, off))
                 variant = candidates[i].get(alg.VARIANT)
-                if len(scores[i]) == len(windows):
+                solved = [
+                    v[0] for v in complete.get(variant, {}).values() if v[0] is not None
+                ]
+                if len(results[i]) == len(windows):
+                    r = results[i]
+                    unsolved = any(x is None for x, _, _ in r)
                     complete.setdefault(variant, {})[i] = (
-                        worst, max(n for _, n in scores[i])
-                    )  # fmt: skip
-                elif (
-                    variant in complete
-                    and worst > min(x for x, _ in complete[variant].values()) + CLOSE
-                ):
-                    pruned += 1  # out of reach of the best of its variant (D-182)
+                        None if unsolved else max(x for x, _, _ in r),
+                        max(x for _, x, _ in r),
+                        max(x for _, _, x in r),
+                    )
+                elif solved and (its is None or its > min(solved)):
+                    pruned += 1  # cannot beat the variant's solved best (D-194)
                 else:
                     submit(i, w + 1)
             refill()
@@ -252,21 +293,29 @@ def sweep(args: argparse.Namespace) -> dict | None:
             for w in range(len(windows))
         ]
     ).to_csv(store / "sweep.csv", index=False)
-    values = chosen = None
+    values = chosen = tier = None
     every = {i: k for d in complete.values() for i, k in d.items()}
-    best = {v: select(d) for v, d in complete.items()}  # variant -> its winner
+    best = {v: select(d)[0] for v, d in complete.items()}  # variant -> its winner
     if not best:
         print("no candidate ran through every window (each diverged/stalled on one)")
     else:
-        chosen = select(every)
-        ranked = sorted(best, key=lambda v: (best[v] != chosen, every[best[v]]))
+        chosen, tier = select(every)
+        # the chosen set's variant first
+        ranked = sorted(best, key=lambda v: best[v] != chosen)
         notes = [
-            _note(v, (every[i], candidates[i], gaps[i]), args.hours, args.max_iter)
-            for v, i in ((v, best[v]) for v in ranked)
+            _note(v, (every[best[v]], candidates[best[v]], gaps[best[v]]), args.hours)
+            for v in ranked
         ]
+        # 2026-11-23 D-199 (Beiranvand §5.3: a failed target counts as failure)
+        status = (
+            f"solved (ε {EPS:g})"
+            if tier == 1
+            else f"unsuccessful: no candidate within ε {EPS:g} on every tuning day, tier {tier}"
+        )
         values = candidates[chosen] | {
-            "note": f"esb-tune ({grid_note}, {args.max_iter} it.) best: "
-            + " | ".join(notes)
+            "solved": tier == 1,
+            "note": f"esb-tune ({grid_note}, {args.max_iter} it.) {status}; best: "
+            + " | ".join(notes),
         }
         if args.write:
             write_section(
@@ -285,16 +334,20 @@ def sweep(args: argparse.Namespace) -> dict | None:
             }
             for label, central, demand, out in windows
         },
+        "eps": EPS,
         "best": [
             {
                 "variant": v,
                 "candidate": i,
-                "score": every[i][0],
-                "iterations": every[i][1],
+                "iterations": every[i][0],
+                "gap": every[i][1],
+                "imbalance": every[i][2],
             }
             for v, i in best.items()
         ],
         "chosen_candidate": chosen,
+        "tier": tier,
+        "solved": tier == 1 if tier else None,
         "failed": failed,
         "pruned": pruned,
         "chosen": values,

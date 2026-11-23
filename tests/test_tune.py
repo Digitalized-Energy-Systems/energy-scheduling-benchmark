@@ -78,6 +78,7 @@ def test_sweep_prunes_without_changing_the_winner(monkeypatch, capsys, tmp_path)
     best = tune.sweep(_args(start=starts, max_iter=300, jobs=1, out=tmp_path))
     assert best["kappa"] == pytest.approx(1.2 / (0.75 * 35.15), rel=1e-3)
     assert "2 pruned" in capsys.readouterr().out
+    assert best["solved"] is True and "solved (ε 0.001)" in best["note"]  # D-199
     # S4b records (D-147/D-148/D-150): one row per candidate × day, pruned days skipped
     store = tmp_path / "consensus" / "toy" / "ring_storage"
     table = pd.read_csv(store / "sweep.csv")
@@ -89,7 +90,18 @@ def test_sweep_prunes_without_changing_the_winner(monkeypatch, capsys, tmp_path)
     ]
     for folder in table["folder"].dropna():
         assert (store / folder / "meta.json").exists()
-        assert len(pd.read_csv(store / folder / "trace.csv")) > 1  # convergence curve
+        trace = pd.read_csv(store / folder / "trace.csv")
+        assert len(trace) > 1  # convergence curve
+        # D-196: the split by sign sums to the imbalance; the last row is the run's end
+        split = trace.shortfall_mwh + trace.surplus_mwh
+        assert split.to_numpy() == pytest.approx(trace.imbalance_mwh.to_numpy())
+        meta = json.loads((store / folder / "meta.json").read_text())
+        assert trace.shortfall_mwh.iloc[-1] == pytest.approx(
+            meta["imbalance"]["shortfall_mwh"], abs=1e-6
+        )
+        assert trace.surplus_mwh.iloc[-1] == pytest.approx(
+            meta["imbalance"]["surplus_mwh"], abs=1e-6
+        )
     record = json.loads((store / "sweep.json").read_text())
     assert record["chosen"] == best and len(record["central"]) == 3
     for c in record["central"].values():
@@ -146,6 +158,9 @@ def test_sweep_writes_the_best_whatever_its_gap(tmp_path, monkeypatch):
     assert abs(gap) > 1  # once (--max-gap 1 %) this was not written
     written = tomllib.loads(path.read_text())["consensus"]["toy"]["ring"]["sweep"]
     assert written["kappa"] == best["kappa"] and written["note"] == best["note"]
+    # D-199: an unsolved set says so and still loads and runs like any tuned set
+    assert written["solved"] is False and "unsuccessful" in best["note"]
+    assert parameters.parameters("consensus", "toy", "ring", "sweep")["solved"] is False
 
 
 def test_score_zero_cost_window_and_unavoidable_surplus():
@@ -163,12 +178,31 @@ def test_score_zero_cost_window_and_unavoidable_surplus():
     assert tune.score(run, covered, 100.0) == pytest.approx(0.02)
 
 
-def test_select_best_score_then_fastest_among_close():
-    # D-182: a candidate within CLOSE of the best score wins if it needs fewer iterations
-    close = tune.CLOSE / 2
-    assert tune.select({0: (1e-9, 900), 1: (1e-9 + close, 200)}) == 1
-    # clearly better beats faster (the −0.2 % early stop of D-176 loses)
-    assert tune.select({0: (2e-3, 2399), 1: (1e-3, 4056)}) == 1
-    # equal iterations → the lower score, then the earlier candidate (T7)
-    assert tune.select({0: (2e-9, 3000), 1: (1e-9, 3000)}) == 1
-    assert tune.select({3: (1e-9, 3000), 1: (1e-9, 3000)}) == 1
+def test_select_by_tiers():
+    # D-197: solved beats unsolved however small its gap; fewest iterations among the solved
+    assert tune.select(
+        {0: (None, 0.0, 0.0), 1: (900, 5e-4, 5e-4), 2: (200, 9e-4, 9e-4)}
+    ) == (2, 1)
+    # equal iterations → the smaller gap, then the earlier candidate (T7)
+    assert tune.select({0: (200, 2e-4, 0.0), 1: (200, 1e-4, 0.0)}) == (1, 1)
+    assert tune.select({3: (200, 1e-4, 0.0), 1: (200, 1e-4, 0.0)}) == (1, 1)
+    # none solved: smallest gap among the feasible (imbalance ≤ EPS), even if another is cheaper
+    assert tune.select({0: (None, 0.4, 0.15), 1: (None, 0.6, 5e-4)}) == (1, 2)
+    # none feasible: smallest imbalance (the lower_saxony_2025 grid case: −47 % at 13 % short)
+    assert tune.select({0: (None, 0.47, 0.13), 1: (None, 0.53, 0.01)}) == (1, 3)
+
+
+def test_solved_at_counts_from_the_last_entry_into_the_target():
+    central = {"total_cost": 100.0, "imbalance": {"surplus_mwh": 2.0}}
+    trace = pd.DataFrame(
+        {
+            "iteration": [0, 1, 2, 3, 4],
+            "cost": [50.0, 100.05, 103.0, 100.02, 100.01],  # in, out (+3 %), back in
+            "shortfall_mwh": [10.0, 0.0, 0.0, 0.0, 0.0],
+            # central's own surplus is not penalised
+            "surplus_mwh": [2.0, 2.05, 2.0, 2.0, 2.0],
+        }
+    )
+    assert tune.solved_at(trace, central, demand_mwh=100.0) == 3
+    trace.loc[4, "shortfall_mwh"] = 1.0  # the last row misses the balance target
+    assert tune.solved_at(trace, central, demand_mwh=100.0) is None
