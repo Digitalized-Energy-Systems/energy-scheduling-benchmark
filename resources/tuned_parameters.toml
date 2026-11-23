@@ -49,6 +49,18 @@ eps_abs = 1e-4
 eps_rel = 1e-3
 max_iter = 10000
 
+# Diffusion parameters (Ces et al. 2025 §3.3; docs/diffusion-plan.md, D-203–D-214). Routes as
+# consensus. paper = Ces Table I, diffusion, dispatchable generator, islanded (ε₄ = 0.4603, a kW
+# microgrid: stalls or diverges at our scale, a result); sweep = [diffusion.<network>.<topology>.sweep].
+[diffusion]
+eps_step = 0.4603  # ε; bus j runs s_j·ε
+agent_scale = "capacity"  # per-agent ε (D-204, as Ces's per-agent gains); "none" = one ε
+# stop (Ces §4, D-208): max |Δλ| ≤ eps_lambda (€/MWh) per agent, via the leader
+eps_lambda = 1e-4
+max_iter = 10000  # over all passes of the flag loop (D-213)
+final_stop = true  # false (sweeps, D-214): pass ends stay, the run goes on to max_iter
+lam_abort = inf  # sweep-only divergence abort (as consensus)
+
 # toy (2024-01-01, 24 h): hand-tuned 2026-11-08; κ = 0.05, γ = 4 oscillates on ring/complete
 # (α·dP/dλ at bus0 ≈ 1.75), κ = 0.03 is stable on all three; gap vs central −0.014 / −0.015 /
 # −0.019 % (residual imbalance ≈ 0.2 MWh), 495 / 254 / 207 iterations.

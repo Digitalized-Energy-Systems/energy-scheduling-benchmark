@@ -183,11 +183,12 @@ def sweep_convergence(store: Path, table: pd.DataFrame, record: dict, cands) -> 
 
 def sweep_grid(store: Path, table: pd.DataFrame, record: dict, cands) -> None:
     """D-160: consensus = heatmap of the worst-window score per step variant; admm = per day
-    iterations and gap vs. ρ; deed_admm = the same vs. γ, one column per β (D-180, D-185).
+    iterations and gap vs. ρ; deed_admm = the same vs. γ, one column per β (D-180, D-185);
+    diffusion = the same vs. ε (S8a)
     Pruned days have no point."""
     best = chosen(record)
-    if "rho" in cands or "beta" in cands:
-        x = "rho" if "rho" in cands else "gamma"
+    if "rho" in cands or "beta" in cands or "eps_step" in cands:
+        x = next(c for c in ("rho", "eps_step", "gamma") if c in cands)
         betas = sorted(cands.beta.unique()) if "beta" in cands else [None]
         ok = table[table.status == "ok"].sort_values(x)
         days = sorted(ok.day.str[:10].unique())
@@ -209,7 +210,7 @@ def sweep_grid(store: Path, table: pd.DataFrame, record: dict, cands) -> None:
             c = 1 if betas == [None] else betas.index(cands.loc[best, "beta"]) + 1
             fig.add_vline(x=cands.loc[best, x], line_dash="dot", col=c)
         fig.update_xaxes(type="log")
-        fig.update_xaxes(title_text="ρ" if x == "rho" else "γ", row=2)
+        fig.update_xaxes(title_text={"rho": "ρ", "eps_step": "ε"}.get(x, "γ"), row=2)
         fig.update_yaxes(title_text="iterations", type="log", row=1, col=1)
         fig.update_yaxes(type="log", row=1)
         fig.update_yaxes(title_text="gap [%]", row=2, col=1)
