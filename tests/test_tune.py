@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from energy_scheduling_benchmark import parameters, tune
-from energy_scheduling_benchmark.algorithms import consensus
+from energy_scheduling_benchmark.algorithms import admm, consensus, deed_admm
 
 
 def test_write_section_replaces_only_its_table(tmp_path, monkeypatch):
@@ -83,6 +83,8 @@ def test_sweep_prunes_without_changing_the_winner(monkeypatch, capsys, tmp_path)
     store = tmp_path / "consensus" / "toy" / "ring_storage"
     table = pd.read_csv(store / "sweep.csv")
     assert len(table) == 3 * 3
+    # D-196: the sweep runs with the stop rule off — every run uses the whole budget
+    assert (table[table.status == "ok"].stop_reason == "max_iter").all()
     assert list(table.groupby("candidate")["status"].apply(list)) == [
         ["ok"] * 3,
         ["ok", "skipped", "skipped"],
@@ -106,6 +108,22 @@ def test_sweep_prunes_without_changing_the_winner(monkeypatch, capsys, tmp_path)
     assert record["chosen"] == best and len(record["central"]) == 3
     for c in record["central"].values():
         assert (store / c["folder"] / "meta.json").exists()
+
+
+@pytest.mark.parametrize("algorithm", ["admm", "deed_admm"])
+def test_admm_sweeps_run_with_the_stop_rule_off(algorithm, monkeypatch, tmp_path):
+    # D-196: ε_abs −inf, ε_rel 0 must never stop a sweep run; both converge on toy well within
+    # 400 it. with their run stop rule, so an early stop would show here
+    # two candidates at the grid centre (×10^0), where both converge fast
+    monkeypatch.setattr(admm, "SWEEP_CANDIDATES", 2)
+    monkeypatch.setattr(admm, "SWEEP_DECADES", 0)
+    monkeypatch.setattr(deed_admm, "SWEEP_G", (1.0,))
+    monkeypatch.setattr(deed_admm, "SWEEP_GAMMAS", 2)
+    monkeypatch.setattr(deed_admm, "SWEEP_DECADES", 0)
+    tune.sweep(_args(algorithm=algorithm, max_iter=400, out=tmp_path))
+    store = tmp_path / algorithm / "toy" / "ring_storage"
+    table = pd.read_csv(store / "sweep.csv")
+    assert len(table) == 2 and (table.stop_reason == "max_iter").all()
 
 
 def test_parameter_routes(capsys):
