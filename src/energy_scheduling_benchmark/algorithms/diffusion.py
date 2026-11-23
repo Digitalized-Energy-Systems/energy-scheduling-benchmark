@@ -47,6 +47,8 @@ SWEEP_MU_IS = (0.0, 0.5)
 SWEEP_RUN = {"lam_abort": 4000.0}
 #: esb-tune notes the best per penalty
 VARIANT = "penalty"
+#: stop reason of a run whose information sharing never converged (no dispatch, D-232)
+IS_NOT_CONVERGED = "is_not_converged"
 
 
 def _dispatchable(network: Network) -> list[Component]:
@@ -141,10 +143,14 @@ class BusActor(DiffusionActor):
                 supply += p
                 var[cid] = [(p, 1.0)]
         # projection at w = 0: the w-dependent part −2wᵀΣu is added to q per solve
-        self._proj = QP(cp.Problem(cp.Minimize(cp.sum_squares(supply)), cons), self.aid)
+        self._proj = QP(
+            cp.Problem(cp.Minimize(cp.sum_squares(supply)), cons), self.aid, almost=True
+        )
         self._w_bar = cp.Parameter(steps, value=np.zeros(steps))
         self._disp = QP(
-            cp.Problem(cp.Minimize(cost), [supply == self._w_bar, *cons]), self.aid
+            cp.Problem(cp.Minimize(cost), [supply == self._w_bar, *cons]),
+            self.aid,
+            almost=True,  # D-233: w̄ sits on the producible set's edge outside the limits
         )
         self._cols = {
             qp: [
@@ -301,9 +307,12 @@ def setup(params: dict, network: Network, full: Network, args):
                 "missing_edges": sum(a.missing_edges for a in algorithms),
             }
             if r is not None:
-                return Outcome(
-                    r.stop_reason, r.iterations, counts, r.time, trace.frame()
-                )
+                # 2026-11-24 D-232: the information sharing never converged → no estimate,
+                # nothing dispatched; not a plain max_iter run
+                stop = r.stop_reason
+                if all(a.w is None for a in algorithms):
+                    stop = IS_NOT_CONVERGED
+                return Outcome(stop, r.iterations, counts, r.time, trace.frame())
             stop = (
                 "diverged" if any(a.actor.diverged for a in algorithms) else "stalled"
             )

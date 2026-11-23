@@ -92,3 +92,23 @@ def test_lazy_weights_reach_central(tmp_path, monkeypatch):
     assert run["stop_reason"] == "max_iter" and run["iterations"] == 4000
     assert run["total_cost"] == pytest.approx(central["total_cost"], rel=0.02)
     assert run["imbalance"]["shortfall_mwh"] + run["imbalance"]["surplus_mwh"] < 25
+
+
+def test_information_sharing_never_converged_is_reported(tmp_path):
+    # toy ring = an even ring: eq. (12) has eigenvalue −1, plain averaging (μ_IS = 0) never
+    # converges, so the optimization never starts and nothing is dispatched (D-232)
+    ring = ["--network", "toy", "--hours", "24", "--topology", "ring"]
+    sets = ["--set", "mu_is=0", "--set", "max_iter=200"]
+    main(
+        [
+            "--algorithm",
+            "diffusion",
+            "--tuning",
+            "paper",
+            *ring,
+            *sets,
+            "--out",
+            str(tmp_path),
+        ]
+    )
+    assert _meta(tmp_path, "diffusion")["stop_reason"] == diffusion.IS_NOT_CONVERGED

@@ -17,7 +17,8 @@ from cvxpy.reductions.solvers.conic_solvers.clarabel_conif import dims_to_solver
 
 
 class QP:
-    def __init__(self, problem: cp.Problem, name: str) -> None:
+    def __init__(self, problem: cp.Problem, name: str, almost: bool = False) -> None:
+        # almost: also accept clarabel's AlmostSolved (diffusion, D-233)
         # canonicalised with the parameters at their current value
         data, _, _ = problem.get_problem_data(cp.CLARABEL)
         self.param_prob = data["param_prob"]  # b for new parameter values (b_for)
@@ -30,7 +31,7 @@ class QP:
         self._cones = dims_to_solver_cones(data["dims"])
         self._settings = clarabel.DefaultSettings()
         self._settings.verbose = False
-        self._name, self._solver = name, None
+        self._name, self._solver, self._almost = name, None, almost
         self.z: np.ndarray | None = None  # duals of the last solve
 
     def b_for(self, values: dict) -> np.ndarray:
@@ -58,7 +59,10 @@ class QP:
         else:
             self._solver.update(q=q, b=b)
         solution = self._solver.solve()
-        if solution.status != clarabel.SolverStatus.Solved:
+        ok = [clarabel.SolverStatus.Solved]
+        if self._almost:
+            ok.append(clarabel.SolverStatus.AlmostSolved)
+        if solution.status not in ok:
             raise RuntimeError(f"{self._name}: {solution.status}")
         self.z = np.asarray(solution.z)
         return np.asarray(solution.x)
