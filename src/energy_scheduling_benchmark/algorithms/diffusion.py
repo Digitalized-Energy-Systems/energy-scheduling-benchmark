@@ -147,7 +147,10 @@ class BusActor(DiffusionActor):
             cp.Problem(cp.Minimize(cost), [supply == self._w_bar, *cons]), self.aid
         )
         self._cols = {
-            qp: [(cid, [(qp.col[v.id], sign) for v, sign in vs]) for cid, vs in var.items()]
+            qp: [
+                (cid, [(qp.col[v.id], sign) for v, sign in vs])
+                for cid, vs in var.items()
+            ]
             for qp in (self._proj, self._disp)
         }
         # the balance rows of b (λ = −z·coef there; checked by finite differences)
@@ -171,10 +174,14 @@ class BusActor(DiffusionActor):
             for i, sign in cols:
                 q[i : i + steps] -= sign * 2 * w
         try:
-            w_bar = sum(self._schedules(self._proj, self._proj.solve(q), steps).values())
+            w_bar = sum(
+                self._schedules(self._proj, self._proj.solve(q), steps).values()
+            )
             b = self._disp.b_for({self._w_bar.id: w_bar})
             x = self._disp.solve(self._disp.q0, b=b)
-        except RuntimeError:  # the solver gives up at extreme w (eq. 21, D-226): a divergence
+        except (
+            RuntimeError
+        ):  # the solver gives up at extreme w (eq. 21, D-226): a divergence
             self.diverged = True
             raise
         lam = -self._disp.z[self._rows] * self._coef
@@ -206,7 +213,9 @@ class BusActor(DiffusionActor):
         return self.fixed_cost + sum(
             storage.cost(self.units[cid], v)
             if self.units[cid].kind == STORAGE
-            else float(np.sum(self.units[cid].cost[0] * v + self.units[cid].cost[1] * v**2))
+            else float(
+                np.sum(self.units[cid].cost[0] * v + self.units[cid].cost[1] * v**2)
+            )
             for cid, v in p.items()
         )
 
@@ -233,9 +242,13 @@ def setup(params: dict, network: Network, full: Network, args):
 
     def add_roles(behavior, agents, routes):
         buses, host = list(agents.values()), leader(agents)
-        aids = [a.aid for a in buses]  # agent ids are the bus names; one entry each (D-215)
+        aids = [
+            a.aid for a in buses
+        ]  # agent ids are the bus names; one entry each (D-215)
         active = [i for i, b in enumerate(aids) if b in active_buses]
-        lossy = args.loss_rate > 0  # round deadline t0 + (k+1)·2·delay_s (as consensus C8)
+        lossy = (
+            args.loss_rate > 0
+        )  # round deadline t0 + (k+1)·2·delay_s (as consensus C8)
         coordinator = ConsensusCoordinator(
             [a.addr for a in buses],
             np.zeros(steps_n),
@@ -255,7 +268,12 @@ def setup(params: dict, network: Network, full: Network, args):
         algorithms = []
         for i, agent in enumerate(buses):
             actor = BusActor(
-                behavior, agent.aid, steps_n, params["penalty"], params["lam_abort"], trace
+                behavior,
+                agent.aid,
+                steps_n,
+                params["penalty"],
+                params["lam_abort"],
+                trace,
             )
             algorithm = DiffusionAlgorithm(
                 lambda alg, carrier: alg.actor.finish(),
@@ -283,7 +301,9 @@ def setup(params: dict, network: Network, full: Network, args):
                 "missing_edges": sum(a.missing_edges for a in algorithms),
             }
             if r is not None:
-                return Outcome(r.stop_reason, r.iterations, counts, r.time, trace.frame())
+                return Outcome(
+                    r.stop_reason, r.iterations, counts, r.time, trace.frame()
+                )
             stop = (
                 "diverged" if any(a.actor.diverged for a in algorithms) else "stalled"
             )
