@@ -5,8 +5,20 @@ import pandas as pd
 import pytest
 
 from energy_scheduling_benchmark import datasets
-from energy_scheduling_benchmark.outputs import run_dir, write_run
+from energy_scheduling_benchmark.outputs import IterationTrace, run_dir, write_run
 from energy_scheduling_benchmark.world import build_world
+
+
+def test_trace_adds_the_fixed_share_to_every_row():
+    # D-237: diffusion's uninformed buses report once; their load and cost are in every row
+    trace = IterationTrace(1, lambda: 0.0)
+    trace.add_fixed(np.array([-5.0]), 2.0)
+    for k in (0, 1):
+        trace.add(k, np.array([3.0]), 1.0, np.array([1.0]))
+    frame = trace.frame()
+    assert list(frame["imbalance_mwh"]) == [2.0, 2.0]
+    assert list(frame["shortfall_mwh"]) == [2.0, 2.0]
+    assert list(frame["cost"]) == [3.0, 3.0]
 
 
 def test_run_dir():

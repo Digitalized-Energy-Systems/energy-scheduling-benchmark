@@ -43,12 +43,14 @@ class IterationTrace:
     Q-A3, decided by Jonas: common columns + the algorithm's, recorded in the ESB actors, always
     on). Generic for every iterative algorithm (moved out of ``consensus.py``, audit fix 5).
 
-    Iteration k = the state after k updates (k = 0: the start). Every bus actor adds its mismatch,
-    its current cost and its copy of the shared *vector* the algorithm iterates on (consensus: λ);
-    a row is kept only once all *n* actors reached it. On sparse topologies the stop reaches the
-    actors at different times, so they end 1–3 iterations apart and the final schedule can lie a
-    little past the last row (toy grid: 2e-6 relative cost; Jonas 2026-11-13). ``sim_time_s`` = simulated time at which
-    the last actor got there (communication only: mango has no computation-time model)."""
+    Iteration k = the state after k updates (k = 0: the start). Every reporting actor (diffusion:
+    the active buses; the uninformed ones once via :meth:`add_fixed`) adds its mismatch, its
+    current cost and its copy of the shared *vector* the algorithm iterates on (consensus: λ);
+    a row is kept only once all *n* reporting actors reached it. On sparse topologies the stop
+    reaches the actors at different times, so they end 1–3 iterations apart and the final schedule
+    can lie a little past the last row (toy grid: 2e-6 relative cost; Jonas 2026-11-13).
+    ``sim_time_s`` = simulated time at which the last reporting actor got there (communication
+    only: mango has no computation-time model)."""
 
     def __init__(self, n: int, now, vector: str = "lambda") -> None:
         self.n, self.now, self.vector = n, now, vector

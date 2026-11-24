@@ -257,7 +257,8 @@ def setup(params: dict, network: Network, full: Network, args):
             args.loss_rate > 0
         )  # round deadline t0 + (k+1)·2·delay_s (as consensus C8)
         coordinator = ConsensusCoordinator(
-            [a.addr for a in buses],  # no lam0: periods = the measurement's (D-238)
+            [a.addr for a in buses],
+            (),  # no λ: the periods are the measurement's (D-238)
             start_latency=longest_hops(routes, aids, host.aid) * delay_s
             if lossy
             else 0.0,
