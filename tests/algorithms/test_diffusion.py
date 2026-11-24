@@ -61,6 +61,11 @@ def test_gradient_is_the_marginal_cost_inside_and_penalised_outside():
         actor.gradient(far), lam_far + 2 * 10.0 * (far - w_bar_far), rtol=1e-9
     )
     assert np.all(w_bar_far < far)
+    # at a limit λ is the marginal cost there (coal: p_min = 0 → c₁ = 50 €/MWh); np.clip put
+    # w̄ exactly on the limit, where the balance dual is not unique (audit 2026-11-24: −1424)
+    coal = diffusion.BusActor(_Observe(net, "bus1"), "bus1", len(net.time_index), 10.0)
+    _, lam_min, _ = coal._dispatch(np.zeros(len(net.time_index)))
+    np.testing.assert_allclose(lam_min, net.components["coal"].cost[0], rtol=1e-4)
 
 
 def test_printed_nudge_diverges_on_toy(tmp_path):

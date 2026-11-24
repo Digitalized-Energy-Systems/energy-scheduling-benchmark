@@ -124,6 +124,9 @@ class BusActor(DiffusionActor):
         self.p: dict[str, np.ndarray] = {}
         if self.units:
             self._build(steps)
+        # 2026-11-24 D-237: uninformed (§III-B): no gradient calls, a constant trace share
+        elif trace is not None:
+            trace.add_fixed(-self.load, self.fixed_cost)
 
     def _build(self, steps: int) -> None:
         """The projection QP (min ‖w − Σu‖², w in q) and the dispatch QP (min cost, Σu = w̄ as
@@ -142,7 +145,9 @@ class BusActor(DiffusionActor):
                 cost += c.cost[0] * cp.sum(p) + c.cost[1] * cp.sum_squares(p)
                 supply += p
                 var[cid] = [(p, 1.0)]
-        # projection at w = 0: the w-dependent part −2wᵀΣu is added to q per solve
+        # projection at w = 0: the w-dependent part −2wᵀΣu is added to q per solve. Also
+        # without storage not np.clip: w̄ exactly on a limit makes the balance dual (λ)
+        # non-unique (audit 2026-11-24: λ̄ −1424 instead of 50 €/MWh at w = 0 on the toy coal bus)
         self._proj = QP(
             cp.Problem(cp.Minimize(cp.sum_squares(supply)), cons), self.aid, almost=True
         )
@@ -193,7 +198,7 @@ class BusActor(DiffusionActor):
         lam = -self._disp.z[self._rows] * self._coef
         return self._schedules(self._disp, x, steps), lam, w_bar
 
-    def measure(self, periods: int) -> np.ndarray:
+    def measure(self) -> np.ndarray:
         return self.load
 
     def gradient(self, w: np.ndarray) -> np.ndarray:
@@ -201,10 +206,6 @@ class BusActor(DiffusionActor):
         if not np.all(np.isfinite(w)) or np.max(np.abs(w)) > 1e12:
             self.diverged = True
             raise RuntimeError(f"{self.aid}: estimate not finite (diverged)")
-        if not self.units:  # uninformed: no cost, no gradient (§III-B)
-            if self.trace is not None:
-                self.trace.add(k, -self.load, self.fixed_cost, None)
-            return np.zeros_like(w)
         p, lam, w_bar = self._dispatch(w)
         # 2026-11-23 D-231: eq. (23) — penalty only outside what the bus can produce
         g = lam + 2 * self.penalty * (w - w_bar)
@@ -256,8 +257,7 @@ def setup(params: dict, network: Network, full: Network, args):
             args.loss_rate > 0
         )  # round deadline t0 + (k+1)·2·delay_s (as consensus C8)
         coordinator = ConsensusCoordinator(
-            [a.addr for a in buses],
-            np.zeros(steps_n),
+            [a.addr for a in buses],  # no lam0: periods = the measurement's (D-238)
             start_latency=longest_hops(routes, aids, host.aid) * delay_s
             if lossy
             else 0.0,
@@ -270,7 +270,8 @@ def setup(params: dict, network: Network, full: Network, args):
                 addresses={a.aid: a.addr for a in agents.values()},
             )
         )
-        trace = IterationTrace(len(buses), lambda: host.context.current_timestamp)
+        # the active buses report per iteration, the uninformed ones once (D-237)
+        trace = IterationTrace(len(active), lambda: host.context.current_timestamp)
         algorithms = []
         for i, agent in enumerate(buses):
             actor = BusActor(
