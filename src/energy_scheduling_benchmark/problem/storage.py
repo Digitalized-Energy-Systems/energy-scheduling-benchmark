@@ -23,6 +23,12 @@ def soc(c: Component, p: np.ndarray) -> np.ndarray:
 
 
 def cost(c: Component, p: np.ndarray) -> float:
+    """Cost of the net schedule *p* (the only thing a schedule holds): c₁ on the net discharge.
+
+    2026-11-24 D-244: the optimisations charge c₁ on p_d (Xu 2018 eq. 7), which equals this unless
+    a storage charges and discharges in the same hour — never optimal with η < 1 and c₁ > 0 (Zhu
+    2025 Thm 1); central reports such hours as ``storage_simultaneous_mwh``. Charging the net in
+    the objective instead would make simultaneous charge + discharge a free surplus sink."""
     return float(c.cost[0] * np.maximum(p, 0.0).sum() + c.cost[1] * np.sum(p**2))
 
 
