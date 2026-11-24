@@ -192,7 +192,7 @@ class BusActor(DiffusionActor):
             x = self._disp.solve(self._disp.q0, b=b)
         except (
             RuntimeError
-        ):  # the solver gives up at extreme w (eq. 21, D-226): a divergence
+        ):  # the solver gives up at extreme w (e.g. a too large μ): a divergence
             self.diverged = True
             raise
         lam = -self._disp.z[self._rows] * self._coef

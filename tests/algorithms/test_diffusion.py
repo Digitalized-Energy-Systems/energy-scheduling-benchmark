@@ -69,26 +69,22 @@ def test_gradient_is_the_marginal_cost_inside_and_penalised_outside():
     np.testing.assert_allclose(lam_min, net.components["coal"].cost[0], rtol=1e-4)
 
 
-def test_printed_nudge_diverges_on_toy(tmp_path):
-    # eq. (21) as printed (D-226) with eq. (12) weights: on the toy ring (even, eigenvalue
-    # −1/3, D-241) the estimate's sum error grows as (A − D)^k until the bus QP fails — a result
-    main(
-        [
-            "--algorithm",
-            "diffusion",
-            "--tuning",
-            "paper",
-            *RING,
-            "--out",
-            str(tmp_path),
-        ]
-    )
-    assert _meta(tmp_path, "diffusion")["stop_reason"] == "diverged"
+def test_ring_reaches_central(tmp_path):
+    # D-245: eq. (21)'s deficit on φ keeps the sum exact, so the toy ring (even, eigenvalue
+    # −1/3, D-241) no longer diverges as with Σ w_i,k−1 (D-226); gap = the O(μ) offset
+    out = ["--out", str(tmp_path)]
+    main(["--algorithm", "central", *RING, *out])
+    sets = ["--set", "mu=0.005", "--set", "penalty=1000", "--set", "max_iter=4000"]
+    main(["--algorithm", "diffusion", "--tuning", "paper", *RING, *sets, *out])
+    central, run = _meta(tmp_path, "central"), _meta(tmp_path, "diffusion")
+    assert run["stop_reason"] == "max_iter" and run["iterations"] == 4000
+    assert run["total_cost"] == pytest.approx(central["total_cost"], rel=0.02)
+    assert run["imbalance"]["shortfall_mwh"] + run["imbalance"]["surplus_mwh"] < 25
 
 
 def test_lazy_weights_reach_central(tmp_path, monkeypatch):
-    # evidence that the bus dispatch, nudge and information sharing are right: with (I + A)/2
-    # (eigenvalues ≥ 0) the printed nudge is stable; the gap is the O(μ) constant-step offset
+    # evidence that the bus dispatch, nudge and information sharing are right also with lazy
+    # weights (I + A)/2 (eigenvalues ≥ 0); the gap is the O(μ) constant-step offset
     monkeypatch.setattr(dro, "metropolis", lambda n_i, n_j: 0.5 / max(n_i, n_j))
     out = ["--out", str(tmp_path)]
     main(["--algorithm", "central", *COMMON, *out])
