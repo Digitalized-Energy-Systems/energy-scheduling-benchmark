@@ -13,6 +13,7 @@ from energy_scheduling_benchmark.algorithms import diffusion
 from energy_scheduling_benchmark.run import load_network, main
 
 COMMON = ["--network", "toy", "--hours", "24", "--topology", "grid"]
+RING = ["--network", "toy", "--hours", "24", "--topology", "ring"]
 
 
 def _meta(root, algorithm: str) -> dict:
@@ -69,15 +70,15 @@ def test_gradient_is_the_marginal_cost_inside_and_penalised_outside():
 
 
 def test_printed_nudge_diverges_on_toy(tmp_path):
-    # eq. (21) as printed (D-226) with eq. (12) weights: the estimate's sum error grows as
-    # (A − I)^k until the bus QP fails — a result, "diverged"
+    # eq. (21) as printed (D-226) with eq. (12) weights: on the toy ring (even, eigenvalue
+    # −1/3, D-241) the estimate's sum error grows as (A − D)^k until the bus QP fails — a result
     main(
         [
             "--algorithm",
             "diffusion",
             "--tuning",
             "paper",
-            *COMMON,
+            *RING,
             "--out",
             str(tmp_path),
         ]
@@ -100,17 +101,16 @@ def test_lazy_weights_reach_central(tmp_path, monkeypatch):
 
 
 def test_information_sharing_never_converged_is_reported(tmp_path):
-    # toy ring = an even ring: eq. (12) has eigenvalue −1, plain averaging (μ_IS = 0) never
-    # converges, so the optimization never starts and nothing is dispatched (D-232)
-    ring = ["--network", "toy", "--hours", "24", "--topology", "ring"]
-    sets = ["--set", "mu_is=0", "--set", "max_iter=200"]
+    # max_iter ends the run before the information sharing flags converge, so the optimization
+    # never starts and nothing is dispatched (D-232; D-241's weights converge on the toy ring)
+    sets = ["--set", "mu_is=0", "--set", "max_iter=5"]
     main(
         [
             "--algorithm",
             "diffusion",
             "--tuning",
             "paper",
-            *ring,
+            *RING,
             *sets,
             "--out",
             str(tmp_path),
