@@ -43,8 +43,9 @@ from ..world import leader, longest_hops, topology_graph
 SWEEP_G = tuple(np.geomspace(0.01, 1.9, 8))
 SWEEP_PENALTY = (1.0, 100.0)
 SWEEP_MU_IS = (0.0, 0.5)
-#: no stop rule to switch off (D-221); divergence abort at the grid import price (as consensus T4)
-SWEEP_RUN = {"lam_abort": 4000.0}
+#: no stop rule to switch off (D-221) and no divergence abort: |∇F| holds the penalty term, at
+#: w⁰ = 0 already above the grid import price (2026-11-26 D-247)
+SWEEP_RUN = {}
 #: esb-tune notes the best per penalty
 VARIANT = "penalty"
 #: stop reason of a run whose information sharing never converged (no dispatch, D-232)
