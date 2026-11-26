@@ -1,7 +1,7 @@
 """Exact diffusion (Yuan et al. 2019, Alg. 1) for economic dispatch: the bus actor, its parameters
 and the benchmark wiring (``setup``; algorithm interface: :mod:`.algorithms`).
 
-Plan: ``docs/exact-diffusion-plan.md`` (S8b, D-248–D-256). The generic algorithm is DRO's
+Plan: ``docs/exact-diffusion-plan.md`` (S8b, D-248–D-257). The generic algorithm is DRO's
 ``ExactDiffusionAlgorithm`` (adapt, correct, combine with Ā = (I + A)/2, Hastings weights). Here it
 runs on the economic-dispatch dual (Ces et al. 2025 §3.4 form): every bus agent holds a price
 vector λ (€/MWh per hour) and J_k(λ) = −min_P [C_k(P) − λP] − λD_k is its (negated) dual over the
@@ -58,6 +58,7 @@ class BusActor(ExactDiffusionActor):
     """All components at one bus: the consensus bus actor seen as J_k (plan §4)."""
 
     def __init__(self, behavior, aid: str, steps: int, trace: IterationTrace) -> None:
+        # 2026-11-26 D-253: units clipped inside the λ-response (no Ces flag loop); D-256: no λ floor
         self.bus = consensus.BusActor(behavior, aid, eps_p=0.0, trace=trace)
         self.steps, self.diverged = steps, False
         self.algorithm: ExactDiffusionAlgorithm | None = None
