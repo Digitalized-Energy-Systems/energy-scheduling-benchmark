@@ -184,7 +184,7 @@ def sweep_convergence(store: Path, table: pd.DataFrame, record: dict, cands) -> 
 def sweep_grid(store: Path, table: pd.DataFrame, record: dict, cands) -> None:
     """D-160: consensus = heatmap of the worst-window score per step variant; admm = per day
     iterations and gap vs. ρ; deed_admm = the same vs. γ, one column per β (D-180, D-185);
-    diffusion = the same vs. μ (S8a)
+    diffusion and exact diffusion = the same vs. μ (S8a, S8b)
     Pruned days have no point."""
     best = chosen(record)
     if "rho" in cands or "beta" in cands or "mu" in cands:

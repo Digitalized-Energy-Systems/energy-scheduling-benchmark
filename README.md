@@ -154,6 +154,7 @@ algorithm returns at once with `stop_reason = "renewables_cover"`.
 | `admm` | exchange ADMM, Boyd et al. 2011 §7.3.2 with the surplus Σx ≥ 0 (plan `../docs/admm-exchange-plan.md`, deviations E1–E6) | `[admm]`: ρ, adaptive ρ (μ, τ), stop tolerances `eps_abs` / `eps_rel`, `max_iter` |
 | `deed_admm` | DEED-ADMM, Zhu et al. 2025 Algorithm 1, reduced to electricity: peers on the topology exchange (λ, ξ), each bus solves its units / storage / surplus sink (plan `../docs/deed-admm-plan.md`, deviations Z1–Z9) | `[deed_admm]`: β (W = I − βL), γ, stop tolerances `eps_abs` / `eps_rel`, `max_iter` |
 | `diffusion` | diffusion, de Azevedo et al. 2017: every bus holds an estimate of all buses' outputs (combine-then-adapt + the eq. 21 nudge), the net demand by information sharing alongside; a bus's gradient = the marginal cost of its exact local dispatch + the eq. 23 penalty outside what it can produce; no stop rule; a run whose information sharing never converged ends `stop_reason = "is_not_converged"` (plan `../docs/diffusion-plan.md`, deviations AZ1–AZ11) | `[diffusion]`: μ, μ_IS, penalty ηα, `eps_is`, `max_iter` (defaults are placeholders: the paper gives none) |
+| `exact_diffusion` | exact diffusion, Yuan et al. 2019 Algorithm 1 (adapt → correct → combine with Ā = (I + A)/2) on the economic-dispatch dual: every bus holds a price vector λ, its gradient = its units' answer to λ − its net load (the consensus bus actor's innovation); Hastings weights = diffusion's, one μ, λ⁰ = 0, no stop rule (plan `../docs/exact-diffusion-plan.md`, deviations XD1–XD7) | `[exact_diffusion]`: μ, `max_iter` (the μ default is a placeholder: Yuan gives none) |
 | `dummy` | merit order in the leader (first bus agent), a plumbing test | none |
 
 Parameters come in **tuning routes**, one set per network × topology (`--set key=value` overrides
@@ -170,7 +171,8 @@ any value; the route and the values used are stored in `meta.json`):
 α exponent {0.6, 0.98}; α × 1/max scaled bus sensitivity, β × 1/λ_max(L) of the bus topology;
 admm: 32 fixed ρ, log-spaced over six decades around the median 2c₂ of the thermal units;
 deed_admm: 4 β = g/λ_max(L), g ∈ {0.6, 1.0, 1.5, 1.9}, × 8 γ on admm's ρ scale, D-177, D-181;
-diffusion: 8 μ = g / the stiffest bus curvature × ηα ∈ {1, 100} × max c₂ × μ_IS ∈ {0, 0.5}, D-224) on
+diffusion: 8 μ = g / the stiffest bus curvature × ηα ∈ {1, 100} × max c₂ × μ_IS ∈ {0, 0.5}, D-224;
+exact_diffusion: 32 μ = g / the largest bus sensitivity, g log 0.01…1.9, D-254) on
 the same budget for every algorithm (`--max-iter`, default 10 000 = the runs', D-198) with the
 algorithm's own stop rule off (D-196); a consensus sweep run ends as `diverged` once |λ| > 4000 €/MWh.
 The winner follows the literature (plan S4d, `../docs/tuning-selection-plan.md`, D-194–D-199;
@@ -220,7 +222,7 @@ but not in the curve, so a curve can end below its bar.
   imbalance per tuning day; HTML every candidate, failed dashed; PDF the chosen set + the 5 best)
   and `plots/grid` (consensus: heatmap of the worst-day score per step variant, ★ chosen,
   × failed, · pruned; admm: iterations and gap per day vs. ρ; deed_admm: the same vs. γ, one
-  column per β, D-185; diffusion: the same vs. μ, its ηα / μ_IS variants in one column); per algorithm
+  column per β, D-185; diffusion: the same vs. μ, its ηα / μ_IS variants in one column; exact_diffusion: the same vs. μ); per algorithm
   `ROOT/plots/overview_<algorithm>` (chosen set's mean tuning-day gap, network × topology).
 - `esb-plot runs [ROOT]` (default `outputs`; lossless runs): `plots/gap`, `plots/effort`
   (iterations + messages) per network × day and topology, and
@@ -282,6 +284,7 @@ src/energy_scheduling_benchmark/
 │   ├── admm.py       # exchange ADMM: bus participant, sweep grid, setup
 │   ├── deed_admm.py  # DEED-ADMM: bus participant (Algorithm 1 lines 5–11, 14), sweep grid, setup
 │   ├── diffusion.py  # diffusion (de Azevedo 2017): bus actor (local dispatch, eq. 23), sweep grid, setup
+│   ├── exact_diffusion.py  # exact diffusion (Yuan 2019 Alg. 1) on the dual: bus actor (= consensus's), sweep grid, setup
 │   └── dummy.py      # dummy merit-order algorithm (test fixture), setup
 ├── tune.py       # esb-tune: parameter sweep for one algorithm × network × topology
 ├── compare.py    # esb-compare: cost gap of every run vs. its central run
