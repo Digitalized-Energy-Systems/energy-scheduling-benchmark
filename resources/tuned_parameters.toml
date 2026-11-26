@@ -58,7 +58,7 @@ mu_is = 0.0  # μ of the information sharing (eq. 13); 0 = plain averaging
 penalty = 100.0  # ηα of the penalty (eqs. 22/23), €/MW²h, as a slack in the bus QP (D-219)
 eps_is = 1e-4  # MW: the information sharing pass ends at max |Δx| ≤ eps_is (D-221)
 max_iter = 10000  # both passes; no other stop (the paper tracks forever, D-221)
-lam_abort = inf  # sweep-only divergence abort on |∇F| (as consensus)
+lam_abort = inf  # divergence abort on |∇F|; off, also in the sweep (D-247)
 
 # toy (2024-01-01, 24 h): hand-tuned 2026-11-08; κ = 0.05, γ = 4 oscillates on ring/complete
 # (α·dP/dλ at bus0 ≈ 1.75), κ = 0.03 is stable on all three; gap vs central −0.014 / −0.015 /
