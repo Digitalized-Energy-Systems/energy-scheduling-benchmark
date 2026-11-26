@@ -60,6 +60,13 @@ eps_is = 1e-4  # MW: the information sharing pass ends at max |Δx| ≤ eps_is (
 max_iter = 10000  # both passes; no other stop (the paper tracks forever, D-221)
 lam_abort = inf  # divergence abort on |∇F|; off, also in the sweep (D-247)
 
+# Exact diffusion (Yuan et al. 2019 Alg. 1 on the ED dual; docs/exact-diffusion-plan.md, D-248–D-256).
+# Yuan gives μ only as "small" (Part II Thm. 1 bound): the default is a placeholder (stable on toy,
+# μ·35 MW per €/MWh < 2), use the sweep sets [exact_diffusion.<network>.<topology>.sweep] (D-254).
+[exact_diffusion]
+mu = 0.01  # €/MWh per MW, one for all buses (D-251)
+max_iter = 10000  # no other stop (Yuan's Alg. 1 repeats forever, D-255)
+
 # toy (2024-01-01, 24 h): hand-tuned 2026-11-08; κ = 0.05, γ = 4 oscillates on ring/complete
 # (α·dP/dλ at bus0 ≈ 1.75), κ = 0.03 is stable on all three; gap vs central −0.014 / −0.015 /
 # −0.019 % (residual imbalance ≈ 0.2 MWh), 495 / 254 / 207 iterations.

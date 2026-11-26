@@ -211,6 +211,7 @@ def test_algorithm_interface(tmp_path):
         "admm",
         "deed_admm",
         "diffusion",
+        "exact_diffusion",
     }  # the tunable ones (sweep_grid)
     with pytest.raises(SystemExit, match="no parameters"):
         main(["--algorithm", "dummy", "--set", "kappa=1", "--out", str(tmp_path)])
