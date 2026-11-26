@@ -122,29 +122,33 @@ agent_scale = "capacity"
 steps = "constant"
 kappa = 0.00334
 gamma = 7.489
-note = "esb-tune (\u03b1 grid \u00d7 1/29.94 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/3.998, 3000 it.) best: constant agent_scale=capacity, kappa=0.00334, gamma=7.489 \u2014 24 h gap 2025-12-30 00:00:00: +29.4813%; 2025-04-20 00:00:00: -13.4032%; 2025-08-12 00:00:00: +34.5146%; 2025-11-02 00:00:00: +50.4547%, score 5.88e-01"
+solved = false
+note = "esb-tune (\u03b1 grid \u00d7 1/29.94 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/3.998, 10000 it.) unsuccessful: no candidate within \u03b5 0.001 on every tuning day, tier 3; best: constant agent_scale=capacity, kappa=0.00334, gamma=7.489 \u2014 24 h gap 2025-12-30 00:00:00: +50.0679%; 2025-04-20 00:00:00: +6.2878%; 2025-08-12 00:00:00: +53.1858%; 2025-11-02 00:00:00: +71.9921%, imbalance \u2264 7.9e-02, not solved"
 
 [consensus.lower_saxony_2025.grid.sweep]
 agent_scale = "capacity"
 steps = "decaying"
-alpha0 = 0.0501
+alpha0 = 0.01002
 beta0 = 0.04047
 alpha_exp = 0.6
-note = "esb-tune (\u03b1 grid \u00d7 1/29.94 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/7.413, 3000 it.) best: decaying agent_scale=capacity, alpha0=0.0501, beta0=0.04047, alpha_exp=0.6 \u2014 24 h gap 2025-12-30 00:00:00: -47.2221%; 2025-04-20 00:00:00: -62.5506%; 2025-08-12 00:00:00: -40.0821%; 2025-11-02 00:00:00: -22.7088%, score 8.05e-01 | constant agent_scale=capacity, kappa=0.00334, gamma=12.12 \u2014 24 h gap 2025-12-30 00:00:00: +53.1432%; 2025-04-20 00:00:00: +6.6209%; 2025-08-12 00:00:00: +61.6642%; 2025-11-02 00:00:00: +93.4480%, score 1.07e+00"
+solved = false
+note = "esb-tune (\u03b1 grid \u00d7 1/29.94 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/7.413, 10000 it.) unsuccessful: no candidate within \u03b5 0.001 on every tuning day, tier 3; best: decaying agent_scale=capacity, alpha0=0.01002, beta0=0.04047, alpha_exp=0.6 \u2014 24 h gap 2025-12-30 00:00:00: -35.0812%; 2025-04-20 00:00:00: -57.1236%; 2025-08-12 00:00:00: -27.8862%; 2025-11-02 00:00:00: -17.4577%, imbalance \u2264 1.6e-01, not solved | constant agent_scale=capacity, kappa=0.00334, gamma=4.039 \u2014 24 h gap 2025-12-30 00:00:00: +68.4758%; 2025-04-20 00:00:00: +11.2283%; 2025-08-12 00:00:00: +86.2128%; 2025-11-02 00:00:00: +141.9815%, imbalance \u2264 1.7e-01, not solved"
 
 [consensus.pypsa_eur_germany_100.ring.sweep]
 agent_scale = "capacity"
 steps = "constant"
 kappa = 0.0002265
 gamma = 110.4
-note = "esb-tune (\u03b1 grid \u00d7 1/441.5 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/4, 3000 it.) best: constant agent_scale=capacity, kappa=0.0002265, gamma=110.4 \u2014 24 h gap 2025-12-27 00:00:00: +7.7726%; 2025-03-28 00:00:00: +4.6384%; 2025-07-12 00:00:00: +10.2723%; 2025-10-31 00:00:00: +7.5029%, score 1.70e-01"
+solved = false
+note = "esb-tune (\u03b1 grid \u00d7 1/441.5 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/4, 10000 it.) unsuccessful: no candidate within \u03b5 0.001 on every tuning day, tier 3; best: constant agent_scale=capacity, kappa=0.0002265, gamma=110.4 \u2014 24 h gap 2025-12-27 00:00:00: +38.6827%; 2025-03-28 00:00:00: +39.9404%; 2025-07-12 00:00:00: +25.8602%; 2025-10-31 00:00:00: +38.1285%, imbalance \u2264 6.3e-02, not solved"
 
 [consensus.pypsa_eur_germany_100.grid.sweep]
 agent_scale = "capacity"
 steps = "constant"
 kappa = 0.0002265
 gamma = 42.28
-note = "esb-tune (\u03b1 grid \u00d7 1/441.5 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/10.44, 3000 it.) best: constant agent_scale=capacity, kappa=0.0002265, gamma=42.28 \u2014 24 h gap 2025-12-27 00:00:00: +13.5381%; 2025-03-28 00:00:00: +13.1095%; 2025-07-12 00:00:00: +11.3863%; 2025-10-31 00:00:00: +12.3623%, score 1.88e-01 | decaying agent_scale=capacity, alpha0=0.002265, beta0=0.02873, alpha_exp=0.6 \u2014 24 h gap 2025-12-27 00:00:00: +77.6650%; 2025-03-28 00:00:00: +63.9797%; 2025-07-12 00:00:00: +56.0671%; 2025-10-31 00:00:00: +82.6012%, score 1.12e+00"
+solved = false
+note = "esb-tune (\u03b1 grid \u00d7 1/441.5 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/10.44, 10000 it.) unsuccessful: no candidate within \u03b5 0.001 on every tuning day, tier 3; best: constant agent_scale=capacity, kappa=0.0002265, gamma=42.28 \u2014 24 h gap 2025-12-27 00:00:00: +17.2718%; 2025-03-28 00:00:00: +18.1301%; 2025-07-12 00:00:00: +14.7737%; 2025-10-31 00:00:00: +16.3539%, imbalance \u2264 5.1e-02, not solved | decaying agent_scale=capacity, alpha0=0.0006795, beta0=0.02873, alpha_exp=0.98 \u2014 24 h gap 2025-12-27 00:00:00: +1.5677%; 2025-03-28 00:00:00: +11.3733%; 2025-07-12 00:00:00: -51.7872%; 2025-10-31 00:00:00: -19.4382%, imbalance \u2264 2.6e-01, not solved"
 
 [consensus.simbench_lower_saxony.complete.sweep]
 agent_scale = "capacity"
@@ -158,35 +162,40 @@ agent_scale = "capacity"
 steps = "constant"
 kappa = 0.01002
 gamma = 0.149
-note = "esb-tune (\u03b1 grid \u00d7 1/29.94 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/67, 3000 it.) best: constant agent_scale=capacity, kappa=0.01002, gamma=0.149 \u2014 24 h gap 2025-12-30 00:00:00: +12.0810%; 2025-04-20 00:00:00: +10.0422%; 2025-08-12 00:00:00: +10.9672%; 2025-11-02 00:00:00: +15.4419%, score 1.85e-01"
+solved = false
+note = "esb-tune (\u03b1 grid \u00d7 1/29.94 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/67, 10000 it.) unsuccessful: no candidate within \u03b5 0.001 on every tuning day, tier 3; best: constant agent_scale=capacity, kappa=0.01002, gamma=0.149 \u2014 24 h gap 2025-12-30 00:00:00: +14.4651%; 2025-04-20 00:00:00: +11.7813%; 2025-08-12 00:00:00: +16.5007%; 2025-11-02 00:00:00: +17.8390%, imbalance \u2264 3.4e-02, not solved"
 
 [consensus.pypsa_eur_germany_100.complete.sweep]
 agent_scale = "capacity"
 steps = "constant"
 kappa = 0.0006795
 gamma = 1.472
-note = "esb-tune (\u03b1 grid \u00d7 1/441.5 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/100, 3000 it.) best: constant agent_scale=capacity, kappa=0.0006795, gamma=1.472 \u2014 24 h gap 2025-12-27 00:00:00: +8.8247%; 2025-03-28 00:00:00: +8.1762%; 2025-07-12 00:00:00: +10.5676%; 2025-10-31 00:00:00: +10.1708%, score 1.38e-01"
+solved = false
+note = "esb-tune (\u03b1 grid \u00d7 1/441.5 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/100, 10000 it.) unsuccessful: no candidate within \u03b5 0.001 on every tuning day, tier 3; best: constant agent_scale=capacity, kappa=0.0006795, gamma=1.472 \u2014 24 h gap 2025-12-27 00:00:00: +8.8248%; 2025-03-28 00:00:00: +8.1820%; 2025-07-12 00:00:00: +10.5678%; 2025-10-31 00:00:00: +10.1710%, imbalance \u2264 3.3e-02, not solved"
 
 [consensus.synthetic_50.ring.sweep]
 agent_scale = "capacity"
 steps = "constant"
-kappa = 0.005591
-gamma = 13.41
-note = "esb-tune (\u03b1 grid \u00d7 1/17.88 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/4, 3000 it.) best: constant agent_scale=capacity, kappa=0.005591, gamma=13.41 \u2014 24 h gap 2019-01-15 00:00:00: -0.1452%; 2019-05-03 00:00:00: +3.3431%; 2019-07-02 00:00:00: +3.8291%; 2019-10-02 00:00:00: +2.3103%, score 1.85e-01 | decaying agent_scale=capacity, alpha0=0.08387, beta0=0.075, alpha_exp=0.6 \u2014 24 h gap 2019-01-15 00:00:00: -63.1101%; 2019-05-03 00:00:00: -67.0224%; 2019-07-02 00:00:00: -70.0314%; 2019-10-02 00:00:00: -64.1994%, score 1.29e+00"
+kappa = 0.01677
+gamma = 4.472
+solved = false
+note = "esb-tune (\u03b1 grid \u00d7 1/17.88 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/4, 10000 it.) unsuccessful: no candidate within \u03b5 0.001 on every tuning day, tier 3; best: constant agent_scale=capacity, kappa=0.01677, gamma=4.472 \u2014 24 h gap 2019-01-15 00:00:00: +18.4101%; 2019-05-03 00:00:00: +22.2753%; 2019-07-02 00:00:00: +23.0429%; 2019-10-02 00:00:00: +21.3706%, imbalance \u2264 4.4e-02, not solved | decaying agent_scale=capacity, alpha0=0.08387, beta0=0.075, alpha_exp=0.6 \u2014 24 h gap 2019-01-15 00:00:00: -22.3781%; 2019-05-03 00:00:00: -22.7005%; 2019-07-02 00:00:00: -22.5823%; 2019-10-02 00:00:00: -23.6601%, imbalance \u2264 2.3e-01, not solved"
 
 [consensus.synthetic_50.grid.sweep]
 agent_scale = "capacity"
 steps = "constant"
 kappa = 0.005591
 gamma = 6.767
-note = "esb-tune (\u03b1 grid \u00d7 1/17.88 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/7.929, 3000 it.) best: constant agent_scale=capacity, kappa=0.005591, gamma=6.767 \u2014 24 h gap 2019-01-15 00:00:00: +9.7567%; 2019-05-03 00:00:00: +11.9493%; 2019-07-02 00:00:00: +12.2522%; 2019-10-02 00:00:00: +11.4700%, score 1.25e-01 | decaying agent_scale=capacity, alpha0=0.08387, beta0=0.03784, alpha_exp=0.6 \u2014 24 h gap 2019-01-15 00:00:00: -60.6472%; 2019-05-03 00:00:00: -62.8857%; 2019-07-02 00:00:00: -63.1640%; 2019-10-02 00:00:00: -63.1566%, score 1.11e+00"
+solved = false
+note = "esb-tune (\u03b1 grid \u00d7 1/17.88 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/7.929, 10000 it.) unsuccessful: no candidate within \u03b5 0.001 on every tuning day, tier 2; best: constant agent_scale=capacity, kappa=0.005591, gamma=6.767 \u2014 24 h gap 2019-01-15 00:00:00: +10.9241%; 2019-05-03 00:00:00: +12.3330%; 2019-07-02 00:00:00: +12.6355%; 2019-10-02 00:00:00: +12.0687%, imbalance \u2264 5.9e-05, not solved | decaying agent_scale=capacity, alpha0=0.08387, beta0=0.03784, alpha_exp=0.6 \u2014 24 h gap 2019-01-15 00:00:00: -43.8893%; 2019-05-03 00:00:00: -40.0856%; 2019-07-02 00:00:00: -39.2081%; 2019-10-02 00:00:00: -41.2606%, imbalance \u2264 2.6e-01, not solved"
 
 [consensus.synthetic_50.complete.sweep]
 agent_scale = "capacity"
 steps = "constant"
-kappa = 0.01677
-gamma = 0.3578
-note = "esb-tune (\u03b1 grid \u00d7 1/17.88 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/50, 3000 it.) best: constant agent_scale=capacity, kappa=0.01677, gamma=0.3578 \u2014 24 h gap 2019-01-15 00:00:00: +2.0863%; 2019-05-03 00:00:00: +1.9770%; 2019-07-02 00:00:00: +1.8147%; 2019-10-02 00:00:00: +2.3760%, score 2.39e-02 | decaying agent_scale=capacity, alpha0=0.08387, beta0=0.006, alpha_exp=0.6 \u2014 24 h gap 2019-01-15 00:00:00: -56.7605%; 2019-05-03 00:00:00: -58.0445%; 2019-07-02 00:00:00: -57.8248%; 2019-10-02 00:00:00: -58.6161%, score 1.02e+00"
+kappa = 0.005591
+gamma = 1.073
+solved = false
+note = "esb-tune (\u03b1 grid \u00d7 1/17.88 MW per \u20ac/MWh, \u03b2 grid \u00d7 1/\u03bb_max(L) = 1/50, 10000 it.) unsuccessful: no candidate within \u03b5 0.001 on every tuning day, tier 2; best: constant agent_scale=capacity, kappa=0.005591, gamma=1.073 \u2014 24 h gap 2019-01-15 00:00:00: +0.2030%; 2019-05-03 00:00:00: +0.1981%; 2019-07-02 00:00:00: +0.1762%; 2019-10-02 00:00:00: +0.1644%, imbalance \u2264 8.4e-05, not solved | decaying agent_scale=capacity, alpha0=0.08387, beta0=0.006, alpha_exp=0.6 \u2014 24 h gap 2019-01-15 00:00:00: -43.9057%; 2019-05-03 00:00:00: -39.8822%; 2019-07-02 00:00:00: -39.0160%; 2019-10-02 00:00:00: -40.8627%, imbalance \u2264 2.6e-01, not solved"
 
 [admm.synthetic_10.complete.sweep]
 adaptive = false
@@ -205,8 +214,9 @@ note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.10
 
 [admm.synthetic_50.complete.sweep]
 adaptive = false
-rho = 0.473
-note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 1.441, 3000 it.) best: False adaptive=False, rho=0.473 \u2014 24 h gap 2019-01-15 00:00:00: +0.0034%; 2019-05-03 00:00:00: +0.0039%; 2019-07-02 00:00:00: +0.0026%; 2019-10-02 00:00:00: +0.0025%, score 6.27e-05, converged within 190 it."
+rho = 0.07956
+solved = true
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 1.441, 10000 it.) solved (\u03b5 0.001); best: False adaptive=False, rho=0.07956 \u2014 24 h gap 2019-01-15 00:00:00: +0.0000%; 2019-05-03 00:00:00: -0.0000%; 2019-07-02 00:00:00: +0.0000%; 2019-10-02 00:00:00: +0.0000%, imbalance \u2264 9.2e-12, solved within 70 it."
 
 [admm.simbench_lower_saxony.complete.sweep]
 adaptive = false
@@ -215,8 +225,9 @@ note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.13
 
 [admm.synthetic_50.grid.sweep]
 adaptive = false
-rho = 0.473
-note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 1.441, 3000 it.) best: False adaptive=False, rho=0.473 \u2014 24 h gap 2019-01-15 00:00:00: +0.0034%; 2019-05-03 00:00:00: +0.0039%; 2019-07-02 00:00:00: +0.0026%; 2019-10-02 00:00:00: +0.0025%, score 6.27e-05, converged within 190 it."
+rho = 0.07956
+solved = true
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 1.441, 10000 it.) solved (\u03b5 0.001); best: False adaptive=False, rho=0.07956 \u2014 24 h gap 2019-01-15 00:00:00: +0.0000%; 2019-05-03 00:00:00: -0.0000%; 2019-07-02 00:00:00: +0.0000%; 2019-10-02 00:00:00: +0.0000%, imbalance \u2264 9.2e-12, solved within 70 it."
 
 [admm.simbench_lower_saxony.grid.sweep]
 adaptive = false
@@ -225,18 +236,21 @@ note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.13
 
 [admm.synthetic_50.ring.sweep]
 adaptive = false
-rho = 0.473
-note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 1.441, 3000 it.) best: False adaptive=False, rho=0.473 \u2014 24 h gap 2019-01-15 00:00:00: +0.0034%; 2019-05-03 00:00:00: +0.0039%; 2019-07-02 00:00:00: +0.0026%; 2019-10-02 00:00:00: +0.0025%, score 6.27e-05, converged within 190 it."
+rho = 0.07956
+solved = true
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 1.441, 10000 it.) solved (\u03b5 0.001); best: False adaptive=False, rho=0.07956 \u2014 24 h gap 2019-01-15 00:00:00: +0.0000%; 2019-05-03 00:00:00: -0.0000%; 2019-07-02 00:00:00: +0.0000%; 2019-10-02 00:00:00: +0.0000%, imbalance \u2264 9.2e-12, solved within 70 it."
 
 [admm.lower_saxony_2025.complete.sweep]
 adaptive = false
-rho = 0.702
-note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 2.139, 3000 it.) best: False adaptive=False, rho=0.702 \u2014 24 h gap 2025-12-30 00:00:00: -0.0011%; 2025-04-20 00:00:00: -0.0014%; 2025-08-12 00:00:00: -0.0018%; 2025-11-02 00:00:00: +0.0011%, score 2.21e-05, converged within 154 it."
+rho = 1.096
+solved = true
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 2.139, 10000 it.) solved (\u03b5 0.001); best: False adaptive=False, rho=1.096 \u2014 24 h gap 2025-12-30 00:00:00: +0.0000%; 2025-04-20 00:00:00: +0.0000%; 2025-08-12 00:00:00: +0.0000%; 2025-11-02 00:00:00: +0.0000%, imbalance \u2264 3.4e-10, solved within 53 it."
 
 [admm.lower_saxony_2025.grid.sweep]
 adaptive = false
-rho = 0.702
-note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 2.139, 3000 it.) best: False adaptive=False, rho=0.702 \u2014 24 h gap 2025-12-30 00:00:00: -0.0011%; 2025-04-20 00:00:00: -0.0014%; 2025-08-12 00:00:00: -0.0018%; 2025-11-02 00:00:00: +0.0011%, score 2.21e-05, converged within 154 it."
+rho = 1.096
+solved = true
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 2.139, 10000 it.) solved (\u03b5 0.001); best: False adaptive=False, rho=1.096 \u2014 24 h gap 2025-12-30 00:00:00: +0.0000%; 2025-04-20 00:00:00: +0.0000%; 2025-08-12 00:00:00: +0.0000%; 2025-11-02 00:00:00: +0.0000%, imbalance \u2264 3.4e-10, solved within 53 it."
 
 [admm.simbench_lower_saxony.ring.sweep]
 adaptive = false
@@ -245,65 +259,78 @@ note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.13
 
 [admm.pypsa_eur_germany_100.complete.sweep]
 adaptive = false
-rho = 0.02012
-note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.3644, 3000 it.) best: False adaptive=False, rho=0.02012 \u2014 24 h gap 2025-12-27 00:00:00: +0.0006%; 2025-03-28 00:00:00: -0.0008%; 2025-07-12 00:00:00: +0.0018%; 2025-10-31 00:00:00: -0.0003%, score 3.02e-05, converged within 85 it."
+rho = 0.03141
+solved = true
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.3644, 10000 it.) solved (\u03b5 0.001); best: False adaptive=False, rho=0.03141 \u2014 24 h gap 2025-12-27 00:00:00: +0.0000%; 2025-03-28 00:00:00: +0.0000%; 2025-07-12 00:00:00: -0.0000%; 2025-10-31 00:00:00: +0.0000%, imbalance \u2264 2.8e-11, solved within 38 it."
 
 [admm.lower_saxony_2025.ring.sweep]
 adaptive = false
-rho = 0.702
-note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 2.139, 3000 it.) best: False adaptive=False, rho=0.702 \u2014 24 h gap 2025-12-30 00:00:00: -0.0011%; 2025-04-20 00:00:00: -0.0014%; 2025-08-12 00:00:00: -0.0018%; 2025-11-02 00:00:00: +0.0011%, score 2.21e-05, converged within 154 it."
+rho = 1.096
+solved = true
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 2.139, 10000 it.) solved (\u03b5 0.001); best: False adaptive=False, rho=1.096 \u2014 24 h gap 2025-12-30 00:00:00: +0.0000%; 2025-04-20 00:00:00: +0.0000%; 2025-08-12 00:00:00: +0.0000%; 2025-11-02 00:00:00: +0.0000%, imbalance \u2264 3.4e-10, solved within 53 it."
 
 [admm.pypsa_eur_germany_100.grid.sweep]
 adaptive = false
-rho = 0.02012
-note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.3644, 3000 it.) best: False adaptive=False, rho=0.02012 \u2014 24 h gap 2025-12-27 00:00:00: +0.0006%; 2025-03-28 00:00:00: -0.0008%; 2025-07-12 00:00:00: +0.0018%; 2025-10-31 00:00:00: -0.0003%, score 3.02e-05, converged within 85 it."
+rho = 0.03141
+solved = true
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.3644, 10000 it.) solved (\u03b5 0.001); best: False adaptive=False, rho=0.03141 \u2014 24 h gap 2025-12-27 00:00:00: +0.0000%; 2025-03-28 00:00:00: +0.0000%; 2025-07-12 00:00:00: -0.0000%; 2025-10-31 00:00:00: +0.0000%, imbalance \u2264 2.8e-11, solved within 38 it."
 
 [admm.pypsa_eur_germany_100.ring.sweep]
 adaptive = false
-rho = 0.02012
-note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.3644, 3000 it.) best: False adaptive=False, rho=0.02012 \u2014 24 h gap 2025-12-27 00:00:00: +0.0006%; 2025-03-28 00:00:00: -0.0008%; 2025-07-12 00:00:00: +0.0018%; 2025-10-31 00:00:00: -0.0003%, score 3.02e-05, converged within 85 it."
+rho = 0.03141
+solved = true
+note = "esb-tune (\u03c1 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.3644, 10000 it.) solved (\u03b5 0.001); best: False adaptive=False, rho=0.03141 \u2014 24 h gap 2025-12-27 00:00:00: +0.0000%; 2025-03-28 00:00:00: +0.0000%; 2025-07-12 00:00:00: -0.0000%; 2025-10-31 00:00:00: +0.0000%, imbalance \u2264 2.8e-11, solved within 38 it."
 
 [deed_admm.synthetic_50.grid.sweep]
 beta = 0.2396
 gamma = 0.07465
-note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/7.929, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 1.441, 10000 it.) best: 0.2396 beta=0.2396, gamma=0.07465 \u2014 24 h gap 2019-01-15 00:00:00: +0.0000%; 2019-05-03 00:00:00: +0.0000%; 2019-07-02 00:00:00: +0.0000%; 2019-10-02 00:00:00: +0.0000%, score 8.84e-09, converged within 1848 it. | 0.1892 beta=0.1892, gamma=0.07465 \u2014 24 h gap 2019-01-15 00:00:00: +0.0000%; 2019-05-03 00:00:00: +0.0000%; 2019-07-02 00:00:00: +0.0000%; 2019-10-02 00:00:00: +0.0000%, score 7.32e-09, converged within 2775 it. | 0.07567 beta=0.07567, gamma=0.01037 \u2014 24 h gap 2019-01-15 00:00:00: +0.0000%; 2019-05-03 00:00:00: -0.0000%; 2019-07-02 00:00:00: +0.0000%; 2019-10-02 00:00:00: -0.0000%, score 4.10e-08, converged within 4652 it. | 0.1261 beta=0.1261, gamma=0.01037 \u2014 24 h gap 2019-01-15 00:00:00: -0.0000%; 2019-05-03 00:00:00: -0.0000%; 2019-07-02 00:00:00: -0.0000%; 2019-10-02 00:00:00: -0.0000%, score 1.18e-07, converged within 5198 it."
+solved = true
+note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/7.929, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 1.441, 10000 it.) solved (\u03b5 0.001); best: 0.2396 beta=0.2396, gamma=0.07465 \u2014 24 h gap 2019-01-15 00:00:00: -0.0000%; 2019-05-03 00:00:00: -0.0000%; 2019-07-02 00:00:00: -0.0000%; 2019-10-02 00:00:00: -0.0000%, imbalance \u2264 9.2e-12, solved within 333 it. | 0.07567 beta=0.07567, gamma=0.07465 \u2014 24 h gap 2019-01-15 00:00:00: +0.0000%; 2019-05-03 00:00:00: +0.0000%; 2019-07-02 00:00:00: +0.0000%; 2019-10-02 00:00:00: +0.0000%, imbalance \u2264 1.8e-08, solved within 1280 it. | 0.1261 beta=0.1261, gamma=0.07465 \u2014 24 h gap 2019-01-15 00:00:00: -0.0000%; 2019-05-03 00:00:00: -0.0000%; 2019-07-02 00:00:00: -0.0000%; 2019-10-02 00:00:00: -0.0000%, imbalance \u2264 9.2e-12, solved within 633 it. | 0.1892 beta=0.1892, gamma=0.07465 \u2014 24 h gap 2019-01-15 00:00:00: -0.0000%; 2019-05-03 00:00:00: -0.0000%; 2019-07-02 00:00:00: -0.0000%; 2019-10-02 00:00:00: -0.0000%, imbalance \u2264 9.2e-12, solved within 417 it."
 
 [deed_admm.synthetic_50.ring.sweep]
 beta = 0.475
 gamma = 0.01037
-note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/4, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 1.441, 10000 it.) best: 0.475 beta=0.475, gamma=0.01037 \u2014 24 h gap 2019-01-15 00:00:00: -0.0000%; 2019-05-03 00:00:00: -0.0000%; 2019-07-02 00:00:00: -0.0000%; 2019-10-02 00:00:00: -0.0000%, score 5.81e-08 | 0.375 beta=0.375, gamma=0.01037 \u2014 24 h gap 2019-01-15 00:00:00: -0.0000%; 2019-05-03 00:00:00: +0.0000%; 2019-07-02 00:00:00: +0.0000%; 2019-10-02 00:00:00: -0.0000%, score 6.80e-07 | 0.25 beta=0.25, gamma=0.01037 \u2014 24 h gap 2019-01-15 00:00:00: -0.0058%; 2019-05-03 00:00:00: -0.0072%; 2019-07-02 00:00:00: -0.0083%; 2019-10-02 00:00:00: -0.0067%, score 1.36e-04 | 0.15 beta=0.15, gamma=0.001441 \u2014 24 h gap 2019-01-15 00:00:00: -0.1714%; 2019-05-03 00:00:00: -0.1590%; 2019-07-02 00:00:00: -0.1699%; 2019-10-02 00:00:00: -0.3147%, score 5.55e-03"
+solved = true
+note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/4, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 1.441, 10000 it.) solved (\u03b5 0.001); best: 0.475 beta=0.475, gamma=0.01037 \u2014 24 h gap 2019-01-15 00:00:00: -0.0000%; 2019-05-03 00:00:00: -0.0000%; 2019-07-02 00:00:00: -0.0000%; 2019-10-02 00:00:00: -0.0000%, imbalance \u2264 2.2e-08, solved within 3714 it. | 0.25 beta=0.25, gamma=0.01037 \u2014 24 h gap 2019-01-15 00:00:00: -0.0058%; 2019-05-03 00:00:00: -0.0072%; 2019-07-02 00:00:00: -0.0083%; 2019-10-02 00:00:00: -0.0067%, imbalance \u2264 6.2e-05, solved within 6642 it. | 0.15 beta=0.15, gamma=0.07465 \u2014 24 h gap 2019-01-15 00:00:00: +7.4180%; 2019-05-03 00:00:00: +8.9534%; 2019-07-02 00:00:00: +9.1439%; 2019-10-02 00:00:00: +8.7847%, imbalance \u2264 1.7e-04, not solved | 0.375 beta=0.375, gamma=0.01037 \u2014 24 h gap 2019-01-15 00:00:00: -0.0000%; 2019-05-03 00:00:00: +0.0000%; 2019-07-02 00:00:00: +0.0000%; 2019-10-02 00:00:00: -0.0000%, imbalance \u2264 4.1e-07, solved within 4027 it."
 
 [deed_admm.lower_saxony_2025.ring.sweep]
 beta = 0.4753
 gamma = 0.1108
-note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/3.998, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 2.139, 10000 it.) best: 0.4753 beta=0.4753, gamma=0.1108 \u2014 24 h gap 2025-12-30 00:00:00: +0.0862%; 2025-04-20 00:00:00: +0.0636%; 2025-08-12 00:00:00: +0.0690%; 2025-11-02 00:00:00: +0.0787%, score 8.82e-04 | 0.3752 beta=0.3752, gamma=0.1108 \u2014 24 h gap 2025-12-30 00:00:00: +0.1868%; 2025-04-20 00:00:00: +0.2248%; 2025-08-12 00:00:00: +0.1862%; 2025-11-02 00:00:00: +0.2323%, score 2.46e-03 | 0.1501 beta=0.1501, gamma=0.01539 \u2014 24 h gap 2025-12-30 00:00:00: -0.1833%; 2025-04-20 00:00:00: +0.2243%; 2025-08-12 00:00:00: -0.1285%; 2025-11-02 00:00:00: -0.2029%, score 2.50e-03 | 0.2501 beta=0.2501, gamma=0.01539 \u2014 24 h gap 2025-12-30 00:00:00: -0.2609%; 2025-04-20 00:00:00: -0.1087%; 2025-08-12 00:00:00: -0.3840%; 2025-11-02 00:00:00: -0.5261%, score 5.59e-03"
+solved = true
+note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/3.998, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 2.139, 10000 it.) solved (\u03b5 0.001); best: 0.4753 beta=0.4753, gamma=0.1108 \u2014 24 h gap 2025-12-30 00:00:00: +0.0862%; 2025-04-20 00:00:00: +0.0636%; 2025-08-12 00:00:00: +0.0690%; 2025-11-02 00:00:00: +0.0787%, imbalance \u2264 9.5e-05, solved within 9225 it. | 0.1501 beta=0.1501, gamma=0.01539 \u2014 24 h gap 2025-12-30 00:00:00: -0.1833%; 2025-04-20 00:00:00: +0.2243%; 2025-08-12 00:00:00: -0.1285%; 2025-11-02 00:00:00: -0.2029%, imbalance \u2264 3.1e-04, not solved | 0.2501 beta=0.2501, gamma=0.01539 \u2014 24 h gap 2025-12-30 00:00:00: -0.2609%; 2025-04-20 00:00:00: -0.1087%; 2025-08-12 00:00:00: -0.3840%; 2025-11-02 00:00:00: -0.5261%, imbalance \u2264 3.3e-04, not solved | 0.3752 beta=0.3752, gamma=0.1108 \u2014 24 h gap 2025-12-30 00:00:00: +0.1868%; 2025-04-20 00:00:00: +0.2248%; 2025-08-12 00:00:00: +0.1862%; 2025-11-02 00:00:00: +0.2323%, imbalance \u2264 1.4e-04, not solved"
 
 [deed_admm.lower_saxony_2025.grid.sweep]
 beta = 0.2563
 gamma = 0.1108
-note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/7.413, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 2.139, 10000 it.) best: 0.2563 beta=0.2563, gamma=0.1108 \u2014 24 h gap 2025-12-30 00:00:00: +0.0320%; 2025-04-20 00:00:00: +0.0109%; 2025-08-12 00:00:00: +0.0478%; 2025-11-02 00:00:00: +0.0218%, score 4.80e-04 | 0.2024 beta=0.2024, gamma=0.01539 \u2014 24 h gap 2025-12-30 00:00:00: -0.3230%; 2025-04-20 00:00:00: -0.1629%; 2025-08-12 00:00:00: -0.4627%; 2025-11-02 00:00:00: -0.5896%, score 6.26e-03 | 0.1349 beta=0.1349, gamma=0.01539 \u2014 24 h gap 2025-12-30 00:00:00: -0.3254%; 2025-04-20 00:00:00: -0.1592%; 2025-08-12 00:00:00: -0.4569%; 2025-11-02 00:00:00: -0.6313%, score 6.71e-03 | 0.08094 beta=0.08094, gamma=0.01539 \u2014 24 h gap 2025-12-30 00:00:00: -0.2662%; 2025-04-20 00:00:00: -0.0897%; 2025-08-12 00:00:00: -0.3586%; 2025-11-02 00:00:00: -2.9189%, score 3.26e-02"
+solved = true
+note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/7.413, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 2.139, 10000 it.) solved (\u03b5 0.001); best: 0.2563 beta=0.2563, gamma=0.1108 \u2014 24 h gap 2025-12-30 00:00:00: +0.0320%; 2025-04-20 00:00:00: +0.0109%; 2025-08-12 00:00:00: +0.0478%; 2025-11-02 00:00:00: +0.0218%, imbalance \u2264 8.2e-06, solved within 7060 it. | 0.08094 beta=0.08094, gamma=0.01539 \u2014 24 h gap 2025-12-30 00:00:00: -0.2662%; 2025-04-20 00:00:00: -0.0897%; 2025-08-12 00:00:00: -0.3586%; 2025-11-02 00:00:00: -2.9189%, imbalance \u2264 3.4e-03, not solved | 0.1349 beta=0.1349, gamma=0.01539 \u2014 24 h gap 2025-12-30 00:00:00: -0.3254%; 2025-04-20 00:00:00: -0.1592%; 2025-08-12 00:00:00: -0.4569%; 2025-11-02 00:00:00: -0.6313%, imbalance \u2264 4.0e-04, not solved | 0.2024 beta=0.2024, gamma=0.01539 \u2014 24 h gap 2025-12-30 00:00:00: -0.3230%; 2025-04-20 00:00:00: -0.1629%; 2025-08-12 00:00:00: -0.4627%; 2025-11-02 00:00:00: -0.5896%, imbalance \u2264 3.6e-04, not solved"
 
 [deed_admm.pypsa_eur_germany_100.ring.sweep]
 beta = 0.475
 gamma = 0.002623
-note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/4, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.3644, 10000 it.) best: 0.475 beta=0.475, gamma=0.002623 \u2014 24 h gap 2025-12-27 00:00:00: +0.0560%; 2025-03-28 00:00:00: -0.0582%; 2025-07-12 00:00:00: +0.0530%; 2025-10-31 00:00:00: +0.0947%, score 1.12e-03 | 0.375 beta=0.375, gamma=0.002623 \u2014 24 h gap 2025-12-27 00:00:00: +0.3502%; 2025-03-28 00:00:00: +0.0751%; 2025-07-12 00:00:00: +0.4693%; 2025-10-31 00:00:00: +0.5568%, score 5.82e-03 | 0.25 beta=0.25, gamma=0.002623 \u2014 24 h gap 2025-12-27 00:00:00: +1.5557%; 2025-03-28 00:00:00: +1.0483%; 2025-07-12 00:00:00: +1.4568%; 2025-10-31 00:00:00: +2.0374%, score 2.07e-02 | 0.15 beta=0.15, gamma=0.002623 \u2014 24 h gap 2025-12-27 00:00:00: +3.5732%; 2025-03-28 00:00:00: +3.2496%; 2025-07-12 00:00:00: +3.0046%; 2025-10-31 00:00:00: +4.1473%, score 4.17e-02"
+solved = true
+note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/4, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.3644, 10000 it.) solved (\u03b5 0.001); best: 0.475 beta=0.475, gamma=0.002623 \u2014 24 h gap 2025-12-27 00:00:00: +0.0560%; 2025-03-28 00:00:00: -0.0582%; 2025-07-12 00:00:00: +0.0530%; 2025-10-31 00:00:00: +0.0947%, imbalance \u2264 1.7e-04, solved within 9334 it. | 0.15 beta=0.15, gamma=0.002623 \u2014 24 h gap 2025-12-27 00:00:00: +3.5732%; 2025-03-28 00:00:00: +3.2496%; 2025-07-12 00:00:00: +3.0046%; 2025-10-31 00:00:00: +4.1473%, imbalance \u2264 1.0e-03, not solved | 0.25 beta=0.25, gamma=0.002623 \u2014 24 h gap 2025-12-27 00:00:00: +1.5557%; 2025-03-28 00:00:00: +1.0483%; 2025-07-12 00:00:00: +1.4568%; 2025-10-31 00:00:00: +2.0374%, imbalance \u2264 3.4e-04, not solved | 0.375 beta=0.375, gamma=0.002623 \u2014 24 h gap 2025-12-27 00:00:00: +0.3502%; 2025-03-28 00:00:00: +0.0751%; 2025-07-12 00:00:00: +0.4693%; 2025-10-31 00:00:00: +0.5568%, imbalance \u2264 2.9e-04, not solved"
 
 [deed_admm.synthetic_50.complete.sweep]
-beta = 0.038
+beta = 0.02
 gamma = 0.07465
-note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/50, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 1.441, 10000 it.) best: 0.038 beta=0.038, gamma=0.07465 \u2014 24 h gap 2019-01-15 00:00:00: +0.0000%; 2019-05-03 00:00:00: +0.0000%; 2019-07-02 00:00:00: +0.0000%; 2019-10-02 00:00:00: +0.0000%, score 1.52e-07, converged within 774 it. | 0.012 beta=0.012, gamma=0.07465 \u2014 24 h gap 2019-01-15 00:00:00: +0.0000%; 2019-05-03 00:00:00: +0.0000%; 2019-07-02 00:00:00: +0.0000%; 2019-10-02 00:00:00: -0.0000%, score 5.38e-08, converged within 933 it. | 0.02 beta=0.02, gamma=0.07465 \u2014 24 h gap 2019-01-15 00:00:00: +0.0000%; 2019-05-03 00:00:00: +0.0000%; 2019-07-02 00:00:00: +0.0000%; 2019-10-02 00:00:00: -0.0000%, score 7.99e-08, converged within 847 it. | 0.03 beta=0.03, gamma=0.07465 \u2014 24 h gap 2019-01-15 00:00:00: +0.0000%; 2019-05-03 00:00:00: +0.0000%; 2019-07-02 00:00:00: +0.0000%; 2019-10-02 00:00:00: +0.0000%, score 1.29e-07, converged within 778 it."
+solved = true
+note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/50, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 1.441, 10000 it.) solved (\u03b5 0.001); best: 0.02 beta=0.02, gamma=0.07465 \u2014 24 h gap 2019-01-15 00:00:00: -0.0000%; 2019-05-03 00:00:00: -0.0000%; 2019-07-02 00:00:00: -0.0000%; 2019-10-02 00:00:00: -0.0000%, imbalance \u2264 9.2e-12, solved within 213 it. | 0.012 beta=0.012, gamma=0.07465 \u2014 24 h gap 2019-01-15 00:00:00: -0.0000%; 2019-05-03 00:00:00: -0.0000%; 2019-07-02 00:00:00: -0.0000%; 2019-10-02 00:00:00: -0.0000%, imbalance \u2264 9.2e-12, solved within 225 it. | 0.03 beta=0.03, gamma=0.07465 \u2014 24 h gap 2019-01-15 00:00:00: -0.0000%; 2019-05-03 00:00:00: -0.0000%; 2019-07-02 00:00:00: -0.0000%; 2019-10-02 00:00:00: -0.0000%, imbalance \u2264 9.2e-12, solved within 223 it. | 0.038 beta=0.038, gamma=0.07465 \u2014 24 h gap 2019-01-15 00:00:00: -0.0000%; 2019-05-03 00:00:00: -0.0000%; 2019-07-02 00:00:00: -0.0000%; 2019-10-02 00:00:00: -0.0000%, imbalance \u2264 9.2e-12, solved within 226 it."
 
 [deed_admm.pypsa_eur_germany_100.grid.sweep]
 beta = 0.1436
 gamma = 0.01888
-note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/10.44, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.3644, 10000 it.) best: 0.1436 beta=0.1436, gamma=0.01888 \u2014 24 h gap 2025-12-27 00:00:00: -0.0023%; 2025-03-28 00:00:00: -0.0032%; 2025-07-12 00:00:00: -0.0033%; 2025-10-31 00:00:00: -0.0024%, score 3.37e-05 | 0.182 beta=0.182, gamma=0.01888 \u2014 24 h gap 2025-12-27 00:00:00: -0.0032%; 2025-03-28 00:00:00: -0.0033%; 2025-07-12 00:00:00: -0.0034%; 2025-10-31 00:00:00: -0.0036%, score 3.62e-05 | 0.09576 beta=0.09576, gamma=0.01888 \u2014 24 h gap 2025-12-27 00:00:00: +0.0057%; 2025-03-28 00:00:00: +0.0009%; 2025-07-12 00:00:00: +0.0017%; 2025-10-31 00:00:00: +0.0020%, score 5.85e-05 | 0.05746 beta=0.05746, gamma=0.01888 \u2014 24 h gap 2025-12-27 00:00:00: +0.2134%; 2025-03-28 00:00:00: +0.0953%; 2025-07-12 00:00:00: +0.1476%; 2025-10-31 00:00:00: +0.1475%, score 2.14e-03"
+solved = true
+note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/10.44, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.3644, 10000 it.) solved (\u03b5 0.001); best: 0.1436 beta=0.1436, gamma=0.01888 \u2014 24 h gap 2025-12-27 00:00:00: -0.0023%; 2025-03-28 00:00:00: -0.0032%; 2025-07-12 00:00:00: -0.0033%; 2025-10-31 00:00:00: -0.0024%, imbalance \u2264 1.6e-06, solved within 1909 it. | 0.09576 beta=0.09576, gamma=0.01888 \u2014 24 h gap 2025-12-27 00:00:00: +0.0057%; 2025-03-28 00:00:00: +0.0009%; 2025-07-12 00:00:00: +0.0017%; 2025-10-31 00:00:00: +0.0020%, imbalance \u2264 2.6e-06, solved within 4836 it. | 0.05746 beta=0.05746, gamma=0.01888 \u2014 24 h gap 2025-12-27 00:00:00: +0.2134%; 2025-03-28 00:00:00: +0.0953%; 2025-07-12 00:00:00: +0.1476%; 2025-10-31 00:00:00: +0.1475%, imbalance \u2264 4.8e-06, not solved | 0.182 beta=0.182, gamma=0.01888 \u2014 24 h gap 2025-12-27 00:00:00: -0.0024%; 2025-03-28 00:00:00: -0.0033%; 2025-07-12 00:00:00: -0.0034%; 2025-10-31 00:00:00: -0.0025%, imbalance \u2264 1.5e-06, solved within 2357 it."
 
 [deed_admm.lower_saxony_2025.complete.sweep]
-beta = 0.02836
+beta = 0.008955
 gamma = 0.7974
-note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/67, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 2.139, 10000 it.) best: 0.02836 beta=0.02836, gamma=0.7974 \u2014 24 h gap 2025-12-30 00:00:00: -0.0011%; 2025-04-20 00:00:00: -0.0000%; 2025-08-12 00:00:00: -0.0005%; 2025-11-02 00:00:00: -0.0000%, score 1.10e-05, converged within 3400 it. | 0.008955 beta=0.008955, gamma=0.7974 \u2014 24 h gap 2025-12-30 00:00:00: -0.0010%; 2025-04-20 00:00:00: -0.0000%; 2025-08-12 00:00:00: -0.0004%; 2025-11-02 00:00:00: -0.0000%, score 1.00e-05, converged within 5028 it. | 0.01493 beta=0.01493, gamma=0.7974 \u2014 24 h gap 2025-12-30 00:00:00: -0.0011%; 2025-04-20 00:00:00: -0.0000%; 2025-08-12 00:00:00: -0.0004%; 2025-11-02 00:00:00: -0.0000%, score 1.06e-05, converged within 4232 it. | 0.02239 beta=0.02239, gamma=0.7974 \u2014 24 h gap 2025-12-30 00:00:00: -0.0011%; 2025-04-20 00:00:00: -0.0000%; 2025-08-12 00:00:00: -0.0004%; 2025-11-02 00:00:00: -0.0000%, score 1.08e-05, converged within 3609 it."
+solved = true
+note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/67, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 2.139, 10000 it.) solved (\u03b5 0.001); best: 0.008955 beta=0.008955, gamma=0.7974 \u2014 24 h gap 2025-12-30 00:00:00: -0.0002%; 2025-04-20 00:00:00: -0.0000%; 2025-08-12 00:00:00: -0.0000%; 2025-11-02 00:00:00: -0.0000%, imbalance \u2264 1.3e-09, solved within 437 it. | 0.01493 beta=0.01493, gamma=0.7974 \u2014 24 h gap 2025-12-30 00:00:00: -0.0002%; 2025-04-20 00:00:00: -0.0000%; 2025-08-12 00:00:00: -0.0000%; 2025-11-02 00:00:00: -0.0000%, imbalance \u2264 1.6e-09, solved within 452 it. | 0.02239 beta=0.02239, gamma=0.7974 \u2014 24 h gap 2025-12-30 00:00:00: -0.0002%; 2025-04-20 00:00:00: -0.0000%; 2025-08-12 00:00:00: -0.0000%; 2025-11-02 00:00:00: -0.0000%, imbalance \u2264 1.6e-09, solved within 458 it. | 0.02836 beta=0.02836, gamma=0.7974 \u2014 24 h gap 2025-12-30 00:00:00: -0.0002%; 2025-04-20 00:00:00: -0.0000%; 2025-08-12 00:00:00: -0.0000%; 2025-11-02 00:00:00: -0.0000%, imbalance \u2264 1.6e-09, solved within 455 it."
 
 [deed_admm.pypsa_eur_germany_100.complete.sweep]
-beta = 0.019
+beta = 0.006
 gamma = 0.1358
-note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/100, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.3644, 10000 it.) best: 0.019 beta=0.019, gamma=0.1358 \u2014 24 h gap 2025-12-27 00:00:00: -0.0083%; 2025-03-28 00:00:00: -0.0000%; 2025-07-12 00:00:00: +0.0000%; 2025-10-31 00:00:00: -0.0072%, score 8.33e-05, converged within 7869 it. | 0.006 beta=0.006, gamma=0.9776 \u2014 24 h gap 2025-12-27 00:00:00: +0.0004%; 2025-03-28 00:00:00: +0.0021%; 2025-07-12 00:00:00: +0.0020%; 2025-10-31 00:00:00: +0.0005%, score 2.13e-05 | 0.01 beta=0.01, gamma=0.1358 \u2014 24 h gap 2025-12-27 00:00:00: -0.0056%; 2025-03-28 00:00:00: -0.0000%; 2025-07-12 00:00:00: +0.0000%; 2025-10-31 00:00:00: -0.0059%, score 5.93e-05, converged within 9806 it. | 0.015 beta=0.015, gamma=0.1358 \u2014 24 h gap 2025-12-27 00:00:00: -0.0065%; 2025-03-28 00:00:00: -0.0000%; 2025-07-12 00:00:00: +0.0000%; 2025-10-31 00:00:00: -0.0070%, score 7.04e-05, converged within 8581 it."
+solved = true
+note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/100, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.3644, 10000 it.) solved (\u03b5 0.001); best: 0.006 beta=0.006, gamma=0.1358 \u2014 24 h gap 2025-12-27 00:00:00: -0.0000%; 2025-03-28 00:00:00: -0.0000%; 2025-07-12 00:00:00: +0.0000%; 2025-10-31 00:00:00: -0.0000%, imbalance \u2264 3.3e-09, solved within 276 it. | 0.01 beta=0.01, gamma=0.1358 \u2014 24 h gap 2025-12-27 00:00:00: -0.0000%; 2025-03-28 00:00:00: -0.0000%; 2025-07-12 00:00:00: +0.0000%; 2025-10-31 00:00:00: -0.0000%, imbalance \u2264 2.8e-09, solved within 304 it. | 0.015 beta=0.015, gamma=0.1358 \u2014 24 h gap 2025-12-27 00:00:00: -0.0000%; 2025-03-28 00:00:00: -0.0000%; 2025-07-12 00:00:00: +0.0000%; 2025-10-31 00:00:00: -0.0000%, imbalance \u2264 2.7e-09, solved within 306 it. | 0.019 beta=0.019, gamma=0.1358 \u2014 24 h gap 2025-12-27 00:00:00: -0.0000%; 2025-03-28 00:00:00: -0.0000%; 2025-07-12 00:00:00: +0.0000%; 2025-10-31 00:00:00: -0.0000%, imbalance \u2264 2.7e-09, solved within 307 it."
