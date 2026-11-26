@@ -76,9 +76,9 @@ class BusActor(ExactDiffusionActor):
             raise
 
     def finish(self) -> None:
-        # the units' answer to the final λ (the last gradient was at the round before)
-        lam = self.algorithm.w
-        self.bus.p = {cid: f(lam) for cid, f in self.bus.respond.items()}
+        # review 2026-11-26: the units' answer to the final λ, also as the trace's last row (the
+        # last gradient was at the round before; as consensus D-243)
+        self.gradient(self.algorithm.w)
         self.bus.finish()
 
 

@@ -37,6 +37,12 @@ def test_toy_reaches_central(tmp_path, topology):
     assert run["stop_reason"] == "max_iter" and run["iterations"] == 4000
     assert run["total_cost"] == pytest.approx(central["total_cost"], rel=1e-6)
     assert run["imbalance"]["shortfall_mwh"] + run["imbalance"]["surplus_mwh"] < 1e-4
+    # the trace ends at the reported schedule: rows 0 … max_iter, the last = the final λ's answer
+    folder = next(tmp_path.glob("toy/exact_diffusion/*"))
+    last = (folder / "trace.csv").read_text().splitlines()[-1].split(",")
+    assert int(last[0]) == 4000
+    assert float(last[3]) == pytest.approx(run["imbalance"]["shortfall_mwh"], abs=1e-9)
+    assert float(last[4]) == pytest.approx(run["imbalance"]["surplus_mwh"], abs=1e-9)
 
 
 def test_gradient_is_the_innovation():
