@@ -51,7 +51,7 @@ AGENT_SCALES = ("none", "capacity")
 
 def agent_factors(network: Network, agent_scale: str) -> dict[str, float]:
     """Per-bus step factor s_j: each bus agent runs with s_j·α_i and s_j·β_i (S3,
-    `docs/per-agent-steps-plan.md`, deviation C2b — KH12/HKW15 use one α, β for all agents).
+    D-089, deviation C2b — KH12/HKW15 use one α, β for all agents).
 
     "capacity": s_j = median / Σ p_nom of bus j's dispatchable units (not pre-dispatched), so the
     median bus keeps the tuned values; buses without such units get the median factor. α and β

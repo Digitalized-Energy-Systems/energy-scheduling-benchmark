@@ -185,7 +185,7 @@ whatever its gap, with `solved = true|false` and a `note` ("solved" or "unsucces
 gap per window); nothing is written if every candidate fails. Use `--no-write` for trial sweeps and check
 `git diff resources/tuned_parameters.toml` after a real one.
 
-Every sweep run is kept for plots (S4b, D-147–D-152, `../docs/sweep-records-plan.md`):
+Every sweep run is kept for plots (S4b, D-147–D-152):
 `<--out, default outputs/sweeps>/<algorithm>/<network>/<topology>_[no]storage/` (a re-sweep
 replaces it only with `--replace`, else esb-tune stops — D-154) holds `central_<day>/` and `<candidate>_<day>/` (normal run output:
 `meta.json` = end result, `trace.csv` = convergence curve), `sweep.csv` (one row per candidate ×
@@ -195,7 +195,7 @@ gap, `imbalance` (/ demand), score (= |gap| + imbalance, for the figures), sim/w
 `sweep.json` (args, central cost per day, `eps`, best per variant, chosen set, `tier`, `solved`). Gap curve = trace `cost` / central
 `total_cost` − 1. ROSA's come back with `./hpc.sh pull` into `../hpc-results/sweeps/`.
 
-Per-agent steps (`agent_scale`, decided 2026-11-11, `../docs/per-agent-steps-plan.md`): `"none"`
+Per-agent steps (`agent_scale`, decided 2026-11-11, S3, D-089, deviation C2b): `"none"`
 (default, the paper route) = one α, β for all agents as in the papers; `"capacity"` (sweep sets) =
 each bus runs with s_j·α and s_j·β, s_j = median / the bus's dispatchable capacity, so big buses
 take smaller steps (both scaled together: the optimum stays the papers' one); the factors always
