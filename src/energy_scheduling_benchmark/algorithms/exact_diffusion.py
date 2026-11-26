@@ -33,7 +33,8 @@ from ..world import leader, longest_hops
 from . import consensus
 
 #: 2026-11-26 D-254: esb-tune grid, 32 μ = g / the largest bus sensitivity Σ 1/(2c₂) (MW per
-#: €/MWh), g log-spaced 0.01…1.9 (Yuan Part II Lemma 6: stable for μσ² < 2)
+#: €/MWh), g log-spaced 0.01…1.9 — μ·σ² < 2 by analogy with Yuan Part II Lemma 6 (a 2-agent
+#: equal-Hessian example, no general bound; review 2026-11-26)
 SWEEP_G = tuple(np.geomspace(0.01, 1.9, 32))
 #: no stop rule to switch off (D-255) and no divergence abort (as diffusion, D-247)
 SWEEP_RUN = {}

@@ -20,7 +20,7 @@ def test_sweep_grid_has_32_step_sizes():
     grid, note = exact_diffusion.sweep_grid(net, net, "grid")
     mus = [c["mu"] for c in grid]
     assert len(grid) == 32 and set(grid[0]) == {"mu"} and mus == sorted(mus)
-    # Lemma 6: μσ² < 2 at the stiffest toy bus (35 MW per €/MWh)
+    # μσ² < 2 at the stiffest toy bus (35 MW per €/MWh), the grid's scale (cf. Lemma 6)
     assert mus[-1] * 35.15 < 2
 
 
