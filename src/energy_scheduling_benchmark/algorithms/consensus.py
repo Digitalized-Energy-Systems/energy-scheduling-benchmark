@@ -88,15 +88,26 @@ def max_sensitivity(network, agent_scale: str = "none", full=None) -> float:
     return max(factors[b] * v for b, v in per_bus.items())
 
 
-def laplacian_max(network: Network, topology: str) -> float:
-    """Largest Laplacian eigenvalue of the bus agents' topology; the consensus term is stable only
-    for β < 2 / it. 1 for a one-bus network (its spectrum is 0)."""
+def laplacian_max(
+    network: Network, topology: str, factors: dict[str, float] | None = None
+) -> float:
+    """Largest eigenvalue of the bus agents' Laplacian L — with per-bus step *factors* s_j of
+    S·L (S = diag(s_j)): bus j's consensus step is s_j·β, so the term is stable only for
+    β < 2 / it. 1 for a one-bus network (its spectrum is 0)."""
     graph = topology_graph(network, topology)
-    return float(nx.laplacian_spectrum(graph).max()) or 1.0
+    if factors is None:
+        return float(nx.laplacian_spectrum(graph).max()) or 1.0
+    # 2026-11-27 D-265: S·L is similar to S^½ L S^½ (symmetric, the same eigenvalues)
+    nodes = list(graph.nodes)
+    lap = nx.laplacian_matrix(graph, nodelist=nodes).toarray().astype(float)
+    r = np.sqrt([factors[b] for b in nodes])
+    return float(np.linalg.eigvalsh(r[:, None] * lap * r[None, :]).max()) or 1.0
 
 
 #: esb-tune grid (audit 2026-11-12, Q-A1 T5/T6; 32 candidates per algorithm, Q-A5): α₀ and κ are
-#: factors of 1 / max_sensitivity, β₀ and β = κ·γ factors of 1 / laplacian_max.
+#: factors of 1 / max_sensitivity, β₀ and β = κ·γ factors of 1 / laplacian_max — of S·L with the
+#: per-bus factors (2026-11-27 D-265, plan T1 level 1: was λ_max(L), 4–36× too large; Sivaprasad et
+#: al. 2020 §4.2).
 SWEEP_ALPHA = (0.1, 0.3, 1.0, 1.5)
 SWEEP_BETA_CONSTANT = (0.1, 0.3, 1.0, 1.5)
 SWEEP_BETA_DECAYING = (0.3, 1.0)
@@ -117,7 +128,7 @@ def sweep_grid(
     """esb-tune candidates (per-agent steps, S3 Q-A3) and a note on their scaling; *full* = the
     network with storage (per-agent factors)."""
     sens = max_sensitivity(network, "capacity", full)
-    lmax = laplacian_max(network, topology)
+    lmax = laplacian_max(network, topology, agent_factors(full, "capacity"))  # D-265
 
     def r(v: float) -> float:
         return float(f"{v:.4g}")
@@ -142,7 +153,7 @@ def sweep_grid(
         for a in SWEEP_ALPHA
         for g in SWEEP_BETA_CONSTANT
     ]
-    note = f"α grid × 1/{sens:.4g} MW per €/MWh, β grid × 1/λ_max(L) = 1/{lmax:.4g}"
+    note = f"α grid × 1/{sens:.4g} MW per €/MWh, β grid × 1/λ_max(S·L) = 1/{lmax:.4g}"
     return decaying + constant, note
 
 

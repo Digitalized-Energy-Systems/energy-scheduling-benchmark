@@ -168,7 +168,8 @@ any value; the route and the values used are stored in `meta.json`):
 
 `esb-tune --network N --topology T --start DAY … [--jobs N] [--no-write] [--replace] [--no-pilot] [--pilot-iter N]` sweeps the algorithm's
 `sweep_grid` (32 candidates per algorithm; consensus: constant 4 κ × 4 β, decaying 4 α₀ × 2 β₀ ×
-α exponent {0.6, 0.98}; α × 1/max scaled bus sensitivity, β × 1/λ_max(L) of the bus topology;
+α exponent {0.6, 0.98}; α × 1/max scaled bus sensitivity, β × 1/λ_max(S·L) of the bus topology
+weighted by the per-bus factors (D-265);
 admm: 32 fixed ρ, log-spaced over six decades around the median 2c₂ of the thermal units;
 deed_admm: 4 β = g/λ_max(L), g ∈ {0.6, 1.0, 1.5, 1.9}, × 8 γ on admm's ρ scale, D-177, D-181;
 diffusion: 8 μ = g / L_eff, L_eff = max(stiffest bus curvature, 2ηα), × ηα ∈ {1, 100} × max c₂ × μ_IS ∈ {0, 0.5},

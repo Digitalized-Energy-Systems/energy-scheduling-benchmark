@@ -6,7 +6,7 @@ import tomllib
 import pandas as pd
 import pytest
 
-from energy_scheduling_benchmark import parameters, tune
+from energy_scheduling_benchmark import datasets, parameters, tune
 from energy_scheduling_benchmark.algorithms import admm, consensus, deed_admm
 
 
@@ -50,13 +50,15 @@ def _grid(monkeypatch, alpha, beta, decaying=True):
 
 def test_sweep_picks_a_converged_candidate(monkeypatch, capsys):
     # toy max scaled bus dP/dλ = 0.75 · 35.15 (bus0, S3) → κ = 1.2/26.36 stable, 8/26.36 oscillates
-    # ring of 4 buses: λ_max(L) = 4, β = 0.73/4 ≈ 4·κ as before; β = 4.8/4 > 2/λ_max diverges
-    # → λ abort (T4)
+    # ring of 4 buses: β = 0.73/λ_max(S·L) (D-265: per-bus factors s_j, was λ_max(L) = 4);
+    # β = 4.8/λ_max(S·L) > 2/λ_max diverges → λ abort (T4)
     _grid(monkeypatch, (1.2, 8), (0.73, 4.8))
     best = tune.sweep(_args())
     assert best["steps"] == "constant" and best["agent_scale"] == "capacity"
     assert best["kappa"] == pytest.approx(1.2 / (0.75 * 35.15), rel=1e-3)
-    assert best["gamma"] * best["kappa"] == pytest.approx(0.73 / 4, rel=1e-3)
+    toy = datasets.load("toy")
+    lsl = consensus.laplacian_max(toy, "ring", consensus.agent_factors(toy, "capacity"))
+    assert best["gamma"] * best["kappa"] == pytest.approx(0.73 / lsl, rel=1e-3)
     assert "best: constant" in best["note"]
     assert "diverged" in capsys.readouterr().out
 

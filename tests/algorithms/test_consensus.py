@@ -106,7 +106,15 @@ def test_sweep_grid_toy():
         0.6,
         0.98,
     }
-    assert "λ_max(L)" in note
+    assert "λ_max(S·L)" in note
+    # D-265: with per-bus factors s_j the consensus step is s_j·β → the bound is λ_max(S·L);
+    # all s_j = 1 gives λ_max(L) back, and every β of the grid stays below 1.5 / λ_max(S·L)
+    ones = dict.fromkeys(consensus.agent_factors(toy, "capacity"), 1.0)
+    assert consensus.laplacian_max(toy, "grid", ones) == pytest.approx(2 + 2**0.5)
+    lsl = consensus.laplacian_max(toy, "grid", consensus.agent_factors(toy, "capacity"))
+    betas = [c["beta0"] for c in candidates if c["steps"] == "decaying"]
+    betas += [c["kappa"] * c["gamma"] for c in candidates if c["steps"] == "constant"]
+    assert max(betas) * lsl <= 1.5 * 1.01
 
 
 def test_agent_factors_toy():
