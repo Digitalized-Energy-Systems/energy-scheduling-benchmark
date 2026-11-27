@@ -341,3 +341,38 @@ beta = 0.006
 gamma = 0.1358
 solved = true
 note = "esb-tune (\u03b2 grid \u00d7 1/\u03bb_max(L) = 1/100, \u03b3 log grid \u00d710^\u00b13 around median 2c\u2082 = 0.3644, 10000 it.) solved (\u03b5 0.001); best: 0.006 beta=0.006, gamma=0.1358 \u2014 24 h gap 2025-12-27 00:00:00: -0.0000%; 2025-03-28 00:00:00: -0.0000%; 2025-07-12 00:00:00: +0.0000%; 2025-10-31 00:00:00: -0.0000%, imbalance \u2264 3.3e-09, solved within 276 it. | 0.01 beta=0.01, gamma=0.1358 \u2014 24 h gap 2025-12-27 00:00:00: -0.0000%; 2025-03-28 00:00:00: -0.0000%; 2025-07-12 00:00:00: +0.0000%; 2025-10-31 00:00:00: -0.0000%, imbalance \u2264 2.8e-09, solved within 304 it. | 0.015 beta=0.015, gamma=0.1358 \u2014 24 h gap 2025-12-27 00:00:00: -0.0000%; 2025-03-28 00:00:00: -0.0000%; 2025-07-12 00:00:00: +0.0000%; 2025-10-31 00:00:00: -0.0000%, imbalance \u2264 2.7e-09, solved within 306 it. | 0.019 beta=0.019, gamma=0.1358 \u2014 24 h gap 2025-12-27 00:00:00: -0.0000%; 2025-03-28 00:00:00: -0.0000%; 2025-07-12 00:00:00: +0.0000%; 2025-10-31 00:00:00: -0.0000%, imbalance \u2264 2.7e-09, solved within 307 it."
+
+[diffusion.synthetic_50.ring.sweep]
+mu = 0.005521
+penalty = 107.5
+mu_is = 0.5
+solved = false
+note = "esb-tune (\u03bc grid \u00d7 1/1.811 \u20ac/MWh per MW (stiffest bus), \u03b7\u03b1 \u2208 (1.0, 100.0) \u00d7 max c\u2082 = 1.075, 10000 it.) unsuccessful: no candidate within \u03b5 0.001 on every tuning day, tier 3; best: 107.5 mu=0.005521, penalty=107.5, mu_is=0.5 \u2014 24 h gap 2019-01-15 00:00:00: +5.1816%; 2019-05-03 00:00:00: +7.6969%; 2019-07-02 00:00:00: +8.1499%; 2019-10-02 00:00:00: +7.3496%, imbalance \u2264 4.5e-02, not solved | 1.075 mu=0.02472, penalty=1.075, mu_is=0.5 \u2014 24 h gap 2019-01-15 00:00:00: -13.3555%; 2019-05-03 00:00:00: -12.5695%; 2019-07-02 00:00:00: -13.1170%; 2019-10-02 00:00:00: -11.5860%, imbalance \u2264 1.5e-01, not solved"
+
+[diffusion.synthetic_50.grid.sweep]
+mu = 0.005521
+penalty = 107.5
+mu_is = 0.5
+solved = false
+note = "esb-tune (\u03bc grid \u00d7 1/1.811 \u20ac/MWh per MW (stiffest bus), \u03b7\u03b1 \u2208 (1.0, 100.0) \u00d7 max c\u2082 = 1.075, 10000 it.) unsuccessful: no candidate within \u03b5 0.001 on every tuning day, tier 3; best: 107.5 mu=0.005521, penalty=107.5, mu_is=0.5 \u2014 24 h gap 2019-01-15 00:00:00: +9.2193%; 2019-05-03 00:00:00: +11.7234%; 2019-07-02 00:00:00: +12.1968%; 2019-10-02 00:00:00: +11.3892%, imbalance \u2264 6.4e-03, not solved | 1.075 mu=0.02472, penalty=1.075, mu_is=0.0 \u2014 24 h gap 2019-01-15 00:00:00: +2.2187%; 2019-05-03 00:00:00: +4.0473%; 2019-07-02 00:00:00: +4.4126%; 2019-10-02 00:00:00: +3.8663%, imbalance \u2264 3.0e-02, not solved"
+
+[diffusion.lower_saxony_2025.ring.sweep]
+mu = 0.002465
+penalty = 123.1
+mu_is = 0.5
+solved = false
+note = "esb-tune (\u03bc grid \u00d7 1/4.056 \u20ac/MWh per MW (stiffest bus), \u03b7\u03b1 \u2208 (1.0, 100.0) \u00d7 max c\u2082 = 123.1, 10000 it.) unsuccessful: no candidate within \u03b5 0.001 on every tuning day, tier 3; best: 123.1 mu=0.002465, penalty=123.1, mu_is=0.5 \u2014 24 h gap 2025-12-30 00:00:00: +4.4328%; 2025-04-20 00:00:00: -0.2069%; 2025-08-12 00:00:00: +7.0333%; 2025-11-02 00:00:00: +3.8810%, imbalance \u2264 6.2e-02, not solved"
+
+[diffusion.lower_saxony_2025.grid.sweep]
+mu = 0.005217
+penalty = 123.1
+mu_is = 0.5
+solved = false
+note = "esb-tune (\u03bc grid \u00d7 1/4.056 \u20ac/MWh per MW (stiffest bus), \u03b7\u03b1 \u2208 (1.0, 100.0) \u00d7 max c\u2082 = 123.1, 10000 it.) unsuccessful: no candidate within \u03b5 0.001 on every tuning day, tier 3; best: 123.1 mu=0.005217, penalty=123.1, mu_is=0.5 \u2014 24 h gap 2025-12-30 00:00:00: -3.4286%; 2025-04-20 00:00:00: -5.7127%; 2025-08-12 00:00:00: -2.7636%; 2025-11-02 00:00:00: -1.4777%, imbalance \u2264 6.3e-02, not solved"
+
+[diffusion.synthetic_50.complete.sweep]
+mu = 0.005521
+penalty = 107.5
+mu_is = 0.0
+solved = false
+note = "esb-tune (\u03bc grid \u00d7 1/1.811 \u20ac/MWh per MW (stiffest bus), \u03b7\u03b1 \u2208 (1.0, 100.0) \u00d7 max c\u2082 = 1.075, 10000 it.) unsuccessful: no candidate within \u03b5 0.001 on every tuning day, tier 3; best: 107.5 mu=0.005521, penalty=107.5, mu_is=0.0 \u2014 24 h gap 2019-01-15 00:00:00: +9.7973%; 2019-05-03 00:00:00: +12.3128%; 2019-07-02 00:00:00: +12.7658%; 2019-10-02 00:00:00: +11.9900%, imbalance \u2264 1.8e-03, not solved | 1.075 mu=0.02472, penalty=1.075, mu_is=0.0 \u2014 24 h gap 2019-01-15 00:00:00: +4.6028%; 2019-05-03 00:00:00: +6.4930%; 2019-07-02 00:00:00: +6.7966%; 2019-10-02 00:00:00: +6.3042%, imbalance \u2264 1.2e-02, not solved"
