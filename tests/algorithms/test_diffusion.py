@@ -113,3 +113,25 @@ def test_information_sharing_never_converged_is_reported(tmp_path):
         ]
     )
     assert _meta(tmp_path, "diffusion")["stop_reason"] == diffusion.IS_NOT_CONVERGED
+
+
+def test_sweep_grid_scales_mu_by_the_penalty_slope():
+    # D-260 (level 1): μ·L_eff ≤ 1.9 with L_eff = max(stiffest bus curvature, 2ηα)
+    net = load_network(datasets.prepared_path("toy"))
+    grid, note = diffusion.sweep_grid(net, net, "grid")
+    sens = {}
+    for c in diffusion._dispatchable(net):
+        sens[c.bus] = sens.get(c.bus, 0.0) + 1 / (2 * c.cost[1])
+    kappa = 1 / min(sens.values())
+    for c in grid:
+        assert c["mu"] * max(kappa, 2 * c["penalty"]) <= 1.9 * 1.0001
+    # D-261: 16 pilot steps per (ηα, μ_IS); a pilot top caps each ηα's grid
+    pilot, _ = diffusion.sweep_grid(net, net, "grid", pilot=True)
+    assert len(pilot) == 64
+    tops = {c["penalty"]: 0.1 * (i + 1) for i, c in enumerate(grid[::16])}
+    capped, note = diffusion.sweep_grid(net, net, "grid", top=tops)
+    for p, t in tops.items():
+        assert max(c["mu"] for c in capped if c["penalty"] == p) == pytest.approx(
+            t, rel=1e-3
+        )
+    assert "pilot" in note

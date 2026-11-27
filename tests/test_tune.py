@@ -224,3 +224,44 @@ def test_solved_at_counts_from_the_last_entry_into_the_target():
     assert tune.solved_at(trace, central, demand_mwh=100.0) == 3
     trace.loc[4, "shortfall_mwh"] = 1.0  # the last row misses the balance target
     assert tune.solved_at(trace, central, demand_mwh=100.0) is None
+
+
+def test_pilot_stability_and_top():
+    # D-261: stable = the whole budget used and the imbalance not grown
+    trace = pd.DataFrame({"imbalance_mwh": [100.0, 40.0, 5.0]})
+    assert tune.stable({"stop_reason": "max_iter"}, trace)
+    assert not tune.stable({"stop_reason": "max_iter"}, trace[::-1].reset_index())
+    assert not tune.stable({"stop_reason": "diverged"}, trace)
+    # the largest step up to which every step is stable; a step in several candidates (both
+    # μ_IS) counts only if all are stable; none stable → the smallest step
+    runs = [("a", 1.0, True), ("a", 2.0, True), ("a", 4.0, False), ("a", 8.0, True)]
+    runs += [("b", 1.0, True), ("b", 2.0, True), ("b", 2.0, False), ("c", 3.0, False)]
+    assert tune.pilot_top(runs) == {"a": 2.0, "b": 1.0, "c": 3.0}
+
+
+def test_grid_edges_flags_a_range_end():
+    # D-262 (Choi et al. 2019 App. E): only parameters with ≥ 3 values form a range
+    grid = [
+        {"mu": m, "mu_is": s, "penalty": 1.0} for s in (0.0, 0.5) for m in (1, 2, 3)
+    ]
+    assert tune.grid_edges(grid, 0, "penalty") == ["mu"]
+    assert tune.grid_edges(grid, 1, "penalty") == []
+
+
+def test_pilot_tops_the_exact_diffusion_grid(tmp_path):
+    # D-261: 16 pilot runs on day 1, the 32 candidates lie under the largest stable step
+    argv = ["--algorithm", "exact_diffusion", "--network", "toy", "--topology", "ring"]
+    argv += ["--hours", "3", "--max-iter", "30", "--pilot-iter", "30", "--jobs", "4"]
+    tune.main(argv + ["--no-write", "--out", str(tmp_path)])
+    store = tmp_path / "exact_diffusion" / "toy" / "ring_storage"
+    pilot = pd.read_csv(store / "pilot.csv")
+    record = json.loads((store / "sweep.json").read_text())
+    top = record["pilot"]["top"]["None"]
+    assert len(pilot) == 16 and record["pilot"]["iterations"] == 30
+    assert (
+        top
+        == tune.pilot_top([(None, m, ok) for m, ok in zip(pilot.mu, pilot.stable)])[
+            None
+        ]
+    )
+    assert pd.read_csv(store / "sweep.csv").mu.max() == pytest.approx(top, rel=1e-3)

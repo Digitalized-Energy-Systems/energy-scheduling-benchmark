@@ -39,8 +39,16 @@ from ..problem.rules import predispatched
 from ..world import leader, longest_hops, topology_graph
 
 #: 2026-11-23 D-224: esb-tune grid, 8 μ × 2 ηα × 2 μ_IS = 32 (the paper: trial and error):
-#: μ = g / the largest bus curvature, ηα = factor × the largest unit c₂
+#: ηα = factor × the largest unit c₂; 2026-11-27 D-260 (level 1): μ = g / L_eff, L_eff =
+#: max(stiffest bus curvature κ, 2ηα) — the penalty's slope outside the limits bounds the step too
+#: (Sivaprasad et al. 2020 §4.2: bounds from the method's mathematics; López-Ibáñez et al. 2016
+#: §2.1: one parameter's range depends on another's); was g / κ, up to 6000× too large
 SWEEP_G = tuple(np.geomspace(0.01, 1.9, 8))
+#: 2026-11-27 D-261 (level 2, Choi et al. 2019 §4): esb-tune's pilot tries 16 μ·L_eff over four
+#: decades and puts the grid under the largest stable one (the bound is only a ballpark here:
+#: measured ×2–3 on grid / ring, ×10–25 on complete)
+PILOT_KEY = "mu"
+PILOT_G = tuple(np.geomspace(0.01, 100, 16))
 SWEEP_PENALTY = (1.0, 100.0)
 SWEEP_MU_IS = (0.0, 0.5)
 #: no stop rule to switch off (D-221) and no divergence abort: |∇F| holds the penalty term, at
@@ -61,9 +69,15 @@ def _dispatchable(network: Network) -> list[Component]:
 
 
 def sweep_grid(
-    network: Network, full: Network, topology: str
+    network: Network,
+    full: Network,
+    topology: str,
+    top: dict | None = None,
+    pilot: bool = False,
 ) -> tuple[list[dict], str]:
-    """esb-tune candidates (μ, ηα, μ_IS) and a note on their scale."""
+    """esb-tune candidates (μ, ηα, μ_IS) and a note on their scale. *pilot*: the 16 pilot values
+    per ηα (D-261); *top*: ηα → the pilot's largest stable μ, the grid's 8 μ then keep
+    ``SWEEP_G``'s shape under it."""
     units = _dispatchable(network)
     sens: dict[str, float] = {}
     for c in units:
@@ -74,16 +88,26 @@ def sweep_grid(
     def r(v: float) -> float:
         return float(f"{v:.4g}")
 
-    grid = [
-        {"mu": r(g / curvature), "penalty": r(f * c2), "mu_is": m}
-        for f in SWEEP_PENALTY
-        for m in SWEEP_MU_IS
-        for g in SWEEP_G
-    ]
-    return grid, (
-        f"μ grid × 1/{curvature:.4g} €/MWh per MW (stiffest bus), "
-        f"ηα ∈ {SWEEP_PENALTY} × max c₂ = {c2:.4g}"
+    grid = []
+    for f in SWEEP_PENALTY:
+        penalty = r(f * c2)
+        l_eff = max(curvature, 2 * penalty)  # D-260
+        if top is not None:
+            mus = [top[penalty] * g / SWEEP_G[-1] for g in SWEEP_G]
+        else:
+            mus = [g / l_eff for g in (PILOT_G if pilot else SWEEP_G)]
+        grid += [
+            {"mu": r(mu), "penalty": penalty, "mu_is": m}
+            for m in SWEEP_MU_IS
+            for mu in mus
+        ]
+    scale = (
+        f"μ grid ≤ the pilot's largest stable μ per ηα {top}"
+        if top is not None
+        else "μ grid × 1/L_eff, L_eff = max(κ, 2ηα), "
+        f"κ = {curvature:.4g} €/MWh per MW (stiffest bus)"
     )
+    return grid, f"{scale}, ηα ∈ {SWEEP_PENALTY} × max c₂ = {c2:.4g}"
 
 
 class BusActor(DiffusionActor):

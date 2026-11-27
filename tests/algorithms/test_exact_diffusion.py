@@ -22,6 +22,13 @@ def test_sweep_grid_has_32_step_sizes():
     assert len(grid) == 32 and set(grid[0]) == {"mu"} and mus == sorted(mus)
     # μσ² < 2 at the stiffest toy bus (35 MW per €/MWh), the grid's scale (cf. Lemma 6)
     assert mus[-1] * 35.15 < 2
+    # D-261: 16 pilot steps over four decades; a pilot top caps the grid
+    pilot, _ = exact_diffusion.sweep_grid(net, net, "grid", pilot=True)
+    assert len(pilot) == 16 and pilot[-1]["mu"] / pilot[0]["mu"] == pytest.approx(
+        1e4, rel=1e-2
+    )
+    capped, _ = exact_diffusion.sweep_grid(net, net, "grid", top={None: 0.3})
+    assert len(capped) == 32 and capped[-1]["mu"] == pytest.approx(0.3)
 
 
 @pytest.mark.parametrize("topology", ["grid", "ring", "complete"])
