@@ -135,3 +135,8 @@ def test_sweep_grid_scales_mu_by_the_penalty_slope():
             t, rel=1e-3
         )
     assert "pilot" in note
+    # D-266: an ηα without a pilot top keeps its bound-scaled μ
+    first = next(iter(tops))
+    partial, _ = diffusion.sweep_grid(net, net, "grid", top={first: 0.1})
+    rest = [c["mu"] for c in partial if c["penalty"] != first]
+    assert rest == [c["mu"] for c in grid if c["penalty"] != first]
