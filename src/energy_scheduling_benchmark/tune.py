@@ -19,6 +19,16 @@ Exact pruning (T3): once a variant has a solved candidate, another one stops aft
 is unsolved or needs more iterations than that one — it cannot win. Ties go to the earlier
 candidate, so the result does not depend on ``--jobs`` (T7). Runs go to ``--jobs`` processes (T2).
 
+Pilot (level 2, plan ``docs/sweep-scale-plan.md``, D-261; Choi et al. 2019 §4: "an initial set
+of experiments over a relatively large search space" picks the final one): an algorithm with
+``PILOT_KEY`` (diffusion, exact diffusion) first runs ``sweep_grid(..., pilot=True)`` — its step
+over four decades — for ``--pilot-iter`` iterations on the first window; a run is stable when it
+uses that budget and its imbalance has not grown (``stable``). Per variant the largest step up to
+which every pilot value is stable (``pilot_top``) tops the final grid
+(``sweep_grid(..., top=...)``). Pilot runs: ``pilot_<i>/`` + ``pilot.csv``; their budget is in the
+note and ``sweep.json`` (Sivaprasad et al. 2020: report the tuning effort). Every note flags a
+winner on the edge of its variant's grid (Choi et al. 2019 App. E, D-262).
+
 Records (S4b, D-147–D-152): every run is kept in the sweep folder
 ``<--out>/<algorithm>/<network>/<topology>_[no]storage/`` (a re-sweep replaces it only with
 ``--replace``, else esb-tune stops, D-154)
@@ -85,6 +95,54 @@ def score(meta: dict, central: dict, demand_mwh: float) -> float | None:
 EPS = 1e-3
 #: 2026-11-23 D-198: the same sweep budget for every algorithm (= the runs' max_iter)
 BUDGET = 10_000
+#: 2026-11-27 D-261: iterations of a pilot run (level 2, Choi et al. 2019 §4)
+PILOT_ITER = 1000
+
+
+def stable(meta: dict, trace: pd.DataFrame | None) -> bool:
+    """A pilot run is stable when it used its whole budget (or needed no ED) and its imbalance at
+    the end is no larger than at the start (D-261)."""
+    if meta["stop_reason"] == RENEWABLES_COVER:
+        return True
+    if meta["stop_reason"] not in ("max_iter", "converged") or trace is None:
+        return False
+    return bool(trace.imbalance_mwh.iloc[-1] <= trace.imbalance_mwh.iloc[0])
+
+
+def pilot_top(runs: list[tuple]) -> dict:
+    """``[(variant, step, stable)]`` → variant → the largest step up to which every pilot step
+    is stable (a step tried in several candidates counts as stable only if all are); the
+    smallest step if none is (D-261)."""
+    top = {}
+    for variant in {v for v, _, _ in runs}:
+        ok: dict[float, bool] = {}
+        for v, x, good in runs:
+            if v == variant:
+                ok[x] = ok.get(x, True) and good
+        steps = sorted(ok)
+        top[variant] = steps[0]
+        for x in steps:
+            if not ok[x]:
+                break
+            top[variant] = x
+    return top
+
+
+def grid_edges(candidates: list[dict], i: int, variant_key) -> list[str]:
+    """Numeric parameters whose value in candidate *i* is the smallest or largest of its variant's
+    grid — the winner should lie inside the grid (Choi et al. 2019 App. E, D-262)."""
+    peers = [
+        c for c in candidates if c.get(variant_key) == candidates[i].get(variant_key)
+    ]
+    edges = []
+    for k, x in candidates[i].items():
+        if k == variant_key or isinstance(x, bool) or not isinstance(x, (int, float)):
+            continue
+        values = [c[k] for c in peers if k in c]
+        # a range needs ≥ 3 values: with 2 (e.g. μ_IS ∈ {0, 0.5}) every value is an edge
+        if len(set(values)) > 2 and x in (min(values), max(values)):
+            edges.append(k)
+    return edges
 
 
 def solved_at(trace: pd.DataFrame, central: dict, demand_mwh: float) -> int | None:
@@ -145,14 +203,13 @@ def write_section(name: str, values: dict) -> None:
         f.truncate()
 
 
-def _note(variant, best: tuple, hours: int) -> str:
+def _note(variant, best: tuple, hours: int, edges: list[str] = ()) -> str:
     (its, _, off), values, gaps = best
     shown = ", ".join(f"{k}={v}" for k, v in values.items() if k != "steps")
     windows = "; ".join(f"{start}: {g:+.4%}" for start, g in gaps.items())
     status = f"solved within {its} it." if its is not None else "not solved"
-    return (
-        f"{variant} {shown} — {hours} h gap {windows}, imbalance ≤ {off:.1e}, {status}"
-    )
+    edge = f", at the grid edge in {'/'.join(edges)}" if edges else ""  # D-262
+    return f"{variant} {shown} — {hours} h gap {windows}, imbalance ≤ {off:.1e}, {status}{edge}"
 
 
 def sweep(args: argparse.Namespace) -> dict | None:
@@ -163,8 +220,6 @@ def sweep(args: argparse.Namespace) -> dict | None:
     raw = full = load_network(datasets.prepared_path(args.network))
     if not args.storage:
         raw = without_storage(raw)
-    candidates, grid_note = alg.sweep_grid(raw, full, args.topology)
-    print(f"{len(candidates)} candidates; {grid_note}", flush=True)
     # 2026-11-23 D-198: one budget for every algorithm (was per algorithm, D-178)
     args.max_iter = args.max_iter or BUDGET
     fixed = alg.SWEEP_RUN | {"max_iter": args.max_iter}
@@ -197,6 +252,44 @@ def sweep(args: argparse.Namespace) -> dict | None:
             )
             central, out = centrals[w].result()
             windows.append((str(net.time_index[0]), central, float(demand), out))
+
+        # 2026-11-27 D-261: pilot on the first window, then the grid under its largest stable step
+        top, pilot = None, None
+        if getattr(args, "pilot", True) and hasattr(alg, "PILOT_KEY"):
+            trial, _ = alg.sweep_grid(raw, full, args.topology, pilot=True)
+            iters = getattr(args, "pilot_iter", PILOT_ITER)
+            short = alg.SWEEP_RUN | {"max_iter": iters}
+            short_sets = [x for k, v in short.items() for x in ("--set", f"{k}={v}")]
+            futures = [
+                pool.submit(
+                    _meta,
+                    ["--algorithm", args.algorithm, "--tuning", "paper", *common[0]]
+                    + [x for k, v in c.items() for x in ("--set", f"{k}={v}")]
+                    + short_sets
+                    + ["--out", f"{store}/pilot_{i}"],
+                )
+                for i, c in enumerate(trial)
+            ]
+            runs, prows = [], []
+            for i, (c, future) in enumerate(zip(trial, futures)):
+                meta, out = future.result()
+                trace = Path(out, "trace.csv")
+                ok = stable(meta, pd.read_csv(trace) if trace.exists() else None)
+                runs.append((c.get(alg.VARIANT), c[alg.PILOT_KEY], ok))
+                prows.append(
+                    {"candidate": i, **c, "stop_reason": meta["stop_reason"]}
+                    | {"stable": ok, "folder": os.path.relpath(out, store)}
+                )
+                print("pilot", c, meta["stop_reason"], "stable" if ok else "unstable")
+            pd.DataFrame(prows).to_csv(store / "pilot.csv", index=False)
+            top = pilot_top(runs)
+            pilot = {"runs": len(trial), "iterations": iters, "top": top}
+        candidates, grid_note = alg.sweep_grid(
+            raw, full, args.topology, **({} if top is None else {"top": top})
+        )
+        if pilot:
+            grid_note += f"; pilot {pilot['runs']} × {pilot['iterations']} it. on day 1"
+        print(f"{len(candidates)} candidates; {grid_note}", flush=True)
 
         def submit(i: int, w: int):
             values = [
@@ -303,7 +396,12 @@ def sweep(args: argparse.Namespace) -> dict | None:
         # the chosen set's variant first
         ranked = sorted(best, key=lambda v: best[v] != chosen)
         notes = [
-            _note(v, (every[best[v]], candidates[best[v]], gaps[best[v]]), args.hours)
+            _note(
+                v,
+                (every[best[v]], candidates[best[v]], gaps[best[v]]),
+                args.hours,
+                grid_edges(candidates, best[v], alg.VARIANT),
+            )
             for v in ranked
         ]
         # 2026-11-23 D-199 (Beiranvand §5.3: a failed target counts as failure)
@@ -326,6 +424,9 @@ def sweep(args: argparse.Namespace) -> dict | None:
         "args": vars(args),
         "grid_note": grid_note,
         "fixed": fixed,
+        "pilot": None
+        if pilot is None
+        else pilot | {"top": {str(k): v for k, v in top.items()}},
         "central": {
             label: {
                 "total_cost": central["total_cost"],
@@ -377,6 +478,18 @@ def main(argv: list[str] | None = None) -> None:
         help="fixed budget per candidate (default: the algorithm's SWEEP_RUN max_iter, else 3000)",
     )
     parser.add_argument("--jobs", type=int, default=1, help="parallel runs (processes)")
+    parser.add_argument(
+        "--no-pilot",
+        dest="pilot",
+        action="store_false",
+        help="skip the pilot of algorithms with PILOT_KEY (grid from the bound only, D-261)",
+    )
+    parser.add_argument(
+        "--pilot-iter",
+        type=int,
+        default=PILOT_ITER,
+        help=f"iterations per pilot run (default {PILOT_ITER}, D-261)",
+    )
     parser.add_argument(
         "--no-storage",
         dest="storage",

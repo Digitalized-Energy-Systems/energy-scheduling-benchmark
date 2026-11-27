@@ -166,13 +166,13 @@ any value; the route and the values used are stored in `meta.json`):
 | `manual` | `[<algorithm>.<network>.<topology>.manual]` — hand-tuned, with a `note` | default when present |
 | `sweep` | `[<algorithm>.<network>.<topology>.sweep]` — written by `esb-tune` | default when there is no manual set (decided 2026-11-12) |
 
-`esb-tune --network N --topology T --start DAY … [--jobs N] [--no-write] [--replace]` sweeps the algorithm's
+`esb-tune --network N --topology T --start DAY … [--jobs N] [--no-write] [--replace] [--no-pilot] [--pilot-iter N]` sweeps the algorithm's
 `sweep_grid` (32 candidates per algorithm; consensus: constant 4 κ × 4 β, decaying 4 α₀ × 2 β₀ ×
 α exponent {0.6, 0.98}; α × 1/max scaled bus sensitivity, β × 1/λ_max(L) of the bus topology;
 admm: 32 fixed ρ, log-spaced over six decades around the median 2c₂ of the thermal units;
 deed_admm: 4 β = g/λ_max(L), g ∈ {0.6, 1.0, 1.5, 1.9}, × 8 γ on admm's ρ scale, D-177, D-181;
-diffusion: 8 μ = g / the stiffest bus curvature × ηα ∈ {1, 100} × max c₂ × μ_IS ∈ {0, 0.5}, D-224;
-exact_diffusion: 32 μ = g / the largest bus sensitivity, g log 0.01…1.9, D-254) on
+diffusion: 8 μ = g / L_eff, L_eff = max(stiffest bus curvature, 2ηα), × ηα ∈ {1, 100} × max c₂ × μ_IS ∈ {0, 0.5},
+D-224, D-260; exact_diffusion: 32 μ = g / the largest bus sensitivity, g log 0.01…1.9, D-254) on
 the same budget for every algorithm (`--max-iter`, default 10 000 = the runs', D-198) with the
 algorithm's own stop rule off (D-196); a consensus sweep run ends as `diverged` once |λ| > 4000 €/MWh.
 The winner follows the literature (plan S4d, `../docs/tuning-selection-plan.md`, D-194–D-199;
@@ -182,7 +182,15 @@ solved candidate with the fewest iterations, tier 2 (none solved) the smallest |
 imbalance ≤ 1e-3, tier 3 the smallest imbalance. Once a variant has a solved candidate, another one is
 pruned after a window that is unsolved or slower. The winner (it runs through every window) is written
 whatever its gap, with `solved = true|false` and a `note` ("solved" or "unsuccessful … tier N", the
-gap per window); nothing is written if every candidate fails. Use `--no-write` for trial sweeps and check
+gap per window, and "at the grid edge in …" when the winner is the smallest or largest value of a
+parameter with ≥ 3 values: Choi et al. 2019 App. E, D-262); nothing is written if every candidate fails.
+
+**Pilot** (level 2 of plan `../docs/sweep-scale-plan.md`, D-261; Choi et al. 2019 §4): algorithms with
+`PILOT_KEY` (diffusion, exact_diffusion) first run 16 step values over four decades for `--pilot-iter`
+(default 1000) iterations on the first tuning day; a run is stable when it uses that budget and its
+imbalance has not grown. Per variant the largest step up to which every pilot step is stable tops the
+final grid (same shape below it). Pilot runs: `pilot_<i>/` and `pilot.csv` in the sweep folder, the
+pilot's budget and tops in the note and `sweep.json`; `--no-pilot` keeps the bound-scaled grid. Use `--no-write` for trial sweeps and check
 `git diff resources/tuned_parameters.toml` after a real one.
 
 Every sweep run is kept for plots (S4b, D-147–D-152):

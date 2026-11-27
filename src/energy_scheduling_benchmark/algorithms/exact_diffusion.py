@@ -36,6 +36,10 @@ from . import consensus
 #: €/MWh), g log-spaced 0.01…1.9 — μ·σ² < 2 by analogy with Yuan Part II Lemma 6 (a 2-agent
 #: equal-Hessian example, no general bound; review 2026-11-26)
 SWEEP_G = tuple(np.geomspace(0.01, 1.9, 32))
+#: 2026-11-27 D-261 (level 2, Choi et al. 2019 §4): esb-tune's pilot tries 16 μ·σ² over four
+#: decades and puts the grid under the largest stable one (the bound above is only an analogy)
+PILOT_KEY = "mu"
+PILOT_G = tuple(np.geomspace(0.01, 100, 16))
 #: no stop rule to switch off (D-255) and no divergence abort (as diffusion, D-247)
 SWEEP_RUN = {}
 #: one variant (esb-tune: candidates[i].get(None))
@@ -43,15 +47,27 @@ VARIANT = None
 
 
 def sweep_grid(
-    network: Network, full: Network, topology: str
+    network: Network,
+    full: Network,
+    topology: str,
+    top: dict | None = None,
+    pilot: bool = False,
 ) -> tuple[list[dict], str]:
-    """esb-tune candidates (μ) and a note on their scale."""
+    """esb-tune candidates (μ) and a note on their scale. *pilot*: the 16 pilot values (D-261);
+    *top*: ``{None: the pilot's largest stable μ}``, the grid's 32 μ then keep ``SWEEP_G``'s
+    shape under it."""
     sens = consensus.max_sensitivity(network)
 
     def r(v: float) -> float:
         return float(f"{v:.4g}")
 
-    return [{"mu": r(g / sens)} for g in SWEEP_G], f"μ grid × 1/{sens:.4g} MW per €/MWh"
+    if top is not None:
+        mus = [top[None] * g / SWEEP_G[-1] for g in SWEEP_G]
+        note = f"μ grid ≤ the pilot's largest stable μ {top[None]:.4g}"
+    else:
+        mus = [g / sens for g in (PILOT_G if pilot else SWEEP_G)]
+        note = f"μ grid × 1/{sens:.4g} MW per €/MWh"
+    return [{"mu": r(mu)} for mu in mus], note
 
 
 class BusActor(ExactDiffusionActor):
