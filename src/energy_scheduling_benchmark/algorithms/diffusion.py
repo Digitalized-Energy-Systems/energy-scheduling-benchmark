@@ -49,6 +49,10 @@ SWEEP_G = tuple(np.geomspace(0.01, 1.9, 8))
 #: measured ×2–3 on grid / ring, ×10–25 on complete)
 PILOT_KEY = "mu"
 PILOT_G = tuple(np.geomspace(0.01, 100, 16))
+#: 2026-11-27 D-266: pilot budget incl. the information sharing, which ends after up to 2440
+#: rounds outside pypsa_eur_germany_100 ring (≤ 5930; there the pilot informs nothing and the grid
+#: stays bound-scaled)
+PILOT_ITER = 3000
 SWEEP_PENALTY = (1.0, 100.0)
 SWEEP_MU_IS = (0.0, 0.5)
 #: no stop rule to switch off (D-221) and no divergence abort: |∇F| holds the penalty term, at
@@ -92,7 +96,7 @@ def sweep_grid(
     for f in SWEEP_PENALTY:
         penalty = r(f * c2)
         l_eff = max(curvature, 2 * penalty)  # D-260
-        if top is not None:
+        if top is not None and penalty in top:  # D-266: no top → bound-scaled
             mus = [top[penalty] * g / SWEEP_G[-1] for g in SWEEP_G]
         else:
             mus = [g / l_eff for g in (PILOT_G if pilot else SWEEP_G)]
@@ -102,11 +106,11 @@ def sweep_grid(
             for mu in mus
         ]
     scale = (
-        f"μ grid ≤ the pilot's largest stable μ per ηα {top}"
-        if top is not None
-        else "μ grid × 1/L_eff, L_eff = max(κ, 2ηα), "
+        "μ grid × 1/L_eff, L_eff = max(κ, 2ηα), "
         f"κ = {curvature:.4g} €/MWh per MW (stiffest bus)"
     )
+    if top:  # D-266: only the ηα with a pilot top
+        scale += f", capped at the pilot's largest stable μ per ηα {top}"
     return grid, f"{scale}, ηα ∈ {SWEEP_PENALTY} × max c₂ = {c2:.4g}"
 
 

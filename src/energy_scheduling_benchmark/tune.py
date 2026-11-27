@@ -99,12 +99,27 @@ BUDGET = 10_000
 PILOT_ITER = 1000
 
 
-def stable(meta: dict, trace: pd.DataFrame | None) -> bool:
+def read_trace(path: Path) -> pd.DataFrame | None:
+    """A run's ``trace.csv``; None when it is missing or empty (the run never iterated)."""
+    try:
+        return pd.read_csv(path)
+    except (FileNotFoundError, pd.errors.EmptyDataError):
+        return None
+
+
+def stable(meta: dict, trace: pd.DataFrame | None) -> bool | None:
     """A pilot run is stable when it used its whole budget (or needed no ED) and its imbalance at
-    the end is no larger than at the start (D-261)."""
-    if meta["stop_reason"] == RENEWABLES_COVER:
+    the end is no larger than at the start (D-261); None (no information on the step) when it
+    never iterated, e.g. diffusion's information sharing did not converge within the budget."""
+    stop = meta["stop_reason"]
+    if stop == RENEWABLES_COVER:
         return True
-    if meta["stop_reason"] not in ("max_iter", "converged") or trace is None:
+    if stop in ("diverged", "stalled"):
+        return False
+    # 2026-11-27 D-266: an empty trace crashed the whole job (ROSA 21549940)
+    if trace is None or trace.empty:
+        return None
+    if stop not in ("max_iter", "converged"):
         return False
     return bool(trace.imbalance_mwh.iloc[-1] <= trace.imbalance_mwh.iloc[0])
 
@@ -112,12 +127,13 @@ def stable(meta: dict, trace: pd.DataFrame | None) -> bool:
 def pilot_top(runs: list[tuple]) -> dict:
     """``[(variant, step, stable)]`` → variant → the largest step up to which every pilot step
     is stable (a step tried in several candidates counts as stable only if all are); the
-    smallest step if none is (D-261)."""
+    smallest step if none is (D-261). Runs without information (``None``) are left out; a variant
+    with none at all gets no top, its grid stays bound-scaled (D-266)."""
     top = {}
-    for variant in {v for v, _, _ in runs}:
+    for variant in {v for v, _, good in runs if good is not None}:
         ok: dict[float, bool] = {}
         for v, x, good in runs:
-            if v == variant:
+            if v == variant and good is not None:
                 ok[x] = ok.get(x, True) and good
         steps = sorted(ok)
         top[variant] = steps[0]
@@ -257,7 +273,10 @@ def sweep(args: argparse.Namespace) -> dict | None:
         top, pilot = None, None
         if getattr(args, "pilot", True) and hasattr(alg, "PILOT_KEY"):
             trial, _ = alg.sweep_grid(raw, full, args.topology, pilot=True)
-            iters = getattr(args, "pilot_iter", PILOT_ITER)
+            # D-266: an algorithm may need a longer pilot (diffusion: information sharing first)
+            iters = getattr(args, "pilot_iter", None) or getattr(
+                alg, "PILOT_ITER", PILOT_ITER
+            )
             short = alg.SWEEP_RUN | {"max_iter": iters}
             short_sets = [x for k, v in short.items() for x in ("--set", f"{k}={v}")]
             futures = [
@@ -273,14 +292,16 @@ def sweep(args: argparse.Namespace) -> dict | None:
             runs, prows = [], []
             for i, (c, future) in enumerate(zip(trial, futures)):
                 meta, out = future.result()
-                trace = Path(out, "trace.csv")
-                ok = stable(meta, pd.read_csv(trace) if trace.exists() else None)
+                ok = stable(meta, read_trace(Path(out, "trace.csv")))
                 runs.append((c.get(alg.VARIANT), c[alg.PILOT_KEY], ok))
                 prows.append(
                     {"candidate": i, **c, "stop_reason": meta["stop_reason"]}
                     | {"stable": ok, "folder": os.path.relpath(out, store)}
                 )
-                print("pilot", c, meta["stop_reason"], "stable" if ok else "unstable")
+                verdict = {True: "stable", False: "unstable", None: "no information"}[
+                    ok
+                ]
+                print("pilot", c, meta["stop_reason"], verdict)
             pd.DataFrame(prows).to_csv(store / "pilot.csv", index=False)
             top = pilot_top(runs)
             pilot = {"runs": len(trial), "iterations": iters, "top": top}
@@ -487,8 +508,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--pilot-iter",
         type=int,
-        default=PILOT_ITER,
-        help=f"iterations per pilot run (default {PILOT_ITER}, D-261)",
+        default=None,
+        help=f"iterations per pilot run (default: the algorithm's PILOT_ITER, else {PILOT_ITER}; D-261, D-266)",
     )
     parser.add_argument(
         "--no-storage",

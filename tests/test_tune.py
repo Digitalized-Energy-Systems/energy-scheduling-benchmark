@@ -267,3 +267,26 @@ def test_pilot_tops_the_exact_diffusion_grid(tmp_path):
         ]
     )
     assert pd.read_csv(store / "sweep.csv").mu.max() == pytest.approx(top, rel=1e-3)
+
+
+def test_pilot_without_information_keeps_the_bound_grid(tmp_path):
+    # D-266: a run that never iterated (diffusion's information sharing longer than the pilot)
+    # gives no information instead of crashing the job (ROSA 21549940); a variant without any
+    # informative run keeps its bound-scaled grid
+    empty = tmp_path / "trace.csv"
+    empty.write_text("")
+    assert (
+        tune.read_trace(empty) is None
+        and tune.read_trace(tmp_path / "none.csv") is None
+    )
+    assert tune.stable({"stop_reason": "is_not_converged"}, None) is None
+    assert tune.stable({"stop_reason": "diverged"}, None) is False
+    runs = [("a", 1.0, None), ("a", 2.0, True), ("b", 1.0, None)]
+    assert tune.pilot_top(runs) == {"a": 2.0}
+    argv = ["--algorithm", "diffusion", "--network", "toy", "--topology", "ring"]
+    argv += ["--hours", "3", "--max-iter", "5", "--pilot-iter", "3", "--jobs", "4"]
+    tune.main(argv + ["--no-write", "--out", str(tmp_path / "sweeps")])
+    store = tmp_path / "sweeps" / "diffusion" / "toy" / "ring_storage"
+    record = json.loads((store / "sweep.json").read_text())
+    assert record["pilot"]["top"] == {}  # no information at 3 it.
+    assert "L_eff" in record["grid_note"]  # the bound-scaled grid

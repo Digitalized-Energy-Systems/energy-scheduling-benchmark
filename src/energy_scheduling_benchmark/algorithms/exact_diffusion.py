@@ -61,9 +61,9 @@ def sweep_grid(
     def r(v: float) -> float:
         return float(f"{v:.4g}")
 
-    if top is not None:
+    if top is not None and None in top:  # D-266: no top → bound-scaled
         mus = [top[None] * g / SWEEP_G[-1] for g in SWEEP_G]
-        note = f"μ grid ≤ the pilot's largest stable μ {top[None]:.4g}"
+        note = f"μ grid ≤ the pilot's largest stable μ {top[None]:.4g} (bound 1/{sens:.4g})"
     else:
         mus = [g / sens for g in (PILOT_G if pilot else SWEEP_G)]
         note = f"μ grid × 1/{sens:.4g} MW per €/MWh"
